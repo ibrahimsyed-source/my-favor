@@ -298,20 +298,23 @@ export const SelectPayment = ({ navigation }: any) => {
 // ===========================================================================
 export const Searching = ({ navigation }: any) => {
   const { theme } = useTheme();
-  const { pals, advanceFavor } = useStore();
-  const palName = pals[0]?.firstName ?? 'a Favor Pal';
+  const { pals, advanceFavor, assignPal } = useStore();
+  const matchedPal = pals[0];
+  const palName = matchedPal?.firstName ?? 'a Favor Pal';
 
-  // Simulate the Pal accepting shortly after payment, then advance the favor to
-  // 'matched' and replace into live tracking (replace so Back/gesture doesn't
+  // Simulate the Pal accepting shortly after payment: bind the matched pal so the
+  // tracking screen shows the same person named here, advance the favor to
+  // 'matched', and replace into live tracking (replace so Back/gesture doesn't
   // dump the member back onto this stale Searching modal). The "Choose another
   // Favor Pal" button below stays as the genuine impatient-user fallback.
   useEffect(() => {
     const t = setTimeout(() => {
-      advanceFavor('matched');
+      if (matchedPal) assignPal(matchedPal.id);
+      else advanceFavor('matched');
       navigation.replace('FavorTracking');
     }, 2500);
     return () => clearTimeout(t);
-  }, [advanceFavor, navigation]);
+  }, [matchedPal, assignPal, advanceFavor, navigation]);
 
   return (
     <View style={{ flex: 1 }}>
