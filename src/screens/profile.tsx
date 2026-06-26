@@ -108,7 +108,6 @@ export const Profile = ({ navigation }: any) => {
   const isPal = user.role === 'pal';
   const switchLabel = isPal ? 'Switch to be a Favor Pal' : 'Switch to request a favor';
   const toggleRole = () => s.setRole(isPal ? 'member' : 'pal');
-  const cycleStatus = () => s.setStatus(user.status === 'online' ? 'invisible' : 'online');
 
   return (
     <SafeAreaView edges={['top']} style={{ flex: 1, backgroundColor: DARK_BG }}>
@@ -122,7 +121,7 @@ export const Profile = ({ navigation }: any) => {
         {/* Avatar + identity */}
         <Image source={{ uri: user.avatar }} style={st.profileAvatar} />
         <Txt variant="h3" color="#fff" center style={{ marginTop: 16 }}>{user.firstName}</Txt>
-        <TouchableOpacity onPress={cycleStatus} style={st.setStatus} activeOpacity={0.7}>
+        <TouchableOpacity onPress={() => navigation.navigate('SetStatus')} style={st.setStatus} activeOpacity={0.7}>
           <View style={st.statusDot} />
           <Text style={{ color: RED, fontSize: 15, fontWeight: '700' }}>Set Status</Text>
         </TouchableOpacity>
@@ -436,7 +435,7 @@ export const SideDrawer = ({ navigation }: any) => {
               <Text style={{ color: SUBTLE, fontSize: 14, marginTop: 4 }}>View Profile</Text>
             </TouchableOpacity>
             <TouchableOpacity
-              onPress={() => s.setStatus(u?.status === 'online' ? 'invisible' : 'online')}
+              onPress={() => go('SetStatus')}
               style={{ flexDirection: 'row', alignItems: 'center', gap: 8, marginTop: 10 }}
             >
               <View style={st.statusDot} />
@@ -450,7 +449,15 @@ export const SideDrawer = ({ navigation }: any) => {
           <DrawerRow icon="time-outline" label="Favor History" onPress={() => go('Tabs', { screen: 'History' })} />
           <DrawerRow icon="help-circle-outline" label="Help" onPress={() => go('Help')} />
           <DrawerRow icon="settings-outline" label="Settings" onPress={() => go('Settings')} />
-          <DrawerRow icon="card-outline" label="Account" onPress={() => go('Payment')} />
+          {u?.role === 'pal' && (
+            <DrawerRow icon="cash-outline" label="Earnings" onPress={() => go('Earnings')} />
+          )}
+          {/* Pals manage their Stripe/bank payout account; members manage cards. */}
+          <DrawerRow
+            icon="card-outline"
+            label="Account"
+            onPress={() => go(u?.role === 'pal' ? 'StripeOnboarding' : 'Payment')}
+          />
 
           <View style={{ flex: 1 }} />
 
@@ -471,6 +478,45 @@ function DrawerRow({ icon, label, onPress }: any) {
     </TouchableOpacity>
   );
 }
+
+// ===========================================================================
+// 6. SetStatus — availability picker modal (figma "Set Status")
+// ===========================================================================
+const STATUS_OPTIONS: { key: 'online' | 'invisible' | 'offline'; label: string; dot: string }[] = [
+  { key: 'online', label: 'Online', dot: '#4B5563' },
+  { key: 'invisible', label: 'Invisible', dot: 'transparent' },
+  { key: 'offline', label: 'Offline', dot: '#B6BBC4' },
+];
+
+export const SetStatus = ({ navigation }: any) => {
+  const { theme } = useTheme();
+  const s = useStore();
+  const current = s.user?.status ?? 'online';
+  const choose = (status: 'online' | 'invisible' | 'offline') => {
+    s.setStatus(status);
+    navigation.goBack();
+  };
+  return (
+    <Pressable style={st.statusScrim} onPress={() => navigation.goBack()}>
+      <Pressable style={[st.statusCard, { backgroundColor: theme.card }]} onPress={() => {}}>
+        <Text style={[st.statusTitle, { color: '#586172' }]}>Set Status</Text>
+        <View style={[st.statusDivider, { backgroundColor: theme.divider }]} />
+        {STATUS_OPTIONS.map((opt) => {
+          const sel = current === opt.key;
+          return (
+            <TouchableOpacity key={opt.key} activeOpacity={0.7} onPress={() => choose(opt.key)}>
+              <View style={st.statusRow}>
+                <View style={[st.statusRadio, { borderColor: opt.dot === 'transparent' ? '#8A909B' : opt.dot, backgroundColor: opt.dot }]} />
+                <Text style={{ color: sel ? theme.text : '#6B7280', fontSize: 18, fontWeight: sel ? '700' : '400' }}>{opt.label}</Text>
+              </View>
+              <View style={[st.statusDivider, { backgroundColor: theme.divider }]} />
+            </TouchableOpacity>
+          );
+        })}
+      </Pressable>
+    </Pressable>
+  );
+};
 
 // ---------------------------------------------------------------------------
 const st = StyleSheet.create({
@@ -525,4 +571,12 @@ const st = StyleSheet.create({
   },
   drawerDivider: { height: StyleSheet.hairlineWidth, backgroundColor: '#2E3647', marginVertical: 22 },
   backdrop: { flex: 1, backgroundColor: 'rgba(0,0,0,0.45)' },
+
+  // SetStatus modal
+  statusScrim: { flex: 1, backgroundColor: 'rgba(0,0,0,0.45)', alignItems: 'center', justifyContent: 'center', paddingHorizontal: 28 },
+  statusCard: { width: '100%', borderRadius: 18, paddingVertical: 28, paddingHorizontal: 28 },
+  statusTitle: { fontSize: 26, fontWeight: '800', textAlign: 'center', marginBottom: 18 },
+  statusDivider: { height: StyleSheet.hairlineWidth },
+  statusRow: { flexDirection: 'row', alignItems: 'center', gap: 16, paddingVertical: 20 },
+  statusRadio: { width: 16, height: 16, borderRadius: 8, borderWidth: 1.5 },
 });

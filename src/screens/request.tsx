@@ -86,19 +86,19 @@ export function SelectFavor({ navigation }: any) {
   const { theme } = useTheme();
   const s = useStore();
   const [selected, setSelected] = useState<FavorTier | null>(null);
-  const [customPrice, setCustomPrice] = useState('');
 
   const tierKeys: Array<keyof typeof FAVOR_TIERS> = ['tiny', 'small', 'big', 'huge'];
-  const customAmount = parseFloat(customPrice);
-  const customValid = selected === 'custom' && customAmount > 0;
-  const canNext = selected !== null && (selected !== 'custom' || customValid);
+  const canNext = selected !== null;
 
   const onNext = () => {
     if (!selected) return;
-    const price =
-      selected === 'custom'
-        ? customAmount
-        : FAVOR_TIERS[selected as keyof typeof FAVOR_TIERS].price;
+    // "Custom" → negotiate the price by time on the Negotiate screen.
+    if (selected === 'custom') {
+      s.setDraft({ tier: 'negotiate' });
+      navigation.navigate('Negotiate');
+      return;
+    }
+    const price = FAVOR_TIERS[selected as keyof typeof FAVOR_TIERS].price;
     s.setDraft({ tier: selected, price });
     navigation.navigate('FavorDescription');
   };
@@ -128,19 +128,10 @@ export function SelectFavor({ navigation }: any) {
 
         <TierCard
           title="Custom"
-          price="Set your price"
+          price="Negotiate your price"
           selected={selected === 'custom'}
           onPress={() => setSelected('custom')}
         />
-        {selected === 'custom' && (
-          <Field
-            value={customPrice}
-            onChangeText={setCustomPrice}
-            placeholder="Enter your price ($)"
-            keyboardType="numeric"
-            icon="cash-outline"
-          />
-        )}
       </ScrollView>
 
       <Footer>
@@ -238,7 +229,7 @@ export function Negotiate({ navigation }: any) {
 
   const onNext = () => {
     s.setDraft({ tier: 'negotiate', hours: rounded, price, description: desc });
-    navigation.navigate('FavorSummary');
+    navigation.navigate('ConfirmAddress');
   };
 
   return (

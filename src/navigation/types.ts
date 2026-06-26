@@ -33,6 +33,7 @@ export type RootStackParamList = {
   PalFavorInProgress: undefined;
   Navigation: undefined;
   PalFavorComplete: undefined;
+  PalFavorSuccess: undefined;
   Earnings: undefined;
   StripeOnboarding: undefined;
   BankInfo: undefined;
@@ -42,6 +43,7 @@ export type RootStackParamList = {
   MessageThread: { threadId: string };
   EditProfile: undefined;
   Settings: undefined;
+  SetStatus: undefined;
   Payment: undefined;
   AddCard: undefined;
   FavorHistory: undefined;

@@ -188,7 +188,7 @@ export const PalFavorInProgress = ({ navigation }: any) => {
         </View>
         <Section icon="document-text" title="Description" body="Need to walk my dog around 4pm" />
         <Section icon="location" title="Address" body="2099 Woodvine Rd, Lorman" />
-        <TouchableOpacity style={st.whiteBtn} onPress={() => navigation.navigate('PalFavorComplete')}>
+        <TouchableOpacity style={st.whiteBtn} onPress={() => navigation.navigate('PalFavorSuccess')}>
           <Text style={st.whiteBtnTxt}>MARK FAVOR DONE</Text>
         </TouchableOpacity>
       </ScrollView>
@@ -218,7 +218,26 @@ function Section({ icon, title, body }: any) {
 }
 
 // ===========================================================================
-// 4. PalFavorComplete — Thank You / feedback (figma 97:6337 / 97:6307)
+// 4. PalFavorSuccess — "You just got paid!" confirmation (figma pal-success)
+// ===========================================================================
+export const PalFavorSuccess = ({ navigation }: any) => {
+  return (
+    <SafeAreaView edges={['top', 'bottom']} style={{ flex: 1, backgroundColor: DARK_BG }}>
+      <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 24 }}>
+        <Ionicons name="checkmark-circle-outline" size={120} color="#4CAF50" />
+        <Txt variant="h2" color="#fff" center style={{ marginTop: 24 }}>You just got paid!</Txt>
+      </View>
+      <View style={{ paddingHorizontal: 24, paddingBottom: 12 }}>
+        <TouchableOpacity style={st.whiteBtn} onPress={() => navigation.navigate('PalFavorComplete')}>
+          <Text style={st.whiteBtnTxt}>ADD FEEDBACK</Text>
+        </TouchableOpacity>
+      </View>
+    </SafeAreaView>
+  );
+};
+
+// ===========================================================================
+// 5. PalFavorComplete — Thank You / feedback (figma 97:6337 / 97:6307)
 // ===========================================================================
 export const PalFavorComplete = ({ navigation }: any) => {
   const s = useStore();

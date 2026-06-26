@@ -1,7 +1,7 @@
 import React from 'react';
 import {
   View, Text, TextInput, TouchableOpacity, StyleSheet, ViewStyle, TextStyle,
-  ScrollView, Image, ActivityIndicator, KeyboardAvoidingView, Platform,
+  ScrollView, Image, ActivityIndicator, KeyboardAvoidingView, Platform, Modal,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
@@ -261,8 +261,37 @@ export const Row: React.FC<{
   );
 };
 
+// ---------------------------------------------------------------------------
+// InfoModal — centered white card over a dimmed scrim (Figma "Card Added" /
+// "No Favor Pal Available" alerts). Optional action button; tap-scrim closes.
+// ---------------------------------------------------------------------------
+export const InfoModal: React.FC<{
+  visible: boolean;
+  title: string;
+  message: string;
+  buttonLabel?: string;
+  onClose: () => void;
+}> = ({ visible, title, message, buttonLabel, onClose }) => {
+  const { theme } = useTheme();
+  return (
+    <Modal visible={visible} transparent animationType="fade" onRequestClose={onClose}>
+      <TouchableOpacity activeOpacity={1} onPress={onClose} style={styles.modalScrim}>
+        <TouchableOpacity activeOpacity={1} style={[styles.modalCard, { backgroundColor: theme.card }]}>
+          <Txt variant="h2" center style={{ marginBottom: 16 }}>{title}</Txt>
+          <Txt variant="body" color={theme.textSecondary} center style={{ lineHeight: 24 }}>{message}</Txt>
+          {buttonLabel ? (
+            <Button title={buttonLabel} uppercase={false} onPress={onClose} style={{ marginTop: 24 }} />
+          ) : null}
+        </TouchableOpacity>
+      </TouchableOpacity>
+    </Modal>
+  );
+};
+
 const styles = StyleSheet.create({
   btn: { height: 54, borderRadius: tokens.radius.md, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 20 },
+  modalScrim: { flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', alignItems: 'center', justifyContent: 'center', paddingHorizontal: 28 },
+  modalCard: { width: '100%', borderRadius: 18, paddingVertical: 32, paddingHorizontal: 28 },
   field: { flexDirection: 'row', alignItems: 'center', borderRadius: tokens.radius.md, paddingHorizontal: 16, minHeight: 56 },
   card: { borderRadius: tokens.radius.lg, padding: tokens.spacing.base, borderWidth: StyleSheet.hairlineWidth },
   topbar: { height: 52, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 16, borderBottomWidth: StyleSheet.hairlineWidth },

@@ -4,10 +4,18 @@ import {
 } from 'react-native';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
-import { Txt, Button, MapPlaceholder } from '../components';
+import { Txt, Button, MapPlaceholder, InfoModal } from '../components';
 import { useTheme, tokens } from '../theme';
 import { useStore } from '../store';
 import { FAVOR_TIERS, computeFees, FavorTier } from '../types';
+
+// Tier illustrations (shared with the request flow) for the summary thumbnail.
+const TIER_IMAGES: Record<string, any> = {
+  tiny: require('../../assets/img/request/tier-tiny.png'),
+  small: require('../../assets/img/request/tier-small.png'),
+  big: require('../../assets/img/request/tier-big.png'),
+  huge: require('../../assets/img/request/tier-huge.png'),
+};
 
 const { width: SCREEN_W, height: SCREEN_H } = Dimensions.get('window');
 
@@ -34,7 +42,7 @@ function useFavorSummary() {
   const description = draftFavor?.description || FALLBACK_DESC;
   const address = draftFavor?.location?.address || FALLBACK_ADDRESS;
   const image = draftFavor?.images?.[0];
-  return { base, label, fees, description, address, image };
+  return { base, label, fees, description, address, image, tier };
 }
 
 // ---------------------------------------------------------------------------
@@ -71,13 +79,16 @@ function CostRow({ left, right, bold }: { left: string; right: string; bold?: bo
 // ---------------------------------------------------------------------------
 function SummaryBody() {
   const { theme } = useTheme();
-  const { base, label, fees, description, address, image } = useFavorSummary();
+  const { base, label, fees, description, address, image, tier } = useFavorSummary();
+  const tierImage = TIER_IMAGES[tier as string];
   return (
     <View style={styles.body}>
       <View style={styles.costBlock}>
         <View style={[styles.thumb, { backgroundColor: theme.surfaceAlt }]}>
           {image ? (
             <Image source={{ uri: image }} style={{ width: '100%', height: '100%' }} />
+          ) : tierImage ? (
+            <Image source={tierImage} style={{ width: '100%', height: '100%' }} resizeMode="contain" />
           ) : (
             <Ionicons name="walk" size={34} color={theme.textTertiary} />
           )}
@@ -140,11 +151,17 @@ export const FavorSummary = ({ navigation }: any) => {
 export const SelectPayment = ({ navigation }: any) => {
   const { theme } = useTheme();
   const insets = useSafeAreaInsets();
-  const { cards, requestFavor } = useStore();
+  const { cards, requestFavor, pals } = useStore();
   const { fees } = useFavorSummary();
   const [selected, setSelected] = useState<string | null>(cards[0]?.id ?? null);
+  const [noPal, setNoPal] = useState(false);
 
   const pay = async () => {
+    // No FavorPals available in the area → surface the empty-state alert.
+    if (pals.length === 0) {
+      setNoPal(true);
+      return;
+    }
     await requestFavor();
     navigation.navigate('Searching');
   };
@@ -225,6 +242,13 @@ export const SelectPayment = ({ navigation }: any) => {
           <Ionicons name="lock-closed" size={18} color="#fff" style={{ position: 'absolute', right: 22 }} />
         </TouchableOpacity>
       </View>
+
+      <InfoModal
+        visible={noPal}
+        title="NO FAVOR PAL AVAILABLE"
+        message="We are sorry that there are no FavorPals in your area at the moment.  Please try again later."
+        onClose={() => setNoPal(false)}
+      />
     </View>
   );
 };

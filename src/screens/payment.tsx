@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { View, Image, TouchableOpacity, StyleSheet } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
-import { Screen, TopBar, Txt, Button, Field } from '../components';
+import { Screen, TopBar, Txt, Button, Field, InfoModal } from '../components';
 import { useStore } from '../store';
 import { useTheme, tokens, fonts } from '../theme';
 
@@ -96,6 +96,7 @@ export function AddCard({ navigation }: any) {
   const [zip, setZip] = useState('Chicago');
   const [country, setCountry] = useState('United States');
   const [saving, setSaving] = useState(false);
+  const [added, setAdded] = useState(false);
 
   const handleSubmit = async () => {
     const digits = cardNumber.replace(/\D/g, '');
@@ -106,7 +107,8 @@ export function AddCard({ navigation }: any) {
     const expYear = yearNum >= 100 ? yearNum % 100 : yearNum;
     setSaving(true);
     await addCard({ brand: 'visa', last4, expMonth, expYear });
-    navigation.goBack();
+    setSaving(false);
+    setAdded(true);
   };
 
   return (
@@ -156,6 +158,14 @@ export function AddCard({ navigation }: any) {
       </View>
 
       <Button title="SUBMIT" onPress={handleSubmit} loading={saving} style={{ marginTop: tokens.spacing.sm, marginBottom: tokens.spacing.xl }} />
+
+      <InfoModal
+        visible={added}
+        title="Card Added"
+        message="You have successfully added your Bank / Card information"
+        buttonLabel="Okay"
+        onClose={() => { setAdded(false); navigation.goBack(); }}
+      />
     </Screen>
   );
 }

@@ -85,6 +85,7 @@ export default function RootNavigator() {
           <Stack.Screen name="PalFavorInProgress" component={Pal.PalFavorInProgress} />
           <Stack.Screen name="Navigation" component={Pal.Navigation} />
           <Stack.Screen name="PalFavorComplete" component={Pal.PalFavorComplete} />
+          <Stack.Screen name="PalFavorSuccess" component={Pal.PalFavorSuccess} />
           <Stack.Screen name="Earnings" component={Payouts.Earnings} />
           <Stack.Screen name="StripeOnboarding" component={Payouts.StripeOnboarding} />
           <Stack.Screen name="BankInfo" component={Payouts.BankInfo} />
@@ -97,6 +98,11 @@ export default function RootNavigator() {
           <Stack.Screen name="MessageThread" component={Msg.MessageThread} />
           <Stack.Screen name="EditProfile" component={Prof.EditProfile} />
           <Stack.Screen name="Settings" component={Prof.Settings} />
+          <Stack.Screen
+            name="SetStatus"
+            component={Prof.SetStatus}
+            options={{ presentation: 'transparentModal', animation: 'fade' }}
+          />
           <Stack.Screen name="Help" component={Prof.Help} />
           <Stack.Screen name="Payment" component={Pay.Payment} />
           <Stack.Screen name="AddCard" component={Pay.AddCard} />
