@@ -78,7 +78,7 @@ export const Button: React.FC<{
   style?: ViewStyle;
 }> = ({ title, onPress, variant = 'primary', disabled, loading, uppercase = true, icon, style }) => {
   const { theme } = useTheme();
-  const bg = {
+  const variantBg = {
     primary: theme.cta,
     secondary: theme.secondaryBtn,
     brand: theme.primary,
@@ -86,20 +86,27 @@ export const Button: React.FC<{
     ghost: 'transparent',
     danger: theme.danger,
   }[variant];
-  const fg =
+  const variantFg =
     variant === 'secondary' || variant === 'white'
       ? '#141414'
       : variant === 'ghost'
       ? theme.cta
       : '#FFFFFF';
+  // Spec-correct disabled state: a flat light-gray pill with muted text (no opacity hacks).
+  const isDisabled = !!disabled;
+  const bg = isDisabled ? theme.secondaryBtn : variantBg;
+  const fg = isDisabled ? theme.textTertiary : variantFg;
   return (
     <TouchableOpacity
       activeOpacity={0.85}
-      disabled={disabled || loading}
+      disabled={isDisabled || loading}
       onPress={onPress}
+      accessibilityRole="button"
+      accessibilityState={{ disabled: isDisabled || !!loading, busy: !!loading }}
+      accessibilityLabel={title}
       style={[
         styles.btn,
-        { backgroundColor: bg, opacity: disabled ? 0.5 : 1, borderWidth: variant === 'ghost' ? 1.5 : 0, borderColor: theme.cta },
+        { backgroundColor: bg, borderWidth: variant === 'ghost' && !isDisabled ? 1.5 : 0, borderColor: theme.cta },
         style,
       ]}
     >
@@ -185,12 +192,17 @@ export const Avatar: React.FC<{ uri?: string; size?: number; name?: string }> = 
 export const StarRating: React.FC<{ value: number; size?: number; onChange?: (v: number) => void }> = ({ value, size = 20, onChange }) => {
   const { theme } = useTheme();
   return (
-    <View style={{ flexDirection: 'row', gap: 2 }}>
+    <View
+      style={{ flexDirection: 'row', gap: 2 }}
+      accessibilityRole={onChange ? 'adjustable' : 'image'}
+      accessibilityLabel={onChange ? 'Rating' : `Rated ${Math.round(value)} out of 5`}
+      accessibilityValue={onChange ? { min: 0, max: 5, now: Math.round(value) } : undefined}
+    >
       {[1, 2, 3, 4, 5].map((i) => {
         const filled = i <= Math.round(value);
         const star = <Ionicons name={filled ? 'star' : 'star-outline'} size={size} color={theme.star} />;
         return onChange ? (
-          <TouchableOpacity key={i} onPress={() => onChange(i)}>{star}</TouchableOpacity>
+          <TouchableOpacity key={i} onPress={() => onChange(i)} hitSlop={10} accessibilityRole="button" accessibilityLabel={`Rate ${i} star${i > 1 ? 's' : ''}`}>{star}</TouchableOpacity>
         ) : (
           <View key={i}>{star}</View>
         );
@@ -211,8 +223,8 @@ export const TopBar: React.FC<{
   return (
     <View style={[styles.topbar, { borderBottomColor: theme.border }]}>
       {onBack ? (
-        <TouchableOpacity onPress={onBack} hitSlop={10}>
-          <Ionicons name="chevron-back" size={26} color={theme.text} />
+        <TouchableOpacity onPress={onBack} hitSlop={12} accessibilityRole="button" accessibilityLabel="Go back">
+          <Ionicons name="arrow-back" size={26} color={theme.text} />
         </TouchableOpacity>
       ) : (
         <View style={{ width: 26 }} />
@@ -229,10 +241,29 @@ export const TopBar: React.FC<{
 // ---------------------------------------------------------------------------
 export const MapPlaceholder: React.FC<{ height?: number; label?: string; children?: React.ReactNode }> = ({ height = 240, label = 'Map', children }) => {
   const { theme } = useTheme();
+  const hasContent = React.Children.count(children) > 0;
   return (
-    <View style={{ height, borderRadius: tokens.radius.lg, overflow: 'hidden', backgroundColor: '#DCE6F2', alignItems: 'center', justifyContent: 'center' }}>
-      <Ionicons name="map" size={40} color={theme.primary} />
-      <Txt variant="caption" color={theme.textSecondary} style={{ marginTop: 6 }}>{label}</Txt>
+    <View
+      accessibilityElementsHidden
+      importantForAccessibility="no-hide-descendants"
+      style={{ height, borderRadius: tokens.radius.lg, overflow: 'hidden', backgroundColor: '#E9EEF3', alignItems: 'center', justifyContent: 'center' }}
+    >
+      {/* Faint street-grid wash so it reads as a map, not clip-art. */}
+      <View pointerEvents="none" style={StyleSheet.absoluteFill}>
+        {[0.18, 0.42, 0.66, 0.9].map((t) => (
+          <View key={`h${t}`} style={{ position: 'absolute', left: 0, right: 0, top: `${t * 100}%`, height: 1, backgroundColor: '#D2DAE2' }} />
+        ))}
+        {[0.2, 0.5, 0.8].map((t) => (
+          <View key={`v${t}`} style={{ position: 'absolute', top: 0, bottom: 0, left: `${t * 100}%`, width: 1, backgroundColor: '#D2DAE2' }} />
+        ))}
+      </View>
+      {/* Only show the literal map glyph/label on a truly empty placeholder. */}
+      {!hasContent && (
+        <>
+          <Ionicons name="map-outline" size={36} color={theme.textTertiary} />
+          {!!label && <Txt variant="caption" color={theme.textTertiary} style={{ marginTop: 6 }}>{label}</Txt>}
+        </>
+      )}
       {children}
     </View>
   );
@@ -282,6 +313,35 @@ export const InfoModal: React.FC<{
           {buttonLabel ? (
             <Button title={buttonLabel} uppercase={false} onPress={onClose} style={{ marginTop: 24 }} />
           ) : null}
+        </TouchableOpacity>
+      </TouchableOpacity>
+    </Modal>
+  );
+};
+
+// ---------------------------------------------------------------------------
+// ConfirmModal — cross-platform confirm dialog (Alert.alert silently no-ops on
+// web, so destructive actions must not rely on it). Confirm + Cancel buttons.
+// ---------------------------------------------------------------------------
+export const ConfirmModal: React.FC<{
+  visible: boolean;
+  title: string;
+  message: string;
+  confirmLabel?: string;
+  cancelLabel?: string;
+  destructive?: boolean;
+  onConfirm: () => void;
+  onCancel: () => void;
+}> = ({ visible, title, message, confirmLabel = 'Confirm', cancelLabel = 'Cancel', destructive, onConfirm, onCancel }) => {
+  const { theme } = useTheme();
+  return (
+    <Modal visible={visible} transparent animationType="fade" onRequestClose={onCancel}>
+      <TouchableOpacity activeOpacity={1} onPress={onCancel} style={styles.modalScrim}>
+        <TouchableOpacity activeOpacity={1} style={[styles.modalCard, { backgroundColor: theme.card }]}>
+          <Txt variant="h3" center style={{ marginBottom: 12 }}>{title}</Txt>
+          <Txt variant="body" color={theme.textSecondary} center style={{ lineHeight: 24 }}>{message}</Txt>
+          <Button title={confirmLabel} variant={destructive ? 'danger' : 'primary'} uppercase={false} onPress={onConfirm} style={{ marginTop: 22 }} />
+          <Button title={cancelLabel} variant="secondary" uppercase={false} onPress={onCancel} style={{ marginTop: 10 }} />
         </TouchableOpacity>
       </TouchableOpacity>
     </Modal>

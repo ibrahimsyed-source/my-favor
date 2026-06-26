@@ -1,7 +1,7 @@
 import React, { createContext, useContext, useMemo, useState, useCallback } from 'react';
 import {
   User, Favor, PaymentCard, Transaction, Thread, Message, AppNotification,
-  Role, UserStatus, FavorTier, GeoPoint, FavorStatus, computeFees,
+  Role, UserStatus, FavorTier, GeoPoint, FavorStatus, computeFees, computePayout,
 } from '../types';
 import * as seed from '../data/mockData';
 
@@ -24,6 +24,7 @@ interface StoreValue {
   login: (email: string, password: string) => Promise<boolean>;
   logout: () => void;
   updateProfile: (patch: Partial<User>) => Promise<void>;
+  changePassword: (current: string, next: string) => Promise<boolean>;
   setRole: (role: Role) => void;
   setStatus: (status: UserStatus) => void;
 
@@ -33,6 +34,8 @@ interface StoreValue {
   setDraft: (patch: Partial<Favor>) => void;
   clearDraft: () => void;
   activeFavor: Favor | null;
+  activePal: User | null; // the pal the member booked (drives tracking)
+  palById: (id?: string) => User | undefined;
   history: Favor[];
   requestFavor: () => Promise<Favor>;
   advanceFavor: (status: FavorStatus) => void;
@@ -41,6 +44,13 @@ interface StoreValue {
   // pal side
   incomingFavors: Favor[];
   acceptFavor: (favorId: string) => void;
+  declineFavor: (favorId: string) => void;
+  assignPal: (palId: string) => void; // member books a specific pal
+  finishFavorAsPal: () => number; // completes active favor as pal, returns payout
+  // moderation
+  blockedUsers: string[];
+  reportUser: (userId: string, reason?: string) => void;
+  blockUser: (userId: string) => void;
 
   // payments
   cards: PaymentCard[];
@@ -70,10 +80,17 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
   const [incomingFavors, setIncomingFavors] = useState<Favor[]>(seed.favorsSeed);
   const [cards, setCards] = useState<PaymentCard[]>(seed.cards);
   const [transactions, setTransactions] = useState<Transaction[]>(seed.transactions);
-  const [earnings] = useState<Transaction[]>(seed.earnings);
+  const [earnings, setEarnings] = useState<Transaction[]>(seed.earnings);
   const [threads, setThreads] = useState<Thread[]>(seed.threads);
   const [messages, setMessages] = useState<Message[]>(seed.messages);
   const [notifications, setNotifications] = useState<AppNotification[]>(seed.notifications);
+  const [blockedUsers, setBlockedUsers] = useState<string[]>([]);
+
+  // Resolve a pal record (the member's booked pal, message counterparties, etc.)
+  const palById = useCallback(
+    (id?: string) => (id ? seed.nearbyPals.find((p) => p.id === id) : undefined),
+    []
+  );
 
   // ---- auth ----
   const signup = useCallback(async (data: Partial<User> & { password: string }) => {
@@ -97,11 +114,29 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     return true;
   }, []);
 
-  const logout = useCallback(() => setUser(null), []);
+  const logout = useCallback(() => {
+    // Reset session-scoped state so it can't bleed into the next login.
+    setUser(null);
+    setPendingSignup(null);
+    setDraftFavor(null);
+    setActiveFavor(null);
+    setHistory(seed.history);
+    setIncomingFavors(seed.favorsSeed);
+    setCards(seed.cards);
+    setTransactions(seed.transactions);
+    setEarnings(seed.earnings);
+    setBlockedUsers([]);
+  }, []);
 
   const updateProfile = useCallback(async (patch: Partial<User>) => {
     await delay();
     setUser((u) => (u ? { ...u, ...patch } : u));
+  }, []);
+
+  const changePassword = useCallback(async (current: string, next: string) => {
+    await delay();
+    // Mock: a real impl would verify `current` server-side. Require both present.
+    return current.trim().length > 0 && next.trim().length >= 6;
   }, []);
 
   const setRole = useCallback((role: Role) => setUser((u) => (u ? { ...u, role } : u)), []);
@@ -159,6 +194,46 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     });
   }, [user]);
 
+  // Pal dismisses an offer — removed so Home surfaces the next one instead of re-offering it.
+  const declineFavor = useCallback((favorId: string) => {
+    setIncomingFavors((list) => list.filter((x) => x.id !== favorId));
+  }, []);
+
+  // Member books a specific pal from the results: bind them to the active favor.
+  const assignPal = useCallback((palId: string) => {
+    setActiveFavor((f) => (f ? { ...f, palId, status: 'matched' } : f));
+  }, []);
+
+  // Pal completes the active favor: record the payout in Earning History + history.
+  const finishFavorAsPal = useCallback(() => {
+    const f = activeFavor;
+    const base = f?.price ?? 20;
+    const { payout } = computePayout(base, f?.tip ?? 0);
+    if (f) {
+      const earning: Transaction = {
+        id: nextId('e'), favorId: f.id,
+        title: (f.description && f.description.slice(0, 40)) || 'Favor',
+        amount: payout, status: 'completed', date: now(), kind: 'earning',
+      };
+      setEarnings((e) => [earning, ...e]);
+      setHistory((h) => [{ ...f, palId: user?.id ?? 'u_me', status: 'completed' }, ...h]);
+    }
+    setActiveFavor(null);
+    return payout;
+  }, [activeFavor, user]);
+
+  // ---- moderation ----
+  const reportUser = useCallback((_userId: string, _reason?: string) => {
+    setNotifications((n) => [
+      { id: nextId('n'), type: 'general', title: 'Report received',
+        body: 'Thanks — our Trust & Safety team will review this shortly.', date: now(), read: false },
+      ...n,
+    ]);
+  }, []);
+  const blockUser = useCallback((userId: string) => {
+    setBlockedUsers((b) => (b.includes(userId) ? b : [...b, userId]));
+  }, []);
+
   // ---- payments ----
   const addCard = useCallback(async (card: Omit<PaymentCard, 'id' | 'isDefault'>) => {
     await delay();
@@ -186,15 +261,20 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
 
   const value = useMemo<StoreValue>(
     () => ({
-      user, isAuthenticated: !!user, signup, verifyOtp, login, logout, updateProfile, setRole, setStatus,
-      pals: seed.nearbyPals, draftFavor, setDraft, clearDraft, activeFavor, history,
+      user, isAuthenticated: !!user, signup, verifyOtp, login, logout, updateProfile, changePassword,
+      setRole, setStatus,
+      pals: seed.nearbyPals, draftFavor, setDraft, clearDraft,
+      activeFavor, activePal: palById(activeFavor?.palId) ?? null, palById, history,
       requestFavor, advanceFavor, cancelFavor, rateFavor, incomingFavors, acceptFavor,
+      declineFavor, assignPal, finishFavorAsPal,
+      blockedUsers, reportUser, blockUser,
       cards, addCard, removeCard, transactions, earnings,
       threads, messagesFor, sendMessage, notifications, markNotificationRead,
     }),
-    [user, signup, verifyOtp, login, logout, updateProfile, setRole, setStatus, draftFavor, setDraft,
-      clearDraft, activeFavor, history, requestFavor, advanceFavor, cancelFavor, rateFavor, incomingFavors,
-      acceptFavor, cards, addCard, removeCard, transactions, earnings, threads, messagesFor, sendMessage,
+    [user, signup, verifyOtp, login, logout, updateProfile, changePassword, setRole, setStatus, draftFavor,
+      setDraft, clearDraft, activeFavor, palById, history, requestFavor, advanceFavor, cancelFavor, rateFavor,
+      incomingFavors, acceptFavor, declineFavor, assignPal, finishFavorAsPal, blockedUsers, reportUser, blockUser,
+      cards, addCard, removeCard, transactions, earnings, threads, messagesFor, sendMessage,
       notifications, markNotificationRead]
   );
 

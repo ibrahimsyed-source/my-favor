@@ -1,11 +1,12 @@
-// Type scale from the Figma file. Headings/wordmark use Comfortaa (rounded
-// geometric — matches "My Favor", "Verification", "Favor Booked"); body uses
-// Open Sans; Roboto for labels/buttons. Families are registered in App.tsx.
+// Type scale from the Figma file. Headings/wordmark use Poppins — the crisp
+// bold geometric sans the artboards actually use (the "My Favor" wordmark,
+// "Verification", "Favor Booked", screen titles). Body uses Open Sans; Roboto
+// for labels/buttons. Families are registered in App.tsx.
 
 export const fonts = {
-  // Comfortaa (display / headings / logo)
-  display: 'Comfortaa_700Bold',
-  displayMedium: 'Comfortaa_500Medium',
+  // Poppins (display / headings / logo)
+  display: 'Poppins_700Bold',
+  displayMedium: 'Poppins_600SemiBold',
   // Roboto
   robotoRegular: 'Roboto_400Regular',
   robotoMedium: 'Roboto_500Medium',

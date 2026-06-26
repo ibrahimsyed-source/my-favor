@@ -143,13 +143,59 @@ export interface AppNotification {
   read: boolean;
 }
 
-// Fee helpers (kept here so member + pal sides agree on the math).
+// ---------------------------------------------------------------------------
+// Money model — ONE source of truth so the member invoice, the pal payout and
+// the earnings/transaction ledgers can never disagree.
+//
+//   Member pays:   base + serviceFee(2.9%) + transactionFee($0.30)   [computeFees]
+//   Pal receives:  base - platform commission                         [computePayout]
+//   Platform keeps: serviceFee + transactionFee + (base * commission)
+// ---------------------------------------------------------------------------
 export const SERVICE_FEE_RATE = 0.029;
 export const TRANSACTION_FEE = 0.3;
+// Take rate the pal pays on the base. Kept near category norms (15-25%) rather
+// than the old implicit ~50% so pals aren't pushed into a decline/churn spiral.
+export const PLATFORM_COMMISSION_RATE = 0.2;
+
+const round2 = (n: number) => Math.round(n * 100) / 100;
 
 export function computeFees(base: number) {
-  const serviceFee = Math.round(base * SERVICE_FEE_RATE * 100) / 100;
+  const serviceFee = round2(base * SERVICE_FEE_RATE);
   const transactionFee = TRANSACTION_FEE;
-  const total = Math.round((base + serviceFee + transactionFee) * 100) / 100;
+  const total = round2(base + serviceFee + transactionFee);
   return { serviceFee, transactionFee, total };
+}
+
+// What the pal actually earns from a favor (and what the platform keeps on it).
+export function computePayout(base: number, tip = 0) {
+  const commission = round2(base * PLATFORM_COMMISSION_RATE);
+  const payout = round2(base - commission + tip);
+  return { payout, commission, tip, base };
+}
+
+// Cancellation outcome, keyed off how far the favor has progressed. Before a pal
+// is matched it's a full refund; once a pal is committed a fee protects them.
+export function computeCancellation(favor: Pick<Favor, 'status' | 'price' | 'total'>) {
+  const committed = (['matched', 'enroute', 'arrived', 'in_progress'] as FavorStatus[]).includes(favor.status);
+  const inProgress = (['arrived', 'in_progress'] as FavorStatus[]).includes(favor.status);
+  let fee = 0;
+  if (inProgress) fee = round2(favor.price * 0.5);
+  else if (committed) fee = Math.min(5, round2(favor.price * 0.2));
+  const refund = round2(Math.max(0, favor.total - fee));
+  return { fee, refund, committed };
+}
+
+// Member-facing progress timeline for an active favor.
+export const MEMBER_STATUS_STEPS: { status: FavorStatus; label: string }[] = [
+  { status: 'matched', label: 'Pal accepted' },
+  { status: 'enroute', label: 'On the way' },
+  { status: 'arrived', label: 'Arrived' },
+  { status: 'in_progress', label: 'In progress' },
+  { status: 'completed', label: 'Completed' },
+];
+
+// Single source for the role-switch toggle copy (describes what tapping DOES),
+// so Home and Profile can never drift to contradictory labels.
+export function roleSwitchLabel(role: Role) {
+  return role === 'pal' ? 'Switch to request a favor' : 'Switch to be a Favor Pal';
 }

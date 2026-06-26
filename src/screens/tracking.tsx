@@ -1,12 +1,17 @@
 import React, { useState } from 'react';
 import {
-  View, Image, ScrollView, TouchableOpacity, StyleSheet,
+  View, Image, ScrollView, TouchableOpacity, StyleSheet, Share,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
-import { Screen, Txt, Button, Field, Avatar, StarRating } from '../components';
+import {
+  Screen, Txt, Button, Field, Avatar, StarRating, InfoModal, ConfirmModal,
+} from '../components';
 import { useTheme, tokens, palette } from '../theme';
 import { useStore } from '../store';
+import {
+  computeFees, computePayout, FAVOR_TIERS, MEMBER_STATUS_STEPS,
+} from '../types';
 
 // Dark map-sheet palette (this module renders on a dark map regardless of theme).
 const MAP_BG = palette.darkBg; // #131820
@@ -16,23 +21,80 @@ const SUBTEXT = '#9AA3B2';
 const WHITE = palette.white;
 const RED = palette.brand;
 
+const MONTHS_FULL = [
+  'January', 'February', 'March', 'April', 'May', 'June',
+  'July', 'August', 'September', 'October', 'November', 'December',
+];
+// "16 February 2024, 1:00PM" — falls back to the design literal when no favor.
+const formatFavorDate = (ms?: number) => {
+  if (!ms) return '16 February 2023, 1:00PM';
+  const d = new Date(ms);
+  let h = d.getHours();
+  const m = d.getMinutes();
+  const ampm = h >= 12 ? 'PM' : 'AM';
+  h = h % 12 || 12;
+  return `${d.getDate()} ${MONTHS_FULL[d.getMonth()]} ${d.getFullYear()}, ${h}:${m < 10 ? `0${m}` : m}${ampm}`;
+};
+
 // ---------------------------------------------------------------------------
-// 1) FavorTracking — "Favor Booked" dark map bottom sheet.
+// 1) FavorTracking — "Favor Booked" dark map bottom sheet (MEMBER side).
+// Renders from the member's own activeFavor + the booked activePal; only falls
+// back to the Figma literals when there is no live favor (prototype/demo).
 // ---------------------------------------------------------------------------
 export const FavorTracking = ({ navigation }: any) => {
   const s = useStore();
+  const fav = s.activeFavor;
+  const pal = s.activePal;
+  const [callVisible, setCallVisible] = useState(false);
 
-  const onComplete = () => navigation.navigate('OrderComplete');
+  // Resolve display values from real state, with design-literal fallbacks.
+  const palName = pal ? `${pal.firstName} ${pal.lastName}` : 'Aditya Patil';
+  const palAvatar = pal?.avatar ?? 'https://i.pravatar.cc/150?img=33';
+  const description = (fav?.description && fav.description.trim())
+    || 'Pick up package from Amazon Hub Lockers';
+  const dateLabel = formatFavorDate(fav?.scheduledFor ?? fav?.createdAt);
+  const etaWindow = fav?.etaWindow ?? '11:50AM - 12:10PM';
+  const address = fav?.location?.address ?? '2099 Woodvine Rd, Lorman';
+  const tierLabel = fav && fav.tier in FAVOR_TIERS
+    ? FAVOR_TIERS[fav.tier as keyof typeof FAVOR_TIERS].label
+    : 'Tiny Favor';
+
+  // Money: the MEMBER sees what THEY paid (computeFees), plus a transparency split.
+  const base = fav?.price ?? 20;
+  const fees = computeFees(base);
+  const totalPaid = fav?.total ?? fees.total;
+  const { payout } = computePayout(base);
+
+  // Member-facing status timeline (Pal accepted -> ... -> Completed).
+  const currentStep = MEMBER_STATUS_STEPS.findIndex((st) => st.status === fav?.status);
+  const statusLabel = currentStep >= 0 ? MEMBER_STATUS_STEPS[currentStep].label : 'Finding your Pal…';
+  const isCompleted = fav?.status === 'completed';
+
   const onCancel = () => {
     s.cancelFavor();
     if (navigation.canGoBack()) navigation.goBack();
+  };
+
+  // SHARE doubles as share-trip (live status/ETA) + a referral growth loop.
+  const onShare = () => {
+    Share.share({
+      message:
+        `I just booked a ${tierLabel} on My Favor! My Pal ${palName} is arriving ${etaWindow}. `
+        + `Join me and get $10 off your first favor: https://myfavor.app/r/${s.user?.id ?? 'invite'}`,
+    }).catch(() => {});
   };
 
   return (
     <SafeAreaView style={{ flex: 1, backgroundColor: MAP_BG }} edges={['top', 'bottom']}>
       {/* Top nav banner over the (dark) map */}
       <View style={styles.navRow}>
-        <TouchableOpacity style={styles.menuBtn} activeOpacity={0.8}>
+        <TouchableOpacity
+          style={styles.menuBtn}
+          activeOpacity={0.8}
+          onPress={() => navigation.navigate('SideDrawer')}
+          accessibilityRole="button"
+          accessibilityLabel="Open menu"
+        >
           <Ionicons name="menu" size={22} color={WHITE} />
         </TouchableOpacity>
         <View style={styles.switchPill}>
@@ -65,18 +127,26 @@ export const FavorTracking = ({ navigation }: any) => {
           {/* Pal / favor profile row */}
           <View style={styles.profileRow}>
             <View>
-              <Avatar uri="https://i.pravatar.cc/150?img=33" size={56} />
+              <Avatar uri={palAvatar} size={56} />
               <View style={styles.badge}>
                 <Ionicons name="add" size={12} color={WHITE} />
               </View>
             </View>
             <View style={{ flex: 1, marginLeft: 14 }}>
-              <Txt variant="label" color={WHITE}>Aditya Patil</Txt>
+              <Txt variant="label" color={WHITE}>{palName}</Txt>
+              {pal ? (
+                <View style={styles.ratingRow} accessibilityLabel={`Pal rated ${pal.rating.toFixed(1)} out of 5`}>
+                  <StarRating value={pal.rating} size={12} />
+                  <Txt variant="caption" color={SUBTEXT} style={{ marginLeft: 6 }}>
+                    {pal.rating.toFixed(1)}
+                  </Txt>
+                </View>
+              ) : null}
               <Txt variant="caption" color={SUBTEXT} numberOfLines={2} style={{ marginTop: 2 }}>
-                Pick up package from Amazon Hub Lockers
+                {description}
               </Txt>
               <Txt variant="caption" color={SUBTEXT} style={{ marginTop: 2 }}>
-                16 February 2023, 1:00PM
+                {dateLabel}
               </Txt>
               <TouchableOpacity activeOpacity={0.7}>
                 <Txt variant="caption" color={RED} style={{ marginTop: 4 }}>View More</Txt>
@@ -86,26 +156,67 @@ export const FavorTracking = ({ navigation }: any) => {
 
           {/* Arrival window */}
           <Txt variant="h2" center color={WHITE} style={{ marginTop: tokens.spacing.lg }}>
-            11:50AM - 12:10PM
+            {etaWindow}
           </Txt>
 
-          <TouchableOpacity style={styles.cancelPill} activeOpacity={0.8} onPress={onCancel}>
+          {/* Member status timeline driven by activeFavor.status */}
+          <View
+            style={styles.timeline}
+            accessibilityRole="progressbar"
+            accessibilityLabel={`Favor status: ${statusLabel}`}
+          >
+            {MEMBER_STATUS_STEPS.map((step, i) => {
+              const done = i <= currentStep;
+              const isCurrent = i === currentStep;
+              return (
+                <React.Fragment key={step.status}>
+                  {i > 0 && (
+                    <View style={[styles.timelineBar, { backgroundColor: i <= currentStep ? RED : SHEET_BORDER }]} />
+                  )}
+                  <View
+                    style={[
+                      styles.timelineDot,
+                      {
+                        backgroundColor: done ? RED : SHEET_BG,
+                        borderColor: isCurrent ? WHITE : done ? RED : SHEET_BORDER,
+                      },
+                    ]}
+                  />
+                </React.Fragment>
+              );
+            })}
+          </View>
+          <Txt variant="caption" center color={SUBTEXT} style={{ marginTop: 6 }}>
+            {statusLabel}
+          </Txt>
+
+          <TouchableOpacity
+            style={styles.cancelPill}
+            activeOpacity={0.8}
+            onPress={onCancel}
+            accessibilityRole="button"
+            accessibilityLabel="Cancel favor"
+          >
             <Txt variant="button" color={WHITE}>CANCEL FAVOR</Txt>
           </TouchableOpacity>
 
           <View style={styles.divider} />
 
-          {/* Favor / payout row */}
+          {/* Favor / total-paid row */}
           <View style={styles.favorRow}>
             <View style={styles.favorIcon}>
               <Ionicons name="cube" size={20} color={RED} />
             </View>
             <View style={{ flex: 1, marginLeft: 14 }}>
-              <Txt variant="label" color={WHITE}>Tiny Favor</Txt>
-              <Txt variant="caption" color={SUBTEXT} style={{ marginTop: 2 }}>Payout</Txt>
+              <Txt variant="label" color={WHITE}>{tierLabel}</Txt>
+              <Txt variant="caption" color={SUBTEXT} style={{ marginTop: 2 }}>Total paid</Txt>
             </View>
-            <Txt variant="label" color={WHITE}>$10.00</Txt>
+            <Txt variant="label" color={WHITE}>${totalPaid.toFixed(2)}</Txt>
           </View>
+          {/* Transparency: what the member paid vs what the Pal actually receives */}
+          <Txt variant="caption" color={SUBTEXT} style={{ marginTop: 6, marginLeft: 58 }}>
+            Pal receives ${payout.toFixed(2)} · Service fee ${fees.serviceFee.toFixed(2)}
+          </Txt>
 
           {/* Description */}
           <View style={styles.metaLabel}>
@@ -113,7 +224,7 @@ export const FavorTracking = ({ navigation }: any) => {
             <Txt variant="caption" color={SUBTEXT} style={{ marginLeft: 8 }}>Description</Txt>
           </View>
           <Txt variant="bodySm" color={WHITE} style={{ marginTop: 4, marginLeft: 24 }}>
-            Need to walk my dog around 4pm
+            {description}
           </Txt>
 
           {/* Address */}
@@ -122,19 +233,45 @@ export const FavorTracking = ({ navigation }: any) => {
             <Txt variant="caption" color={SUBTEXT} style={{ marginLeft: 8 }}>Address</Txt>
           </View>
           <Txt variant="bodySm" color={WHITE} style={{ marginTop: 4, marginLeft: 24 }}>
-            2099 Woodvine Rd, Lorman
+            {address}
           </Txt>
 
-          {/* Actions */}
+          {/* Actions — member-voiced. The member never self-completes; rating is
+              gated behind a real pal-driven 'completed' status. */}
           <View style={styles.actionRow}>
-            <Button title="CALL CLIENT" variant="primary" style={{ flex: 1 }} onPress={() => {}} />
-            <Button title="I'M HERE" variant="white" style={{ flex: 1 }} onPress={onComplete} />
+            <Button
+              title="CALL YOUR PAL"
+              variant="primary"
+              style={{ flex: 1 }}
+              onPress={() => setCallVisible(true)}
+            />
+            {isCompleted ? (
+              <Button
+                title="RATE YOUR PAL"
+                variant="white"
+                style={{ flex: 1 }}
+                onPress={() => navigation.navigate('OrderComplete')}
+              />
+            ) : (
+              <Button
+                title="MESSAGE PAL"
+                variant="white"
+                style={{ flex: 1 }}
+                onPress={() => navigation.navigate('Tabs', { screen: 'Messages' })}
+              />
+            )}
           </View>
         </ScrollView>
 
-        {/* Bottom tab bar (visual, matches reference) */}
+        {/* Bottom tab bar (visual, matches reference) — now wired */}
         <View style={styles.tabBar}>
-          <TouchableOpacity style={styles.tabItem} activeOpacity={0.7}>
+          <TouchableOpacity
+            style={styles.tabItem}
+            activeOpacity={0.7}
+            onPress={onShare}
+            accessibilityRole="button"
+            accessibilityLabel="Share favor status and invite a friend"
+          >
             <Ionicons name="share-social-outline" size={22} color={SUBTEXT} />
             <Txt variant="tab" color={SUBTEXT} style={{ marginTop: 4 }}>SHARE</Txt>
           </TouchableOpacity>
@@ -142,18 +279,34 @@ export const FavorTracking = ({ navigation }: any) => {
             style={styles.tabItem}
             activeOpacity={0.85}
             onPress={() => navigation.navigate('Tabs')}
+            accessibilityRole="button"
+            accessibilityLabel="Home"
           >
             <View style={styles.homeBtn}>
               <Ionicons name="home" size={22} color={WHITE} />
             </View>
             <Txt variant="tab" color={RED} style={{ marginTop: 4 }}>HOME</Txt>
           </TouchableOpacity>
-          <TouchableOpacity style={styles.tabItem} activeOpacity={0.7}>
+          <TouchableOpacity
+            style={styles.tabItem}
+            activeOpacity={0.7}
+            onPress={() => navigation.navigate('Tabs', { screen: 'History' })}
+            accessibilityRole="button"
+            accessibilityLabel="Activity history"
+          >
             <Ionicons name="time-outline" size={22} color={SUBTEXT} />
             <Txt variant="tab" color={SUBTEXT} style={{ marginTop: 4 }}>ACTIVITY</Txt>
           </TouchableOpacity>
         </View>
       </View>
+
+      <InfoModal
+        visible={callVisible}
+        title="Connecting call"
+        message={`We're connecting you with ${palName} through a private number to keep both phone numbers protected.`}
+        buttonLabel="OK"
+        onClose={() => setCallVisible(false)}
+      />
     </SafeAreaView>
   );
 };
@@ -174,12 +327,28 @@ export const OrderComplete = ({ navigation }: any) => {
   const [rating, setRating] = useState(0);
   const [feedback, setFeedback] = useState('');
   const [tipKey, setTipKey] = useState<string | null>(null);
-  const [tip, setTip] = useState<number | undefined>(undefined);
+  const [customTip, setCustomTip] = useState('');
+  const [confirmVisible, setConfirmVisible] = useState(false);
 
-  const canSubmit = rating > 0;
-  const submit = () => {
+  // "Other" accepts a real numeric amount; presets map to their fixed value.
+  const isOther = tipKey === 'other';
+  const presetTip = TIPS.find((t) => t.key === tipKey)?.value;
+  const parsedCustom = Math.round(parseFloat(customTip) * 100) / 100;
+  const customValid = isOther && !Number.isNaN(parsedCustom) && parsedCustom > 0;
+  const tip = isOther ? (customValid ? parsedCustom : undefined) : presetTip;
+
+  // Block submit until rated, and until "Other" has a valid amount.
+  const canSubmit = rating > 0 && (!isOther || customValid);
+
+  const doSubmit = () => {
     s.rateFavor(rating, feedback, tip);
     navigation.navigate('Tabs');
+  };
+
+  // A tip is an additional post-payment charge — confirm it explicitly first.
+  const onSubmit = () => {
+    if (tip && tip > 0) setConfirmVisible(true);
+    else doSubmit();
   };
 
   const hr = <View style={[styles.hr, { backgroundColor: theme.divider }]} />;
@@ -215,14 +384,34 @@ export const OrderComplete = ({ navigation }: any) => {
             <TouchableOpacity
               key={t.key}
               activeOpacity={0.8}
-              onPress={() => { setTipKey(t.key); setTip(t.value); }}
+              onPress={() => { setTipKey(t.key); if (t.key !== 'other') setCustomTip(''); }}
               style={[styles.tipChip, { backgroundColor: active ? theme.cta : theme.inputBg }]}
+              accessibilityRole="button"
+              accessibilityState={{ selected: active }}
+              accessibilityLabel={t.key === 'other' ? 'Other tip amount' : `Tip ${t.label}`}
             >
               <Txt variant="body" color={active ? WHITE : theme.text}>{t.label}</Txt>
             </TouchableOpacity>
           );
         })}
       </View>
+
+      {isOther ? (
+        <View style={{ marginTop: tokens.spacing.base }}>
+          <Field
+            value={customTip}
+            onChangeText={setCustomTip}
+            placeholder="Enter tip amount (e.g. 8)"
+            keyboardType="decimal-pad"
+            icon="cash-outline"
+          />
+          {customTip.length > 0 && !customValid ? (
+            <Txt variant="caption" color={theme.danger} style={{ marginTop: -6 }}>
+              Enter a tip amount greater than $0.
+            </Txt>
+          ) : null}
+        </View>
+      ) : null}
 
       {hr}
 
@@ -243,11 +432,18 @@ export const OrderComplete = ({ navigation }: any) => {
         title="SUBMIT FEEDBACK"
         variant="primary"
         disabled={!canSubmit}
-        onPress={submit}
-        style={[
-          { marginTop: tokens.spacing.lg },
-          canSubmit ? null : { backgroundColor: '#C4C4C4', opacity: 1 },
-        ] as any}
+        onPress={onSubmit}
+        style={{ marginTop: tokens.spacing.lg }}
+      />
+
+      <ConfirmModal
+        visible={confirmVisible}
+        title="Add tip?"
+        message={`You'll be charged an additional $${(tip ?? 0).toFixed(2)}, which goes entirely to your Pal.`}
+        confirmLabel="Confirm tip"
+        cancelLabel="Not now"
+        onConfirm={() => { setConfirmVisible(false); doSubmit(); }}
+        onCancel={() => setConfirmVisible(false)}
       />
     </Screen>
   );
@@ -307,6 +503,23 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     borderWidth: 2,
     borderColor: SHEET_BG,
+  },
+  timeline: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginTop: tokens.spacing.md,
+  },
+  timelineDot: {
+    width: 12,
+    height: 12,
+    borderRadius: 6,
+    borderWidth: 2,
+  },
+  timelineBar: {
+    width: 28,
+    height: 2,
+    marginHorizontal: 2,
   },
   cancelPill: {
     alignSelf: 'center',

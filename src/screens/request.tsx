@@ -1,6 +1,6 @@
-import React, { useState } from 'react';
+import React, { useState, useRef, useCallback } from 'react';
 import {
-  View, Image, TouchableOpacity, StyleSheet, ScrollView, Dimensions,
+  View, Image, TextInput, TouchableOpacity, StyleSheet, ScrollView, Dimensions,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import Slider from '@react-native-community/slider';
@@ -22,6 +22,15 @@ const TIER_IMAGES: Record<'tiny' | 'small' | 'big' | 'huge', any> = {
   huge: require('../../assets/img/request/tier-huge.png'),
 };
 
+// Plain-language examples so members can pick the right tier instead of guessing.
+// Kept local (FAVOR_TIERS lives in the shared types module we don't edit here).
+const TIER_EXAMPLES: Record<'tiny' | 'small' | 'big' | 'huge', string> = {
+  tiny: 'Quick errands — dog walk, coffee run',
+  small: '~1hr tasks — groceries, yard tidy',
+  big: 'Half-day help — furniture build, deep clean',
+  huge: 'Big jobs — small move, event setup',
+};
+
 // ---------------------------------------------------------------------------
 // Shared bits
 // ---------------------------------------------------------------------------
@@ -39,9 +48,10 @@ const TierCard: React.FC<{
   image?: any;
   title: string;
   price: string;
+  example?: string;
   selected: boolean;
   onPress: () => void;
-}> = ({ image, title, price, selected, onPress }) => {
+}> = ({ image, title, price, example, selected, onPress }) => {
   const { theme } = useTheme();
   return (
     <Card
@@ -67,6 +77,11 @@ const TierCard: React.FC<{
         <Txt variant="caption" color={theme.textSecondary} style={{ marginTop: 4 }}>
           {price}
         </Txt>
+        {example ? (
+          <Txt variant="caption" color={theme.textTertiary} style={{ marginTop: 2 }}>
+            {example}
+          </Txt>
+        ) : null}
       </View>
       <View
         style={[
@@ -111,9 +126,18 @@ export function SelectFavor({ navigation }: any) {
       />
       <ScrollView contentContainerStyle={{ padding: tokens.spacing.lg }}>
         <Txt variant="h3">How big is the favor?</Txt>
-        <Txt variant="body" color={theme.text} style={{ marginTop: 8, marginBottom: tokens.spacing.xl }}>
+        <Txt variant="body" color={theme.text} style={{ marginTop: 8, marginBottom: tokens.spacing.base }}>
           Choose the cost of favor based on the amount of effort required.
         </Txt>
+
+        <View
+          style={{ flexDirection: 'row', alignItems: 'center', marginBottom: tokens.spacing.xl }}
+        >
+          <Ionicons name="information-circle-outline" size={16} color={theme.textSecondary} />
+          <Txt variant="caption" color={theme.textSecondary} style={{ flex: 1, marginLeft: 6 }}>
+            You'll choose your Favor Pal next — review their profile before they start.
+          </Txt>
+        </View>
 
         {tierKeys.map((key) => (
           <TierCard
@@ -121,6 +145,7 @@ export function SelectFavor({ navigation }: any) {
             image={TIER_IMAGES[key as 'tiny' | 'small' | 'big' | 'huge']}
             title={FAVOR_TIERS[key].label}
             price={`$${FAVOR_TIERS[key].price.toFixed(2)}`}
+            example={TIER_EXAMPLES[key as 'tiny' | 'small' | 'big' | 'huge']}
             selected={selected === key}
             onPress={() => setSelected(key)}
           />
@@ -147,6 +172,36 @@ export function SelectFavor({ navigation }: any) {
 const DESC_PLACEHOLDER =
   'Provide as much detail as possible about your favor!  Let your provider know about what they will be doing, what they will need to bring, special requirements, etc.';
 
+const DESC_MAX = 250;
+
+// Memoized so a parent re-render (e.g. the Negotiate price slider dragging) never
+// re-renders this TextInput. The counter shows the remaining-count honestly.
+const DescriptionField = React.memo(function DescriptionField({
+  value,
+  onChangeText,
+  maxLength = DESC_MAX,
+}: {
+  value: string;
+  onChangeText: (t: string) => void;
+  maxLength?: number;
+}) {
+  const { theme } = useTheme();
+  return (
+    <>
+      <Field
+        value={value}
+        onChangeText={onChangeText}
+        placeholder={DESC_PLACEHOLDER}
+        multiline
+        maxLength={maxLength}
+      />
+      <Txt variant="bodySm" color={theme.textSecondary} style={{ textAlign: 'right', marginTop: -8 }}>
+        {maxLength - value.length} characters left.
+      </Txt>
+    </>
+  );
+});
+
 export function FavorDescription({ navigation }: any) {
   const { theme } = useTheme();
   const s = useStore();
@@ -162,8 +217,11 @@ export function FavorDescription({ navigation }: any) {
     }
   };
 
+  const canNext = desc.trim().length > 0;
+
   const onNext = () => {
-    s.setDraft({ description: desc, images: image ? [image] : [] });
+    if (!canNext) return;
+    s.setDraft({ description: desc.trim(), images: image ? [image] : [] });
     navigation.navigate('ConfirmAddress');
   };
 
@@ -179,16 +237,7 @@ export function FavorDescription({ navigation }: any) {
           Describe the favor you need.
         </Txt>
 
-        <Field
-          value={desc}
-          onChangeText={setDesc}
-          placeholder={DESC_PLACEHOLDER}
-          multiline
-          maxLength={250}
-        />
-        <Txt variant="bodySm" color={theme.textSecondary} style={{ textAlign: 'right', marginTop: -8 }}>
-          {250 - desc.length} characters max.
-        </Txt>
+        <DescriptionField value={desc} onChangeText={setDesc} />
 
         <TouchableOpacity activeOpacity={0.8} onPress={pickImage} style={[styles.addTile, { backgroundColor: theme.inputBg, borderColor: theme.border }]}>
           {image ? (
@@ -203,7 +252,7 @@ export function FavorDescription({ navigation }: any) {
       </ScrollView>
 
       <Footer>
-        <Button title="NEXT" onPress={onNext} />
+        <Button title="NEXT" disabled={!canNext} onPress={onNext} />
       </Footer>
     </Screen>
   );
@@ -215,11 +264,17 @@ export function FavorDescription({ navigation }: any) {
 const HOURLY_RATE = 100; // $/hr — 2hrs => $200 (matches reference thumb).
 const BUBBLE = 48;
 
-export function Negotiate({ navigation }: any) {
+// The slider + price bubble + derived labels own their own `hours` state and are
+// memoized, so dragging (which fires on every tick) never re-renders the parent
+// Negotiate screen or its description TextInput. The committed price is reported
+// up via onChange (the parent keeps it in a ref to avoid re-rendering on drag).
+const PriceSlider = React.memo(function PriceSlider({
+  onChange,
+}: {
+  onChange: (hours: number, price: number) => void;
+}) {
   const { theme } = useTheme();
-  const s = useStore();
   const [hours, setHours] = useState(2);
-  const [desc, setDesc] = useState(s.draftFavor?.description ?? '');
   const [trackW, setTrackW] = useState(0);
 
   const rounded = Math.round(hours);
@@ -227,8 +282,79 @@ export function Negotiate({ navigation }: any) {
   const frac = hours / 24;
   const bubbleLeft = frac * Math.max(0, trackW - BUBBLE);
 
+  const handleValue = (v: number) => {
+    setHours(v);
+    const r = Math.round(v);
+    onChange(r, r * HOURLY_RATE);
+  };
+
+  return (
+    <>
+      <View
+        style={{ height: BUBBLE, justifyContent: 'center', marginTop: tokens.spacing.xxl }}
+        onLayout={(e) => setTrackW(e.nativeEvent.layout.width)}
+      >
+        <Slider
+          style={{ width: '100%', height: 40 }}
+          minimumValue={0}
+          maximumValue={24}
+          step={1}
+          value={hours}
+          onValueChange={handleValue}
+          minimumTrackTintColor="#141414"
+          maximumTrackTintColor={theme.divider}
+          thumbTintColor="#141414"
+          accessibilityRole="adjustable"
+          accessibilityLabel="Favor duration"
+          accessibilityValue={{ text: `${rounded} hours, $${price}` }}
+        />
+        <View
+          pointerEvents="none"
+          style={{
+            position: 'absolute',
+            left: bubbleLeft,
+            width: BUBBLE,
+            height: BUBBLE,
+            borderRadius: BUBBLE / 2,
+            backgroundColor: '#141414',
+            alignItems: 'center',
+            justifyContent: 'center',
+          }}
+        >
+          <Txt variant="caption" color="#FFFFFF" style={{ fontSize: 12 }}>${price}</Txt>
+        </View>
+      </View>
+
+      <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginTop: tokens.spacing.sm }}>
+        <Txt variant="h6">0</Txt>
+        <Txt variant="h6">{rounded}hrs</Txt>
+        <Txt variant="h6">24hrs</Txt>
+      </View>
+
+      <Txt variant="body" color={theme.textSecondary} center style={{ marginTop: tokens.spacing.base }}>
+        {rounded}hrs x ${HOURLY_RATE} = ${price}
+      </Txt>
+    </>
+  );
+});
+
+export function Negotiate({ navigation }: any) {
+  const { theme } = useTheme();
+  const s = useStore();
+  const [desc, setDesc] = useState(s.draftFavor?.description ?? '');
+  // Hold the slider's committed price in a ref so drags don't re-render this screen.
+  const priceRef = useRef({ hours: 2, price: 2 * HOURLY_RATE });
+
+  const handlePrice = useCallback((hours: number, price: number) => {
+    priceRef.current = { hours, price };
+  }, []);
+
+  const canNext = desc.trim().length > 0;
+
   const onNext = () => {
-    s.setDraft({ tier: 'negotiate', hours: rounded, price, description: desc });
+    if (!canNext) return;
+    const { hours, price } = priceRef.current;
+    s.setDraft({ tier: 'negotiate', hours, price, description: desc.trim() });
     navigation.navigate('ConfirmAddress');
   };
 
@@ -244,62 +370,16 @@ export function Negotiate({ navigation }: any) {
           Use the slider below to calculate your favor price based on the time you need
         </Txt>
 
-        <View style={{ height: BUBBLE, justifyContent: 'center', marginTop: tokens.spacing.xxl }} onLayout={(e) => setTrackW(e.nativeEvent.layout.width)}>
-          <Slider
-            style={{ width: '100%', height: 40 }}
-            minimumValue={0}
-            maximumValue={24}
-            step={1}
-            value={hours}
-            onValueChange={setHours}
-            minimumTrackTintColor="#141414"
-            maximumTrackTintColor={theme.divider}
-            thumbTintColor="#141414"
-          />
-          <View
-            pointerEvents="none"
-            style={{
-              position: 'absolute',
-              left: bubbleLeft,
-              width: BUBBLE,
-              height: BUBBLE,
-              borderRadius: BUBBLE / 2,
-              backgroundColor: '#141414',
-              alignItems: 'center',
-              justifyContent: 'center',
-            }}
-          >
-            <Txt variant="caption" color="#FFFFFF" style={{ fontSize: 12 }}>${price}</Txt>
-          </View>
-        </View>
-
-        <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginTop: tokens.spacing.sm }}>
-          <Txt variant="h6">0</Txt>
-          <Txt variant="h6">{rounded}hrs</Txt>
-          <Txt variant="h6">24hrs</Txt>
-        </View>
-
-        <Txt variant="body" color={theme.textSecondary} center style={{ marginTop: tokens.spacing.base }}>
-          {rounded}hrs x ${HOURLY_RATE} = ${price}
-        </Txt>
+        <PriceSlider onChange={handlePrice} />
 
         <Txt variant="body" color={theme.text} style={{ marginTop: tokens.spacing.xxl, marginBottom: tokens.spacing.base }}>
           Describe the favor you need.
         </Txt>
-        <Field
-          value={desc}
-          onChangeText={setDesc}
-          placeholder={DESC_PLACEHOLDER}
-          multiline
-          maxLength={250}
-        />
-        <Txt variant="bodySm" color={theme.textSecondary} style={{ textAlign: 'right', marginTop: -8 }}>
-          {250 - desc.length} characters max.
-        </Txt>
+        <DescriptionField value={desc} onChangeText={setDesc} />
       </ScrollView>
 
       <Footer>
-        <Button title="NEXT" onPress={onNext} />
+        <Button title="NEXT" disabled={!canNext} onPress={onNext} />
       </Footer>
     </Screen>
   );
@@ -314,14 +394,35 @@ const MapMarker: React.FC<{ uri?: string }> = ({ uri }) => (
   </View>
 );
 
+// Honest "When?" options that actually set draft.scheduledFor (requestFavor reads
+// it). The clock icon now describes timing instead of the old mislabeled "Where to?".
+const WHEN_OPTIONS: { label: string; offsetMs?: number }[] = [
+  { label: 'Now' },
+  { label: 'In 1 hour', offsetMs: 60 * 60 * 1000 },
+  { label: 'In 3 hours', offsetMs: 3 * 60 * 60 * 1000 },
+  { label: 'Tomorrow', offsetMs: 24 * 60 * 60 * 1000 },
+];
+
 export function ConfirmAddress({ navigation }: any) {
   const { theme } = useTheme();
   const s = useStore();
-  const address = s.user?.homeAddress ?? '2099 Woodvine Rd, Lorman, MS';
+  // Editable — default from the member's saved home address, fall back to the seed.
+  const [address, setAddress] = useState(
+    s.draftFavor?.location?.address ?? s.user?.homeAddress ?? '2099 Woodvine Rd, Lorman, MS'
+  );
+  const [whenIdx, setWhenIdx] = useState(0);
   const pals = s.pals;
 
+  const when = WHEN_OPTIONS[whenIdx];
+  const canConfirm = address.trim().length > 0;
+
   const onConfirm = () => {
-    s.setDraft({ location: { lat: 31.8069, lng: -91.0593, address } });
+    if (!canConfirm) return;
+    const scheduledFor = when.offsetMs != null ? Date.now() + when.offsetMs : undefined;
+    s.setDraft({
+      location: { lat: 31.8069, lng: -91.0593, address: address.trim() },
+      scheduledFor,
+    });
     navigation.navigate('FavorSummary');
   };
 
@@ -349,14 +450,27 @@ export function ConfirmAddress({ navigation }: any) {
           <Card>
             <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
               <Txt variant="label">Location of your favor</Txt>
-              <TouchableOpacity onPress={() => navigation.goBack()} hitSlop={10}>
+              <TouchableOpacity
+                onPress={() => navigation.goBack()}
+                hitSlop={10}
+                accessibilityRole="button"
+                accessibilityLabel="Close"
+              >
                 <Ionicons name="close" size={20} color={theme.textSecondary} />
               </TouchableOpacity>
             </View>
 
             <View style={{ flexDirection: 'row', alignItems: 'center', marginTop: tokens.spacing.md }}>
               <Ionicons name="location" size={18} color={theme.primary} />
-              <Txt variant="body" numberOfLines={1} style={{ flex: 1, marginLeft: 8 }}>{address}</Txt>
+              <TextInput
+                value={address}
+                onChangeText={setAddress}
+                placeholder="Enter the favor address"
+                placeholderTextColor={theme.textTertiary}
+                style={[tokens.typography.body, { flex: 1, marginLeft: 8, color: theme.text, paddingVertical: 0 }]}
+                returnKeyType="done"
+                accessibilityLabel="Favor address"
+              />
             </View>
 
             <View
@@ -372,15 +486,29 @@ export function ConfirmAddress({ navigation }: any) {
             >
               <View style={{ flexDirection: 'row', alignItems: 'center' }}>
                 <Ionicons name="time-outline" size={18} color={theme.textSecondary} />
-                <Txt variant="bodySm" color={theme.textSecondary} style={{ marginLeft: 8 }}>Where to?</Txt>
+                <Txt variant="bodySm" color={theme.textSecondary} style={{ marginLeft: 8 }}>When?</Txt>
               </View>
-              <View style={{ backgroundColor: theme.surfaceAlt, paddingHorizontal: 16, paddingVertical: 6, borderRadius: tokens.radius.pill }}>
-                <Txt variant="label">NOW</Txt>
-              </View>
+              <TouchableOpacity
+                onPress={() => setWhenIdx((i) => (i + 1) % WHEN_OPTIONS.length)}
+                accessibilityRole="button"
+                accessibilityLabel={`When: ${when.label}`}
+                accessibilityHint="Tap to change when the favor should happen"
+                style={{
+                  backgroundColor: theme.surfaceAlt,
+                  paddingHorizontal: 16,
+                  paddingVertical: 6,
+                  borderRadius: tokens.radius.pill,
+                  flexDirection: 'row',
+                  alignItems: 'center',
+                }}
+              >
+                <Txt variant="label">{when.label}</Txt>
+                <Ionicons name="chevron-down" size={14} color={theme.textSecondary} style={{ marginLeft: 4 }} />
+              </TouchableOpacity>
             </View>
 
             <View style={{ marginTop: tokens.spacing.base }}>
-              <Button title="Confirm Address" uppercase={false} onPress={onConfirm} />
+              <Button title="Confirm Address" uppercase={false} disabled={!canConfirm} onPress={onConfirm} />
             </View>
           </Card>
         </View>

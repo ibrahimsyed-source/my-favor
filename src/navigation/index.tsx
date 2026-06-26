@@ -19,6 +19,7 @@ import * as Msg from '../screens/messages';
 import * as Prof from '../screens/profile';
 import * as Pay from '../screens/payment';
 import * as Hist from '../screens/history';
+import * as Notif from '../screens/notifications';
 
 const Stack = createNativeStackNavigator<RootStackParamList>();
 const Tab = createBottomTabNavigator<TabParamList>();
@@ -27,24 +28,29 @@ const TAB_ICON: Record<keyof TabParamList, keyof typeof Ionicons.glyphMap> = {
   Home: 'home',
   Messages: 'chatbubble',
   History: 'time',
+  Earnings: 'cash',
   Profile: 'person',
 };
 
 function Tabs() {
-  const { theme } = useTheme();
+  const { theme, isDark } = useTheme();
+  const { user } = useStore();
+  const isPal = user?.role === 'pal';
   return (
     <Tab.Navigator
       screenOptions={({ route }) => ({
         headerShown: false,
         tabBarActiveTintColor: theme.primary,
         tabBarInactiveTintColor: theme.textTertiary,
-        tabBarStyle: { backgroundColor: theme.surface, borderTopColor: theme.border },
+        tabBarStyle: { backgroundColor: isDark ? theme.surface : '#FFFFFF', borderTopColor: theme.border },
         tabBarIcon: ({ color, size }) => <Ionicons name={TAB_ICON[route.name]} color={color} size={size} />,
       })}
     >
       <Tab.Screen name="Home" component={Dash.Home} />
       <Tab.Screen name="Messages" component={Msg.Messages} />
       <Tab.Screen name="History" component={Hist.History} />
+      {/* Pals get a dedicated Earnings tab; members don't. */}
+      {isPal && <Tab.Screen name="Earnings" component={Payouts.Earnings} />}
       <Tab.Screen name="Profile" component={Prof.Profile} />
     </Tab.Navigator>
   );
@@ -107,6 +113,8 @@ export default function RootNavigator() {
           <Stack.Screen name="Payment" component={Pay.Payment} />
           <Stack.Screen name="AddCard" component={Pay.AddCard} />
           <Stack.Screen name="FavorHistoryDetail" component={Hist.FavorHistoryDetail} />
+          <Stack.Screen name="Notifications" component={Notif.Notifications} />
+          <Stack.Screen name="Vetting" component={Onb.Vetting} />
         </Stack.Group>
       )}
     </Stack.Navigator>

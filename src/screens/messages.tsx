@@ -1,11 +1,11 @@
-import React, { useRef, useState } from 'react';
+import React, { useCallback, useMemo, useState } from 'react';
 import {
-  View, Text, TextInput, TouchableOpacity, ScrollView, StyleSheet,
-  KeyboardAvoidingView, Platform,
+  View, Text, TextInput, TouchableOpacity, FlatList, StyleSheet,
+  KeyboardAvoidingView, Platform, Modal, ListRenderItemInfo,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
-import { Screen, Txt, Avatar } from '../components';
+import { Screen, Txt, Avatar, ConfirmModal, InfoModal } from '../components';
 import { useStore } from '../store';
 import { useTheme, tokens } from '../theme';
 import { Message, Thread } from '../types';
@@ -34,7 +34,21 @@ export const Messages = ({ navigation }: any) => {
   const s = useStore();
   const [onlyUnread, setOnlyUnread] = useState(false);
 
-  const threads = onlyUnread ? s.threads.filter((t) => t.unread > 0) : s.threads;
+  // Hide conversations with blocked users so a block has a visible effect.
+  const threads = useMemo(() => {
+    const visible = s.threads.filter((t) => !s.blockedUsers.includes(t.withUser.id));
+    return onlyUnread ? visible.filter((t) => t.unread > 0) : visible;
+  }, [s.threads, s.blockedUsers, onlyUnread]);
+
+  const renderItem = useCallback(
+    ({ item }: ListRenderItemInfo<Thread>) => (
+      <ThreadRow
+        thread={item}
+        onPress={() => navigation.navigate('MessageThread', { threadId: item.id })}
+      />
+    ),
+    [navigation]
+  );
 
   return (
     <Screen padded={false}>
@@ -45,6 +59,9 @@ export const Messages = ({ navigation }: any) => {
           <TouchableOpacity
             activeOpacity={0.8}
             onPress={() => setOnlyUnread((v) => !v)}
+            accessibilityRole="button"
+            accessibilityLabel="Filter unread conversations"
+            accessibilityState={{ selected: onlyUnread }}
             style={[
               lstyles.chip,
               { backgroundColor: onlyUnread ? theme.cta : theme.secondaryBtn },
@@ -60,34 +77,37 @@ export const Messages = ({ navigation }: any) => {
           </TouchableOpacity>
         </View>
 
-        <ScrollView contentContainerStyle={{ paddingBottom: tokens.spacing.xl }}>
-          {threads.map((t) => (
-            <ThreadRow
-              key={t.id}
-              thread={t}
-              onPress={() => navigation.navigate('MessageThread', { threadId: t.id })}
-            />
-          ))}
-
-          {threads.length === 0 && (
+        <FlatList
+          data={threads}
+          keyExtractor={(t) => t.id}
+          renderItem={renderItem}
+          contentContainerStyle={{ paddingBottom: tokens.spacing.xl, flexGrow: 1 }}
+          keyboardShouldPersistTaps="handled"
+          ListEmptyComponent={
             <View style={{ paddingTop: 80, alignItems: 'center' }}>
               <Ionicons name="chatbubbles-outline" size={40} color={theme.textTertiary} />
               <Txt variant="body" color={theme.textSecondary} style={{ marginTop: 12 }}>
                 No unread messages
               </Txt>
             </View>
-          )}
-        </ScrollView>
+          }
+        />
       </View>
     </Screen>
   );
 };
 
-const ThreadRow: React.FC<{ thread: Thread; onPress: () => void }> = ({ thread, onPress }) => {
+const ThreadRow = React.memo<{ thread: Thread; onPress: () => void }>(({ thread, onPress }) => {
   const { theme } = useTheme();
   const unread = thread.unread > 0;
   return (
-    <TouchableOpacity activeOpacity={0.7} onPress={onPress} style={lstyles.row}>
+    <TouchableOpacity
+      activeOpacity={0.7}
+      onPress={onPress}
+      style={lstyles.row}
+      accessibilityRole="button"
+      accessibilityLabel={`Conversation with ${thread.withUser.name}${unread ? `, ${thread.unread} unread` : ''}`}
+    >
       <Avatar uri={thread.withUser.avatar} size={54} name={thread.withUser.name} />
       <View style={[lstyles.rowBody, { borderBottomColor: theme.divider }]}>
         <View style={lstyles.rowTop}>
@@ -116,7 +136,7 @@ const ThreadRow: React.FC<{ thread: Thread; onPress: () => void }> = ({ thread, 
       </View>
     </TouchableOpacity>
   );
-};
+});
 
 // ---------------------------------------------------------------------------
 // MessageThread — dark chat thread (matches message-thread.png).
@@ -138,17 +158,53 @@ export const MessageThread = ({ navigation, route }: any) => {
   const thread = s.threads.find((t) => t.id === threadId);
   const messages = s.messagesFor(threadId);
   const [text, setText] = useState('');
-  const scrollRef = useRef<ScrollView>(null);
+  const [menuOpen, setMenuOpen] = useState(false);
+  const [confirmBlock, setConfirmBlock] = useState(false);
+  const [reportDone, setReportDone] = useState(false);
 
   const myAvatar = s.user?.avatar ?? 'https://i.pravatar.cc/150?img=12';
   const theirAvatar = thread?.withUser.avatar;
   const title = thread?.withUser.name ?? 'Chat';
+  const otherUserId = thread?.withUser.id;
+
+  // Inverted FlatList renders newest-first (pinned to the bottom), so it never
+  // needs the manual scrollToEnd hack. Reverse a copy for that orientation.
+  const reversed = useMemo(() => [...messages].reverse(), [messages]);
+
+  const renderItem = useCallback(
+    ({ item, index }: ListRenderItemInfo<Message>) => {
+      // In the reversed list the chronologically-later message is the previous
+      // index, so a run's "tail" (the bubble that carries the avatar) is the
+      // newest item or one whose later neighbour has a different sender.
+      const tail = index === 0 || reversed[index - 1].fromMe !== item.fromMe;
+      return (
+        <Bubble
+          message={item}
+          showAvatar={tail}
+          avatarUri={item.fromMe ? myAvatar : theirAvatar}
+        />
+      );
+    },
+    [reversed, myAvatar, theirAvatar]
+  );
 
   const send = () => {
     const t = text.trim();
     if (!t) return;
     s.sendMessage(threadId, t);
     setText('');
+  };
+
+  const onReport = () => {
+    setMenuOpen(false);
+    if (otherUserId) s.reportUser(otherUserId);
+    setReportDone(true);
+  };
+
+  const onConfirmBlock = () => {
+    setConfirmBlock(false);
+    if (otherUserId) s.blockUser(otherUserId);
+    navigation.goBack();
   };
 
   return (
@@ -159,35 +215,98 @@ export const MessageThread = ({ navigation, route }: any) => {
       <View style={{ flex: 1, backgroundColor: C.bg, paddingTop: insets.top }}>
         {/* Custom dark header: back, avatar + name (left-aligned), more */}
         <View style={tstyles.header}>
-          <TouchableOpacity onPress={() => navigation.goBack()} hitSlop={10}>
+          <TouchableOpacity
+            onPress={() => navigation.goBack()}
+            hitSlop={10}
+            accessibilityRole="button"
+            accessibilityLabel="Go back"
+          >
             <Ionicons name="arrow-back" size={26} color={C.text} />
           </TouchableOpacity>
           <Avatar uri={theirAvatar} size={40} name={title} />
           <Text style={tstyles.headerName} numberOfLines={1}>{title}</Text>
-          <TouchableOpacity hitSlop={10}>
+          <TouchableOpacity
+            hitSlop={10}
+            onPress={() => setMenuOpen(true)}
+            accessibilityRole="button"
+            accessibilityLabel={`More options for ${title}`}
+            accessibilityState={{ expanded: menuOpen }}
+          >
             <Ionicons name="ellipsis-horizontal" size={24} color={C.text} />
           </TouchableOpacity>
         </View>
 
-        <ScrollView
-          ref={scrollRef}
+        <FlatList
+          data={reversed}
+          inverted
+          keyExtractor={(m) => m.id}
+          renderItem={renderItem}
           style={{ flex: 1 }}
           contentContainerStyle={{ paddingVertical: 20, paddingHorizontal: 16 }}
-          onContentSizeChange={() => scrollRef.current?.scrollToEnd({ animated: false })}
           keyboardShouldPersistTaps="handled"
+        />
+
+        {/* Report / Block action sheet (overflow menu) */}
+        <Modal
+          visible={menuOpen}
+          transparent
+          animationType="fade"
+          onRequestClose={() => setMenuOpen(false)}
         >
-          {messages.map((m, i) => {
-            const tail = i === messages.length - 1 || messages[i + 1].fromMe !== m.fromMe;
-            return (
-              <Bubble
-                key={m.id}
-                message={m}
-                showAvatar={tail}
-                avatarUri={m.fromMe ? myAvatar : theirAvatar}
-              />
-            );
-          })}
-        </ScrollView>
+          <TouchableOpacity
+            activeOpacity={1}
+            style={tstyles.sheetScrim}
+            onPress={() => setMenuOpen(false)}
+          >
+            <View style={[tstyles.sheet, { paddingBottom: insets.bottom + 8 }]}>
+              <TouchableOpacity
+                style={tstyles.sheetRow}
+                onPress={onReport}
+                accessibilityRole="button"
+                accessibilityLabel={`Report ${title}`}
+              >
+                <Ionicons name="flag-outline" size={22} color={C.text} />
+                <Text style={tstyles.sheetTxt}>Report user</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={tstyles.sheetRow}
+                onPress={() => { setMenuOpen(false); setConfirmBlock(true); }}
+                accessibilityRole="button"
+                accessibilityLabel={`Block ${title}`}
+              >
+                <Ionicons name="ban-outline" size={22} color="#E5484D" />
+                <Text style={[tstyles.sheetTxt, { color: '#E5484D' }]}>Block user</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={[tstyles.sheetRow, tstyles.sheetCancel]}
+                onPress={() => setMenuOpen(false)}
+                accessibilityRole="button"
+                accessibilityLabel="Cancel"
+              >
+                <Text style={[tstyles.sheetTxt, { color: C.placeholder }]}>Cancel</Text>
+              </TouchableOpacity>
+            </View>
+          </TouchableOpacity>
+        </Modal>
+
+        <ConfirmModal
+          visible={confirmBlock}
+          title={`Block ${title}?`}
+          message={`You won't receive messages from ${title}, and this conversation will be hidden. You can unblock them later.`}
+          confirmLabel="Block"
+          cancelLabel="Keep conversation"
+          destructive
+          onConfirm={onConfirmBlock}
+          onCancel={() => setConfirmBlock(false)}
+        />
+
+        <InfoModal
+          visible={reportDone}
+          title="Report received"
+          message={`Thanks for letting us know. Our Trust & Safety team will review your report about ${title}.`}
+          buttonLabel="Done"
+          onClose={() => setReportDone(false)}
+        />
 
         {/* Input bar */}
         <View style={[tstyles.inputBar, { paddingBottom: insets.bottom + 14 }]}>
@@ -212,7 +331,7 @@ export const MessageThread = ({ navigation, route }: any) => {
   );
 };
 
-const Bubble: React.FC<{ message: Message; showAvatar: boolean; avatarUri?: string }> = ({
+const Bubble = React.memo<{ message: Message; showAvatar: boolean; avatarUri?: string }>(({
   message,
   showAvatar,
   avatarUri,
@@ -244,7 +363,7 @@ const Bubble: React.FC<{ message: Message; showAvatar: boolean; avatarUri?: stri
       {mine && <View style={{ marginLeft: 8 }}>{avatarSlot}</View>}
     </View>
   );
-};
+});
 
 const lstyles = StyleSheet.create({
   header: {
@@ -350,5 +469,35 @@ const tstyles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
     marginLeft: 8,
+  },
+  sheetScrim: {
+    flex: 1,
+    backgroundColor: 'rgba(0,0,0,0.5)',
+    justifyContent: 'flex-end',
+  },
+  sheet: {
+    backgroundColor: C.bar,
+    borderTopLeftRadius: 18,
+    borderTopRightRadius: 18,
+    paddingTop: 8,
+    paddingHorizontal: 8,
+  },
+  sheetRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 14,
+    paddingVertical: 18,
+    paddingHorizontal: 16,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    borderBottomColor: C.pill,
+  },
+  sheetCancel: {
+    justifyContent: 'center',
+    borderBottomWidth: 0,
+  },
+  sheetTxt: {
+    color: C.text,
+    fontFamily: tokens.typography.body.fontFamily,
+    fontSize: 17,
   },
 });

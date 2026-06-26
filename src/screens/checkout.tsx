@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   View, Text, Image, ScrollView, TouchableOpacity, Pressable, StyleSheet, Dimensions,
 } from 'react-native';
@@ -7,7 +7,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { Txt, Button, MapPlaceholder, InfoModal } from '../components';
 import { useTheme, tokens } from '../theme';
 import { useStore } from '../store';
-import { FAVOR_TIERS, computeFees, FavorTier } from '../types';
+import { FAVOR_TIERS, computeFees, computePayout, FavorTier } from '../types';
 
 // Tier illustrations (shared with the request flow) for the summary thumbnail.
 const TIER_IMAGES: Record<string, any> = {
@@ -22,9 +22,7 @@ const { width: SCREEN_W, height: SCREEN_H } = Dimensions.get('window');
 // Stripe-style blue "Pay" button on the payment sheet (matches the reference).
 const PAY_BLUE = '#2D6CE0';
 
-const FALLBACK_DESC =
-  'Sum dolor sit amet, consectetur adipiscing elit. A quis hendrerit sagittis, ' +
-  'duis lectus lacus, mattis pharetra morbi.';
+const FALLBACK_DESC = 'No description provided.';
 const FALLBACK_ADDRESS = '2099 Woodvine Rd, Lorman';
 
 // ---------------------------------------------------------------------------
@@ -39,10 +37,13 @@ function useFavorSummary() {
   const base = draftFavor?.price ?? tierMeta?.price ?? FAVOR_TIERS.tiny.price;
   const label = tierMeta?.label ?? 'Custom Favor';
   const fees = computeFees(base);
+  // Transparency split: what the member pays (fees.total) vs what the Pal
+  // actually receives after the platform commission.
+  const { payout } = computePayout(base);
   const description = draftFavor?.description || FALLBACK_DESC;
   const address = draftFavor?.location?.address || FALLBACK_ADDRESS;
   const image = draftFavor?.images?.[0];
-  return { base, label, fees, description, address, image, tier };
+  return { base, label, fees, payout, description, address, image, tier };
 }
 
 // ---------------------------------------------------------------------------
@@ -79,7 +80,7 @@ function CostRow({ left, right, bold }: { left: string; right: string; bold?: bo
 // ---------------------------------------------------------------------------
 function SummaryBody() {
   const { theme } = useTheme();
-  const { base, label, fees, description, address, image, tier } = useFavorSummary();
+  const { base, label, fees, payout, description, address, image, tier } = useFavorSummary();
   const tierImage = TIER_IMAGES[tier as string];
   return (
     <View style={styles.body}>
@@ -98,6 +99,7 @@ function SummaryBody() {
           <CostRow left="Service Fee @ 2.9%" right={`$${fees.serviceFee.toFixed(2)}`} />
           <CostRow left="Transaction Fee" right={`$${fees.transactionFee.toFixed(2)}`} />
           <CostRow left="Total Cost" right={`$${fees.total.toFixed(2)}`} />
+          <CostRow left="Favor Pal receives" right={`$${payout.toFixed(2)}`} />
         </View>
       </View>
 
@@ -155,15 +157,36 @@ export const SelectPayment = ({ navigation }: any) => {
   const { fees } = useFavorSummary();
   const [selected, setSelected] = useState<string | null>(cards[0]?.id ?? null);
   const [noPal, setNoPal] = useState(false);
+  const [notified, setNotified] = useState(false);
+
+  // Resolve the selection against the live card list rather than trusting raw
+  // state: if the chosen card was deleted on the Payment screen, `selected` no
+  // longer points at a real card and we must not let a paid favor go through
+  // with no funding source.
+  const selectedCard = cards.find((c) => c.id === selected);
+  const canPay = Boolean(selectedCard);
 
   const pay = async () => {
-    // No FavorPals available in the area → surface the empty-state alert.
+    if (!canPay) return; // guarded both here and via the disabled Pay button
+    // No FavorPals available in the area → surface the recovery flow.
     if (pals.length === 0) {
       setNoPal(true);
       return;
     }
     await requestFavor();
     navigation.navigate('Searching');
+  };
+
+  // Zero-supply recovery: instead of dead-ending the member on the payment
+  // sheet, register interest and return Home with their draft preserved so the
+  // favor can be retried once a Pal is available.
+  const onNotifyMe = () => {
+    setNoPal(false);
+    setNotified(true);
+  };
+  const onNotifiedClose = () => {
+    setNotified(false);
+    navigation.popToTop();
   };
 
   return (
@@ -235,7 +258,15 @@ export const SelectPayment = ({ navigation }: any) => {
           })}
         </View>
 
-        <TouchableOpacity activeOpacity={0.9} onPress={pay} style={[styles.payBtn, { backgroundColor: PAY_BLUE }]}>
+        <TouchableOpacity
+          activeOpacity={0.9}
+          onPress={pay}
+          disabled={!canPay}
+          accessibilityRole="button"
+          accessibilityLabel={`Pay US$${fees.total.toFixed(2)}`}
+          accessibilityState={{ disabled: !canPay }}
+          style={[styles.payBtn, { backgroundColor: PAY_BLUE, opacity: canPay ? 1 : 0.5 }]}
+        >
           <Txt variant="button" color="#fff" style={{ fontSize: 18, lineHeight: 24 }}>
             {`Pay US$${fees.total.toFixed(2)}`}
           </Txt>
@@ -246,8 +277,17 @@ export const SelectPayment = ({ navigation }: any) => {
       <InfoModal
         visible={noPal}
         title="NO FAVOR PAL AVAILABLE"
-        message="We are sorry that there are no FavorPals in your area at the moment.  Please try again later."
-        onClose={() => setNoPal(false)}
+        message="We're sorry — there are no Favor Pals in your area right now. We can let you know the moment one becomes available."
+        buttonLabel="Notify me when available"
+        onClose={onNotifyMe}
+      />
+
+      <InfoModal
+        visible={notified}
+        title="WE'LL NOTIFY YOU"
+        message="Great — we'll send you a notification as soon as a Favor Pal is available in your area. Your favor details have been saved."
+        buttonLabel="Back to Home"
+        onClose={onNotifiedClose}
       />
     </View>
   );
@@ -258,8 +298,20 @@ export const SelectPayment = ({ navigation }: any) => {
 // ===========================================================================
 export const Searching = ({ navigation }: any) => {
   const { theme } = useTheme();
-  const { pals } = useStore();
+  const { pals, advanceFavor } = useStore();
   const palName = pals[0]?.firstName ?? 'a Favor Pal';
+
+  // Simulate the Pal accepting shortly after payment, then advance the favor to
+  // 'matched' and replace into live tracking (replace so Back/gesture doesn't
+  // dump the member back onto this stale Searching modal). The "Choose another
+  // Favor Pal" button below stays as the genuine impatient-user fallback.
+  useEffect(() => {
+    const t = setTimeout(() => {
+      advanceFavor('matched');
+      navigation.replace('FavorTracking');
+    }, 2500);
+    return () => clearTimeout(t);
+  }, [advanceFavor, navigation]);
 
   return (
     <View style={{ flex: 1 }}>

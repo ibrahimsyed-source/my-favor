@@ -1,14 +1,13 @@
 import React from 'react';
 import {
-  View, ScrollView, StyleSheet, TouchableOpacity, Dimensions, DimensionValue,
+  View, ScrollView, StyleSheet, TouchableOpacity, useWindowDimensions, DimensionValue,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { Screen, Txt, Button, Avatar, MapPlaceholder } from '../components';
 import { useTheme, tokens } from '../theme';
 import { useStore } from '../store';
-import { reviews as seedReviews } from '../data/mockData';
+import { reviews as seedReviews, palReviews } from '../data/mockData';
 
-const { height: SCREEN_H } = Dimensions.get('window');
 const PIN_RED = '#D40000';
 const MONTHS = [
   'January', 'February', 'March', 'April', 'May', 'June',
@@ -35,14 +34,17 @@ const MapPin: React.FC<{ top: DimensionValue; left: DimensionValue; size?: numbe
 export const ProviderResults = ({ navigation }: any) => {
   const { theme } = useTheme();
   const { pals } = useStore();
+  // useWindowDimensions() re-renders on resize/rotation/split-view so the
+  // full-bleed map tracks the viewport instead of freezing at first paint.
+  const { height: SCREEN_H } = useWindowDimensions();
 
   return (
     <Screen padded={false}>
       <View style={{ flex: 1, backgroundColor: theme.background }}>
         <MapPlaceholder height={SCREEN_H} label="">
-          <MapPin top={SCREEN_H * 0.16} left="66%" />
-          <MapPin top={SCREEN_H * 0.27} left="22%" />
-          <MapPin top={SCREEN_H * 0.42} left="50%" />
+          <MapPin top="16%" left="66%" />
+          <MapPin top="27%" left="22%" />
+          <MapPin top="42%" left="50%" />
         </MapPlaceholder>
 
         <View style={[styles.sheet, { backgroundColor: theme.surface }]}>
@@ -60,6 +62,8 @@ export const ProviderResults = ({ navigation }: any) => {
                 key={pal.id}
                 activeOpacity={0.85}
                 style={styles.palCard}
+                accessibilityRole="button"
+                accessibilityLabel={`${pal.firstName} ${pal.lastName}, ${pal.rating.toFixed(1)} stars, ${distanceLabel(i)}. View profile`}
                 onPress={() => navigation.navigate('ProviderDetail', { palId: pal.id })}
               >
                 <Avatar uri={pal.avatar} size={62} name={pal.firstName} />
@@ -89,10 +93,21 @@ export const ProviderResults = ({ navigation }: any) => {
 // ---------------------------------------------------------------------------
 export const ProviderDetail = ({ navigation, route }: any) => {
   const { theme } = useTheme();
-  const { pals } = useStore();
+  const { pals, assignPal, history } = useStore();
+  const { height: SCREEN_H } = useWindowDimensions();
   const pal = pals.find((p) => p.id === route?.params?.palId) ?? pals[0];
 
   const mapH = SCREEN_H * 0.36;
+  // Per-pal reviews so reputation is no longer identical copy for everyone.
+  const palRevs = palReviews[pal.id] ?? seedReviews;
+  // Surface a rebook loop when the member has completed a favor with this pal before.
+  const bookedBefore = history.some((h) => h.palId === pal.id && h.status === 'completed');
+
+  // Bind the chosen pal to the active favor (core of the tracking flow), then track.
+  const book = () => {
+    assignPal(pal.id);
+    navigation.navigate('FavorTracking');
+  };
 
   return (
     <Screen padded={false}>
@@ -100,8 +115,8 @@ export const ProviderDetail = ({ navigation, route }: any) => {
         {/* Blurred / dimmed map top */}
         <View style={{ height: mapH }}>
           <MapPlaceholder height={mapH} label="">
-            <MapPin top={mapH * 0.18} left="74%" size={38} />
-            <MapPin top={mapH * 0.12} left="20%" size={38} />
+            <MapPin top="18%" left="74%" size={38} />
+            <MapPin top="12%" left="20%" size={38} />
             <View style={[styles.userPin, { borderColor: PIN_RED }]}>
               <Avatar uri={pal.avatar} size={34} name={pal.firstName} />
             </View>
@@ -156,17 +171,15 @@ export const ProviderDetail = ({ navigation, route }: any) => {
 
             <View style={[styles.divider, { backgroundColor: theme.divider }]} />
 
-            {/* Bio */}
+            {/* Bio — per-pal so every provider isn't identical */}
             <Txt variant="label" style={{ fontSize: 15 }}>How I can help?</Txt>
             <Txt variant="bodySm" color={theme.textSecondary} style={{ marginTop: 10, lineHeight: 22 }}>
-              Experienced with repairing doors , closets, fixing electronics, cabinets &amp;
-              pictures. Professional &amp; congenial inventor, designer and part-time tinkerer, a
-              lifetime of experience of assembling and disassembling with own tools.
+              {pal.bio}
             </Txt>
 
             {/* Reviews */}
             <View style={{ marginTop: tokens.spacing.lg }}>
-              {seedReviews.map((r) => (
+              {palRevs.map((r) => (
                 <View key={r.id} style={{ marginBottom: tokens.spacing.base }}>
                   <Txt
                     variant="bodySm"
@@ -186,10 +199,26 @@ export const ProviderDetail = ({ navigation, route }: any) => {
               ))}
             </View>
 
+            {/* Rebook affordance — only when this member has used this pal before */}
+            {bookedBefore && (
+              <TouchableOpacity
+                style={styles.rebookRow}
+                activeOpacity={0.7}
+                accessibilityRole="button"
+                accessibilityLabel={`Request ${pal.firstName} again`}
+                onPress={book}
+              >
+                <Ionicons name="refresh" size={16} color={theme.text} />
+                <Txt variant="bodySm" color={theme.text} style={{ marginLeft: 8 }}>
+                  You{"’"}ve booked {pal.firstName} before — Request again
+                </Txt>
+              </TouchableOpacity>
+            )}
+
             <Button
               title="BOOK FAVOR PAL"
               variant="primary"
-              onPress={() => navigation.navigate('FavorTracking')}
+              onPress={book}
               style={{ marginTop: tokens.spacing.sm }}
             />
           </ScrollView>
@@ -281,5 +310,11 @@ const styles = StyleSheet.create({
   divider: {
     height: StyleSheet.hairlineWidth,
     marginVertical: tokens.spacing.lg,
+  },
+  rebookRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginTop: tokens.spacing.lg,
   },
 });

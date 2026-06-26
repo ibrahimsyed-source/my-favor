@@ -7,6 +7,7 @@ import {
   Thread,
   Message,
   AppNotification,
+  computePayout,
 } from '../types';
 
 // Stable timestamps (Date.now is avoided so behavior is deterministic in dev).
@@ -63,6 +64,28 @@ export const reviews: Review[] = [
   { id: 'r3', authorName: 'Maureen G.', authorAvatar: 'https://i.pravatar.cc/150?img=9', rating: 4, comment: 'Friendly and got the job done.', date: NOW - 21 * DAY },
 ];
 
+// Distinct reviews per pal so ProviderDetail stops showing identical copy for everyone.
+export const palReviews: Record<string, Review[]> = {
+  u_fab: [
+    { id: 'fr1', authorName: 'Karen U.', authorAvatar: 'https://i.pravatar.cc/150?img=5', rating: 5, comment: 'Assembled my whole IKEA wardrobe in an hour. Brilliant.', date: NOW - 4 * DAY },
+    { id: 'fr2', authorName: 'Mike B.', authorAvatar: 'https://i.pravatar.cc/150?img=8', rating: 5, comment: 'Fixed a sticking door in 20 minutes. Great work.', date: NOW - 10 * DAY },
+    { id: 'fr3', authorName: 'Priya N.', authorAvatar: 'https://i.pravatar.cc/150?img=32', rating: 4, comment: 'Handled a tricky pickup without any fuss.', date: NOW - 21 * DAY },
+  ],
+  u_john: [
+    { id: 'jr1', authorName: 'Dan R.', authorAvatar: 'https://i.pravatar.cc/150?img=14', rating: 5, comment: 'Groceries on my doorstep in 30 minutes. Lifesaver.', date: NOW - 2 * DAY },
+    { id: 'jr2', authorName: 'Sofia K.', authorAvatar: 'https://i.pravatar.cc/150?img=23', rating: 4, comment: 'Friendly and quick, kept me updated the whole time.', date: NOW - 9 * DAY },
+  ],
+  u_may: [
+    { id: 'mr1', authorName: 'Tom A.', authorAvatar: 'https://i.pravatar.cc/150?img=11', rating: 5, comment: 'So thorough — labelled everything and texted photos.', date: NOW - 3 * DAY },
+    { id: 'mr2', authorName: 'Elena V.', authorAvatar: 'https://i.pravatar.cc/150?img=25', rating: 5, comment: 'Detail-oriented and lovely to deal with.', date: NOW - 15 * DAY },
+    { id: 'mr3', authorName: 'Raj P.', authorAvatar: 'https://i.pravatar.cc/150?img=51', rating: 4, comment: 'Picked up exactly what I needed.', date: NOW - 28 * DAY },
+  ],
+  u_love: [
+    { id: 'lr1', authorName: 'Grace W.', authorAvatar: 'https://i.pravatar.cc/150?img=44', rating: 4, comment: 'Reliable for errands and pickups.', date: NOW - 6 * DAY },
+    { id: 'lr2', authorName: 'Omar S.', authorAvatar: 'https://i.pravatar.cc/150?img=53', rating: 4, comment: 'Good communication, got it done.', date: NOW - 18 * DAY },
+  ],
+};
+
 export const favorsSeed: Favor[] = [
   {
     id: 'f_incoming', memberId: 'u_steph', palId: undefined, tier: 'tiny', price: 20,
@@ -98,9 +121,11 @@ export const transactions: Transaction[] = [
   { id: 't2', favorId: 'h2', title: 'Coffee run', amount: 20.88, status: 'cancelled', date: NOW - 12 * DAY, kind: 'payment' },
 ];
 
+// Pal earnings = base - platform commission (+ tip), from the single money model
+// so Earning History agrees with the member invoices and the payout shown in-flow.
 export const earnings: Transaction[] = [
-  { id: 'e1', favorId: 'h1', title: 'Dog walking', amount: 33.0, status: 'completed', date: NOW - 30 * DAY, kind: 'earning' },
-  { id: 'e2', favorId: 'f_incoming', title: 'Package pickup', amount: 10.0, status: 'in_progress', date: NOW - 3600000, kind: 'earning' },
+  { id: 'e1', favorId: 'h1', title: 'Dog walking', amount: computePayout(50, 4).payout, status: 'completed', date: NOW - 30 * DAY, kind: 'earning' },
+  { id: 'e2', favorId: 'f_incoming', title: 'Package pickup', amount: computePayout(20).payout, status: 'in_progress', date: NOW - 3600000, kind: 'earning' },
 ];
 
 export const threads: Thread[] = [

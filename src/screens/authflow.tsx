@@ -1,13 +1,25 @@
-import React, { useRef, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import {
   View, Text, TextInput, TouchableOpacity, ScrollView, Image, StyleSheet, ViewStyle,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
-import { Screen, TopBar, Txt, Button, Field } from '../components';
+import { Screen, TopBar, Txt, Button, Field, InfoModal } from '../components';
 import { useTheme, tokens, fonts } from '../theme';
 import { useStore } from '../store';
 
 const logo = require('../../assets/img/logo.png');
+
+// Mask a phone/email destination so the OTP screen can show where the code went
+// without exposing the full value (e.g. "j•••@gmail.com" / "••• ••• ••89").
+const maskDestination = (d?: string): string => {
+  if (!d) return '';
+  if (d.includes('@')) {
+    const [local, domain] = d.split('@');
+    return `${local.slice(0, 1)}${'•'.repeat(Math.max(local.length - 1, 2))}@${domain}`;
+  }
+  const digits = d.replace(/\D/g, '');
+  return digits.length >= 2 ? `••• ••• ••${digits.slice(-2)}` : '•••';
+};
 
 // ---------------------------------------------------------------------------
 // Shared building blocks (match the auth-form language: bold label above a
@@ -63,10 +75,21 @@ export const Login = ({ navigation }: any) => {
   const s = useStore();
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
+  const [submitting, setSubmitting] = useState(false);
 
+  // Guard against double-taps: a second tap while the (async) login is in
+  // flight would fire login() + navigate twice and corrupt the stack.
   const onLogin = async () => {
-    await s.login(email, password);
-    navigation.navigate('Tabs');
+    if (submitting) return;
+    setSubmitting(true);
+    try {
+      await s.login(email, password);
+      navigation.navigate('Tabs');
+    } catch (e) {
+      // Login failed — re-enable the button so the user can retry.
+    } finally {
+      setSubmitting(false);
+    }
   };
 
   return (
@@ -103,7 +126,7 @@ export const Login = ({ navigation }: any) => {
           </Txt>
         </TouchableOpacity>
 
-        <Button title="LOGIN" variant="primary" onPress={onLogin} style={{ marginTop: tokens.spacing.base }} />
+        <Button title="LOGIN" variant="primary" onPress={onLogin} loading={submitting} disabled={submitting} style={{ marginTop: tokens.spacing.base }} />
 
         <View style={{ flex: 1 }} />
         <View style={{ flexDirection: 'row', justifyContent: 'center', marginTop: tokens.spacing.xl }}>
@@ -185,10 +208,23 @@ export const Signup = ({ navigation }: any) => {
   const [phone, setPhone] = useState('');
   const [password, setPassword] = useState('');
   const [agree, setAgree] = useState(false);
+  const [submitting, setSubmitting] = useState(false);
+  const [termsVisible, setTermsVisible] = useState(false);
 
+  // SIGNUP is gated on `agree`; this guard also blocks double-taps from firing
+  // signup() + navigate twice. Pass the destination forward so OtpVerify can
+  // tell the user (masked) where the code was sent.
   const onSignup = async () => {
-    await s.signup({ firstName, lastName, email, phone, password });
-    navigation.navigate('OtpVerify');
+    if (submitting || !agree) return;
+    setSubmitting(true);
+    try {
+      await s.signup({ firstName, lastName, email, phone, password });
+      navigation.navigate('OtpVerify', { destination: phone || email });
+    } catch (e) {
+      // Signup failed — re-enable the button so the user can retry.
+    } finally {
+      setSubmitting(false);
+    }
   };
 
   return (
@@ -259,10 +295,14 @@ export const Signup = ({ navigation }: any) => {
 
         <PasswordField label="Set Password" value={password} onChangeText={setPassword} placeholder="Set Password" />
 
-        {/* Terms checkbox */}
+        {/* Terms checkbox — SIGNUP is gated on this. The "Terms & Conditions"
+            span itself opens a plain-language summary. */}
         <TouchableOpacity
           onPress={() => setAgree((v) => !v)}
           activeOpacity={0.7}
+          accessibilityRole="checkbox"
+          accessibilityState={{ checked: agree }}
+          accessibilityLabel="I agree to Terms and Conditions"
           style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'center', marginTop: tokens.spacing.sm, marginBottom: tokens.spacing.lg }}
         >
           <View
@@ -275,12 +315,42 @@ export const Signup = ({ navigation }: any) => {
             {agree ? <Ionicons name="checkmark" size={16} color="#FFFFFF" /> : null}
           </View>
           <Txt variant="body">
-            I agree to <Text style={{ fontFamily: fonts.bodyBold, color: theme.text }}>Terms &amp; Conditions</Text>
+            I agree to{' '}
+            <Text
+              style={{ fontFamily: fonts.bodyBold, color: theme.text }}
+              onPress={() => setTermsVisible(true)}
+              accessibilityRole="link"
+              accessibilityLabel="View Terms and Conditions"
+            >
+              Terms &amp; Conditions
+            </Text>
           </Txt>
         </TouchableOpacity>
 
-        <Button title="SIGNUP" variant="primary" onPress={onSignup} />
+        <Button
+          title="SIGNUP"
+          variant="primary"
+          onPress={onSignup}
+          loading={submitting}
+          disabled={!agree || submitting}
+        />
       </ScrollView>
+
+      <InfoModal
+        visible={termsVisible}
+        title="Terms & Conditions"
+        message={
+          'By creating a My Favor account you agree that:\n\n' +
+          '• My Favor connects Members who request favors with Favor Pals who perform them; it is not a party to that agreement.\n' +
+          '• Payments are processed securely. Members are charged the favor price plus a service and transaction fee; Favor Pals are paid the favor price minus a platform commission.\n' +
+          '• Cancellations may incur a fee once a Pal is on the way, as shown before you confirm.\n' +
+          '• You must provide accurate information, be 18+, and treat other users respectfully.\n' +
+          '• We handle your data per our Privacy Policy.\n\n' +
+          'This is a summary for the prototype, not the full legal agreement.'
+        }
+        buttonLabel="Got it"
+        onClose={() => setTermsVisible(false)}
+      />
     </Screen>
   );
 };
@@ -289,14 +359,32 @@ export const Signup = ({ navigation }: any) => {
 // 5. OtpVerify — centered white modal card over a dim background. Four
 //    auto-advancing single-digit boxes, Resend, black VERIFY.
 // ---------------------------------------------------------------------------
-export const OtpVerify = ({ navigation }: any) => {
+const OTP_SECONDS = 43;
+
+export const OtpVerify = ({ navigation, route }: any) => {
   const { theme } = useTheme();
   const s = useStore();
   const [code, setCode] = useState(['', '', '', '']);
+  const [error, setError] = useState('');
+  const [submitting, setSubmitting] = useState(false);
+  const [seconds, setSeconds] = useState(OTP_SECONDS);
   const inputs = useRef<Array<TextInput | null>>([]);
+  const maskedDest = maskDestination(route?.params?.destination);
+
+  // Real countdown (was a frozen "00:43" string). Ticks down to 0, then stops
+  // and unlocks Resend.
+  useEffect(() => {
+    if (seconds <= 0) return;
+    const id = setTimeout(() => setSeconds((sec) => sec - 1), 1000);
+    return () => clearTimeout(id);
+  }, [seconds]);
+
+  const fmt = (sec: number) =>
+    `${String(Math.floor(sec / 60)).padStart(2, '0')}:${String(sec % 60).padStart(2, '0')}`;
 
   const setDigit = (i: number, v: string) => {
     const ch = v.replace(/[^0-9]/g, '').slice(-1);
+    setError('');
     setCode((prev) => {
       const next = [...prev];
       next[i] = ch;
@@ -309,20 +397,66 @@ export const OtpVerify = ({ navigation }: any) => {
     if (e.nativeEvent.key === 'Backspace' && !code[i] && i > 0) inputs.current[i - 1]?.focus();
   };
 
+  // Branch on verifyOtp's boolean: a wrong/short code returns false -> inline
+  // error (no dead-end). On success the store sets the user, which swaps the
+  // navigator to Tabs automatically, so no explicit navigate is needed. Also
+  // guards double-taps.
   const onVerify = async () => {
-    await s.verifyOtp(code.join(''));
-    navigation.navigate('Tabs');
+    if (submitting) return;
+    setSubmitting(true);
+    setError('');
+    try {
+      const ok = await s.verifyOtp(code.join(''));
+      if (!ok) {
+        setError('Incorrect code. Please enter the full 4-digit code.');
+        return;
+      }
+    } catch (e) {
+      setError('Something went wrong. Please try again.');
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  // Working Resend: re-triggers the (mock) send by clearing the boxes and
+  // resetting the countdown. Disabled until the current code expires.
+  const onResend = () => {
+    if (seconds > 0) return;
+    setCode(['', '', '', '']);
+    setError('');
+    setSeconds(OTP_SECONDS);
+    inputs.current[0]?.focus();
+  };
+
+  const onClose = () => {
+    if (navigation.canGoBack()) navigation.goBack();
   };
 
   return (
     <View style={styles.overlay}>
       <View style={styles.modalCard}>
+        {/* Close affordance so the screen isn't a dead-end. */}
+        <TouchableOpacity
+          onPress={onClose}
+          hitSlop={10}
+          accessibilityRole="button"
+          accessibilityLabel="Close verification"
+          style={{ position: 'absolute', top: tokens.spacing.md, right: tokens.spacing.md, zIndex: 1, padding: 4 }}
+        >
+          <Ionicons name="close" size={24} color={theme.textSecondary} />
+        </TouchableOpacity>
+
         <Txt variant="h1" center style={{ marginBottom: tokens.spacing.base }}>Verification</Txt>
         <Txt variant="body" center color={theme.textSecondary}>
           Please enter 4 digit code to verify your account.
         </Txt>
+        {maskedDest ? (
+          <Txt variant="bodySm" center color={theme.textSecondary} style={{ marginTop: 4 }}>
+            Sent to {maskedDest}
+          </Txt>
+        ) : null}
         <Txt variant="body" center style={{ marginTop: tokens.spacing.base }}>
-          Code expires in 00:43
+          {seconds > 0 ? `Code expires in ${fmt(seconds)}` : 'Code expired'}
         </Txt>
 
         <View style={{ flexDirection: 'row', justifyContent: 'center', gap: tokens.spacing.md, marginTop: tokens.spacing.xl }}>
@@ -335,19 +469,47 @@ export const OtpVerify = ({ navigation }: any) => {
               onKeyPress={(e) => onKeyPress(i, e)}
               keyboardType="number-pad"
               maxLength={1}
-              style={[styles.otpBox, { backgroundColor: theme.inputBg, color: theme.text }]}
+              accessibilityLabel={`Verification code digit ${i + 1}`}
+              style={[
+                styles.otpBox,
+                { backgroundColor: theme.inputBg, color: theme.text },
+                error ? { borderWidth: 1, borderColor: theme.danger } : null,
+              ]}
             />
           ))}
         </View>
 
+        {error ? (
+          <Txt variant="bodySm" center color={theme.danger} style={{ marginTop: tokens.spacing.md }}>
+            {error}
+          </Txt>
+        ) : null}
+
         <Txt variant="body" center color={theme.textSecondary} style={{ marginTop: tokens.spacing.xl }}>
           Didn't receive a code?
         </Txt>
-        <TouchableOpacity onPress={() => setCode(['', '', '', ''])} hitSlop={8} style={{ alignSelf: 'center', marginTop: 4 }}>
-          <Txt variant="body" style={{ fontFamily: fonts.bodyBold }}>Resend</Txt>
+        <TouchableOpacity
+          onPress={onResend}
+          disabled={seconds > 0}
+          hitSlop={8}
+          style={{ alignSelf: 'center', marginTop: 4 }}
+          accessibilityRole="button"
+          accessibilityLabel="Resend code"
+          accessibilityState={{ disabled: seconds > 0 }}
+        >
+          <Txt variant="body" color={seconds > 0 ? theme.textTertiary : theme.text} style={{ fontFamily: fonts.bodyBold }}>
+            Resend
+          </Txt>
         </TouchableOpacity>
 
-        <Button title="VERIFY" variant="primary" onPress={onVerify} style={{ marginTop: tokens.spacing.lg }} />
+        <Button
+          title="VERIFY"
+          variant="primary"
+          onPress={onVerify}
+          loading={submitting}
+          disabled={submitting}
+          style={{ marginTop: tokens.spacing.lg }}
+        />
       </View>
     </View>
   );

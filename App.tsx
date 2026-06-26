@@ -15,9 +15,10 @@ import {
   OpenSans_700Bold,
 } from '@expo-google-fonts/open-sans';
 import {
-  Comfortaa_500Medium,
-  Comfortaa_700Bold,
-} from '@expo-google-fonts/comfortaa';
+  Poppins_500Medium,
+  Poppins_600SemiBold,
+  Poppins_700Bold,
+} from '@expo-google-fonts/poppins';
 
 import { ThemeProvider } from './src/theme';
 import { StoreProvider } from './src/store';
@@ -31,8 +32,9 @@ export default function App() {
     OpenSans_400Regular,
     OpenSans_600SemiBold,
     OpenSans_700Bold,
-    Comfortaa_500Medium,
-    Comfortaa_700Bold,
+    Poppins_500Medium,
+    Poppins_600SemiBold,
+    Poppins_700Bold,
   });
 
   if (!fontsLoaded) {

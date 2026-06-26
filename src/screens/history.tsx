@@ -54,28 +54,49 @@ const stampDate = (ms: number) => {
 
 const cap = (s: string) => s.charAt(0).toUpperCase() + s.slice(1);
 
-// Color-coded status badge meta.
-function statusMeta(status: FavorStatus, theme: any): { label: string; fg: string; bg: string } {
+type IconName = React.ComponentProps<typeof Ionicons>['name'];
+
+// Status badge meta. Each state carries a distinguishing icon + text label so it
+// is never communicated by color alone (WCAG 1.4.1), and the foreground colors
+// are darkened to clear AA (>=4.5:1) on their tints at the 12px badge size.
+function statusMeta(
+  status: FavorStatus,
+  theme: any,
+): { label: string; fg: string; bg: string; icon: IconName } {
   switch (status) {
     case 'completed':
-      return { label: 'Completed', fg: '#0A8F08', bg: '#E4F8E4' };
+      return { label: 'Completed', fg: '#0A6B05', bg: '#E4F8E4', icon: 'checkmark-circle' };
     case 'cancelled':
-      return { label: 'Cancelled', fg: theme.danger, bg: '#FCE3E4' };
+      return { label: 'Cancelled', fg: theme.primaryDark, bg: '#FCE3E4', icon: 'close-circle' };
     case 'in_progress':
-      return { label: 'In Progress', fg: '#B07A00', bg: '#FFF3D6' };
+      return { label: 'In Progress', fg: '#8A5E00', bg: '#FFF3D6', icon: 'sync' };
     case 'matched':
-      return { label: 'Matched', fg: '#B07A00', bg: '#FFF3D6' };
+      return { label: 'Matched', fg: '#8A5E00', bg: '#FFF3D6', icon: 'person-circle' };
     case 'enroute':
-      return { label: 'En Route', fg: '#B07A00', bg: '#FFF3D6' };
+      return { label: 'En Route', fg: '#8A5E00', bg: '#FFF3D6', icon: 'navigate' };
     case 'arrived':
-      return { label: 'Arrived', fg: '#B07A00', bg: '#FFF3D6' };
+      return { label: 'Arrived', fg: '#8A5E00', bg: '#FFF3D6', icon: 'location' };
     case 'requested':
-      return { label: 'Requested', fg: theme.link, bg: '#E3F1FC' };
+      return { label: 'Requested', fg: '#005FCC', bg: '#E3F1FC', icon: 'hourglass' };
     case 'no_pal':
-      return { label: 'No Pal', fg: theme.danger, bg: '#FCE3E4' };
+      return { label: 'No Pal', fg: theme.primaryDark, bg: '#FCE3E4', icon: 'alert-circle' };
     default:
-      return { label: cap(status), fg: theme.textSecondary, bg: theme.surfaceAlt };
+      return { label: cap(status), fg: theme.textSecondary, bg: theme.surfaceAlt, icon: 'ellipse' };
   }
+}
+
+// Stable, per-favor transaction id derived from the favor id (FNV-1a), so each
+// receipt shows its own consistent id instead of one shared literal.
+function txnId(id?: string): string {
+  if (!id) return 'N/A';
+  let h = 0x811c9dc5;
+  for (let i = 0; i < id.length; i += 1) {
+    h ^= id.charCodeAt(i);
+    h = Math.imul(h, 0x01000193) >>> 0;
+  }
+  const a = h.toString(36);
+  const b = (Math.imul(h ^ 0x5bd1e995, 0x01000193) >>> 0).toString(36);
+  return (a + b).padEnd(13, '0').slice(0, 13);
 }
 
 // ===========================================================================
@@ -90,7 +111,7 @@ export const History = ({ navigation }: any) => {
       <TopBar title="Favor History" onBack={() => navigation.goBack()} />
       <ScrollView contentContainerStyle={{ paddingTop: tokens.spacing.sm }}>
         {s.history.map((h) => {
-          const pal = s.pals.find((p) => p.id === h.palId);
+          const pal = s.palById(h.palId);
           const name = pal ? `${pal.firstName} ${pal.lastName}` : 'Favor Pal';
           const tierLabel = FAVOR_TIERS[h.tier as keyof typeof FAVOR_TIERS]?.label ?? 'Custom Favor';
           const badge = statusMeta(h.status, theme);
@@ -100,6 +121,8 @@ export const History = ({ navigation }: any) => {
               activeOpacity={0.7}
               onPress={() => navigation.navigate('FavorHistoryDetail', { favorId: h.id })}
               style={styles.listRow}
+              accessibilityRole="button"
+              accessibilityLabel={`${name}, ${tierLabel}, ${badge.label}. View favor details`}
             >
               <Avatar uri={pal?.avatar} size={60} name={name} />
               <View style={{ flex: 1, marginLeft: tokens.spacing.base }}>
@@ -124,8 +147,13 @@ export const History = ({ navigation }: any) => {
                       {listDate(h.scheduledFor ?? h.createdAt)}
                     </Txt>
                   </View>
-                  <View style={[styles.badge, { backgroundColor: badge.bg }]}>
-                    <Txt variant="caption" color={badge.fg} style={{ fontSize: 12 }}>
+                  <View
+                    style={[styles.badge, { backgroundColor: badge.bg }]}
+                    accessibilityRole="text"
+                    accessibilityLabel={`Status: ${badge.label}`}
+                  >
+                    <Ionicons name={badge.icon} size={12} color={badge.fg} />
+                    <Txt variant="caption" color={badge.fg} style={{ fontSize: 12, marginLeft: 4 }}>
                       {badge.label}
                     </Txt>
                   </View>
@@ -154,7 +182,8 @@ export const FavorHistoryDetail = ({ navigation, route }: any) => {
 
   const favorId: string | undefined = route?.params?.favorId;
   const favor: Favor = s.history.find((f) => f.id === favorId) ?? s.history[0];
-  const pal = s.pals.find((p) => p.id === favor?.palId) ?? s.pals[0];
+  // Resolve the SAME pal the list row resolves; never fabricate via array index.
+  const pal = s.palById(favor?.palId);
   const card = s.cards[0];
   const when = favor?.scheduledFor ?? favor?.createdAt ?? Date.now();
   const tierLabel = FAVOR_TIERS[favor?.tier as keyof typeof FAVOR_TIERS]?.label ?? 'Custom Favor';
@@ -224,28 +253,38 @@ export const FavorHistoryDetail = ({ navigation, route }: any) => {
               <Txt variant="label" style={{ fontSize: 17 }}>
                 {palName}
               </Txt>
-              <View style={styles.inline}>
-                <Ionicons name="star" size={15} color={theme.star} />
-                <Txt variant="bodySm" style={{ marginLeft: 4 }}>
-                  {pal?.rating?.toFixed(1)}
+              {pal && (
+                <View style={styles.inline}>
+                  <Ionicons name="star" size={15} color={theme.star} />
+                  <Txt variant="bodySm" style={{ marginLeft: 4 }}>
+                    {pal.rating?.toFixed(1)}
+                  </Txt>
+                </View>
+              )}
+            </View>
+            {pal ? (
+              <>
+                <Txt variant="caption" color={theme.textSecondary} style={{ marginTop: 2 }}>
+                  3 Miles away
                 </Txt>
-              </View>
-            </View>
-            <Txt variant="caption" color={theme.textSecondary} style={{ marginTop: 2 }}>
-              3 Miles away
-            </Txt>
-            <View style={[styles.inline, { marginTop: 6 }]}>
-              <Ionicons name="thumbs-up-outline" size={14} color={theme.textSecondary} />
-              <Txt variant="caption" color={theme.textSecondary} style={{ marginLeft: 6 }}>
-                {pal?.reliability}% Reliable
+                <View style={[styles.inline, { marginTop: 6 }]}>
+                  <Ionicons name="thumbs-up-outline" size={14} color={theme.textSecondary} />
+                  <Txt variant="caption" color={theme.textSecondary} style={{ marginLeft: 6 }}>
+                    {pal.reliability}% Reliable
+                  </Txt>
+                </View>
+                <View style={[styles.inline, { marginTop: 4 }]}>
+                  <Ionicons name="star-outline" size={14} color={theme.textSecondary} />
+                  <Txt variant="caption" color={theme.textSecondary} style={{ marginLeft: 6 }}>
+                    {pal.positiveReviews}% Positive Reviews
+                  </Txt>
+                </View>
+              </>
+            ) : (
+              <Txt variant="caption" color={theme.textSecondary} style={{ marginTop: 2 }}>
+                Pal details unavailable for this favor.
               </Txt>
-            </View>
-            <View style={[styles.inline, { marginTop: 4 }]}>
-              <Ionicons name="star-outline" size={14} color={theme.textSecondary} />
-              <Txt variant="caption" color={theme.textSecondary} style={{ marginLeft: 6 }}>
-                {pal?.positiveReviews}% Positive Reviews
-              </Txt>
-            </View>
+            )}
           </View>
         </View>
 
@@ -278,7 +317,7 @@ export const FavorHistoryDetail = ({ navigation, route }: any) => {
           <Txt variant="caption" color={theme.textSecondary}>
             Transaction ID
           </Txt>
-          <Txt variant="bodySm">1234abcde56fg</Txt>
+          <Txt variant="bodySm">{txnId(favor?.id)}</Txt>
         </View>
 
         <Divider />
@@ -342,6 +381,8 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   badge: {
+    flexDirection: 'row',
+    alignItems: 'center',
     paddingHorizontal: 10,
     paddingVertical: 3,
     borderRadius: tokens.radius.pill,

@@ -33,10 +33,11 @@ export type RootStackParamList = {
   PalFavorInProgress: undefined;
   Navigation: undefined;
   PalFavorComplete: undefined;
-  PalFavorSuccess: undefined;
+  PalFavorSuccess: { payout?: number } | undefined;
   Earnings: undefined;
   StripeOnboarding: undefined;
   BankInfo: undefined;
+  Vetting: undefined; // pal identity/background verification
 
   // --- Shared ---
   SideDrawer: undefined;
@@ -49,11 +50,13 @@ export type RootStackParamList = {
   FavorHistory: undefined;
   FavorHistoryDetail: { favorId: string };
   Help: undefined;
+  Notifications: undefined;
 };
 
 export type TabParamList = {
   Home: undefined;
   Messages: undefined;
   History: undefined;
+  Earnings: undefined; // pal-only tab
   Profile: undefined;
 };

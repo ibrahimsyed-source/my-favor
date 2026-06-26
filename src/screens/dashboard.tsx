@@ -3,8 +3,9 @@ import { View, Image, TouchableOpacity, StyleSheet, Dimensions } from 'react-nat
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { MapPlaceholder, Txt, Avatar } from '../components';
-import { useTheme, tokens } from '../theme';
+import { useTheme, tokens, darkTokens } from '../theme';
 import { useStore } from '../store';
+import { roleSwitchLabel, UserStatus } from '../types';
 
 const logo = require('../../assets/img/logo.png');
 const WIN_H = Dimensions.get('window').height;
@@ -12,6 +13,13 @@ const WIN_H = Dimensions.get('window').height;
 const BRAND = '#ED1C24';
 const MAP_BG = '#222B36';
 const BAR_BG = '#141A24';
+
+// Availability presentation, driven by user.status (never hardcoded "online").
+const STATUS_UI: Record<UserStatus, { label: string; color: string }> = {
+  online: { label: "YOU'RE ONLINE", color: '#2ECC71' },
+  invisible: { label: "YOU'RE INVISIBLE", color: '#9BA1A6' },
+  offline: { label: "YOU'RE OFFLINE", color: '#B6BBC4' },
+};
 
 // ---------------------------------------------------------------------------
 // Dark map backdrop — stylized stand-in roads/park/water over the placeholder.
@@ -88,7 +96,11 @@ function Poi({ top, left }: { top: string; left: string }) {
 // ---------------------------------------------------------------------------
 function RadiusPin({ avatar }: { avatar?: string }) {
   return (
-    <View style={[StyleSheet.absoluteFill, { alignItems: 'center', justifyContent: 'center' }]}>
+    <View
+      style={[StyleSheet.absoluteFill, { alignItems: 'center', justifyContent: 'center' }]}
+      accessibilityRole="image"
+      accessibilityLabel="Your location on the map"
+    >
       <View
         style={{
           width: 220, height: 220, borderRadius: 110,
@@ -99,8 +111,11 @@ function RadiusPin({ avatar }: { avatar?: string }) {
         <View style={{ alignItems: 'center' }}>
           <View
             style={{
+              // On the near-black map a #000 shadow renders nothing, so a subtle
+              // light ring (not the shadow alone) is what lifts the pin off the map.
               width: 56, height: 56, borderRadius: 28, backgroundColor: BRAND,
               alignItems: 'center', justifyContent: 'center', ...tokens.shadow.card,
+              borderWidth: 2, borderColor: 'rgba(255,255,255,0.22)',
             }}
           >
             <Avatar uri={avatar} size={48} name="A" />
@@ -128,10 +143,30 @@ export function Home({ navigation }: any) {
 
   const role = s.user?.role ?? 'member';
   const isPal = role === 'pal';
-  const pillText = isPal ? 'Switch to request a favor' : 'Switch to be a Favor Pal';
+  const pillText = roleSwitchLabel(role);
+  const status = s.user?.status ?? 'offline';
+  const statusUi = STATUS_UI[status];
+  const active = s.activeFavor;
   const incoming = s.incomingFavors[0];
+  // Only a genuinely-online pal is offered fresh work; while mid-favor or
+  // offline/invisible we never surface an incoming request.
+  const showIncoming = !active && status === 'online' && !!incoming;
+  const unread = s.notifications.filter((n) => !n.read).length;
 
   const toggleRole = () => s.setRole(isPal ? 'member' : 'pal');
+
+  const resumeActive = () => {
+    if (!active) return;
+    if (isPal) {
+      const dest =
+        active.status === 'arrived' || active.status === 'in_progress'
+          ? 'PalFavorInProgress'
+          : 'Navigation';
+      navigation.navigate(dest);
+    } else {
+      navigation.navigate('FavorTracking');
+    }
+  };
 
   return (
     <View style={{ flex: 1, backgroundColor: MAP_BG }}>
@@ -154,13 +189,22 @@ export function Home({ navigation }: any) {
         <TouchableOpacity
           activeOpacity={0.85}
           onPress={() => navigation.navigate('SideDrawer')}
+          accessibilityRole="button"
+          accessibilityLabel="Open menu"
           style={[styles.iconBtn, { left: 16 }]}
         >
           <Ionicons name="menu" size={24} color="#1A1A1A" />
         </TouchableOpacity>
 
         {/* role switch pill */}
-        <TouchableOpacity activeOpacity={0.9} onPress={toggleRole} style={styles.pill}>
+        <TouchableOpacity
+          activeOpacity={0.9}
+          onPress={toggleRole}
+          accessibilityRole="switch"
+          accessibilityLabel={pillText}
+          accessibilityState={{ checked: isPal }}
+          style={styles.pill}
+        >
           <Txt variant="bodySm" color="#1A1A1A" style={{ fontWeight: '600' }}>
             {pillText}
           </Txt>
@@ -168,19 +212,61 @@ export function Home({ navigation }: any) {
             <View style={styles.switchKnob} />
           </View>
         </TouchableOpacity>
+
+        {/* notifications bell -> Notifications */}
+        <TouchableOpacity
+          activeOpacity={0.85}
+          onPress={() => navigation.navigate('Notifications')}
+          accessibilityRole="button"
+          accessibilityLabel={unread > 0 ? `Notifications, ${unread} unread` : 'Notifications'}
+          style={[styles.iconBtn, { right: 16 }]}
+        >
+          <Ionicons name="notifications-outline" size={22} color="#1A1A1A" />
+          {unread > 0 && <View style={styles.bellDot} />}
+        </TouchableOpacity>
       </View>
 
       {/* BOTTOM BAR */}
-      <View style={{ position: 'absolute', left: 16, right: 16, bottom: 16 }}>
+      <View style={{ position: 'absolute', left: 16, right: 16, bottom: 16, gap: 12 }}>
+        {/* Resume-active-favor card: returns the user into their live favor. */}
+        {active ? (
+          <TouchableOpacity
+            activeOpacity={0.9}
+            onPress={resumeActive}
+            accessibilityRole="button"
+            accessibilityLabel="Resume active favor"
+            style={styles.palCard}
+          >
+            <View style={styles.palIcon}>
+              <Ionicons name="navigate" size={20} color="#FFFFFF" />
+            </View>
+            <View style={{ flex: 1 }}>
+              <Txt variant="caption" color={theme.textSecondary}>Resume active favor</Txt>
+              <Txt variant="label" numberOfLines={1}>
+                {active.description || (isPal ? 'Favor in progress' : 'Track your favor')}
+              </Txt>
+            </View>
+            <Ionicons name="chevron-forward" size={18} color={theme.textTertiary} />
+          </TouchableOpacity>
+        ) : null}
+
         {isPal ? (
           <View style={{ flexDirection: 'row', alignItems: 'center', gap: 12 }}>
-            <View style={styles.homeBtn}>
+            <TouchableOpacity
+              activeOpacity={0.85}
+              onPress={() => navigation.navigate('Home')}
+              accessibilityRole="button"
+              accessibilityLabel="Home"
+              style={styles.homeBtn}
+            >
               <Ionicons name="home" size={22} color="#FFFFFF" />
-            </View>
-            {incoming ? (
+            </TouchableOpacity>
+            {showIncoming ? (
               <TouchableOpacity
                 activeOpacity={0.9}
                 onPress={() => navigation.navigate('PalFavorDetail', { favorId: incoming.id })}
+                accessibilityRole="button"
+                accessibilityLabel={`New favor request: ${incoming.description}, $${incoming.price}`}
                 style={styles.palCard}
               >
                 <View style={styles.palIcon}>
@@ -196,19 +282,35 @@ export function Home({ navigation }: any) {
                 </View>
               </TouchableOpacity>
             ) : (
-              <View style={[styles.bar, { flex: 1 }]}>
-                <Txt variant="button" color="#FFFFFF">YOU'RE ONLINE</Txt>
-              </View>
+              <TouchableOpacity
+                activeOpacity={0.85}
+                onPress={() => navigation.navigate('SetStatus')}
+                accessibilityRole="button"
+                accessibilityLabel={`Availability: ${status}`}
+                accessibilityHint="Change your availability status"
+                style={[styles.bar, { flex: 1, flexDirection: 'row', gap: 10 }]}
+              >
+                <View style={[styles.statusDot, { backgroundColor: statusUi.color }]} />
+                <Txt variant="button" color="#FFFFFF">{statusUi.label}</Txt>
+              </TouchableOpacity>
             )}
           </View>
         ) : (
           <View style={[styles.bar, { flexDirection: 'row', alignItems: 'center', paddingLeft: 8, paddingRight: 18 }]}>
-            <View style={styles.homeBtn}>
+            <TouchableOpacity
+              activeOpacity={0.85}
+              onPress={() => navigation.navigate('Home')}
+              accessibilityRole="button"
+              accessibilityLabel="Home"
+              style={styles.homeBtn}
+            >
               <Ionicons name="home" size={22} color="#FFFFFF" />
-            </View>
+            </TouchableOpacity>
             <TouchableOpacity
               activeOpacity={0.85}
               onPress={() => navigation.navigate('SelectFavor')}
+              accessibilityRole="button"
+              accessibilityLabel="Request a favor"
               style={{ flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 10 }}
             >
               <Image source={logo} style={{ width: 22, height: 22, borderRadius: 5 }} resizeMode="contain" />
@@ -228,6 +330,10 @@ const styles = StyleSheet.create({
     alignItems: 'center', justifyContent: 'center',
     shadowColor: '#000', shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.18, shadowRadius: 6, elevation: 4,
   },
+  bellDot: {
+    position: 'absolute', top: 10, right: 11, width: 9, height: 9, borderRadius: 5,
+    backgroundColor: BRAND, borderWidth: 1.5, borderColor: '#FFFFFF',
+  },
   pill: {
     flexDirection: 'row', alignItems: 'center', gap: 10,
     backgroundColor: '#FFFFFF', borderRadius: tokens.radius.pill,
@@ -245,7 +351,13 @@ const styles = StyleSheet.create({
   bar: {
     height: 64, borderRadius: 18, backgroundColor: BAR_BG,
     alignItems: 'center', justifyContent: 'center',
+    // #000 shadow is invisible on the dark map; a hairline top-light edge is
+    // what actually reads as elevation here.
+    borderWidth: 1, borderColor: 'rgba(255,255,255,0.07)',
     shadowColor: '#000', shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.3, shadowRadius: 10, elevation: 6,
+  },
+  statusDot: {
+    width: 10, height: 10, borderRadius: 5,
   },
   homeBtn: {
     width: 48, height: 48, borderRadius: 14, backgroundColor: BRAND,
@@ -254,6 +366,7 @@ const styles = StyleSheet.create({
   palCard: {
     flex: 1, flexDirection: 'row', alignItems: 'center', gap: 12,
     backgroundColor: '#FFFFFF', borderRadius: 18, paddingHorizontal: 12, height: 64,
+    borderWidth: 1, borderColor: darkTokens.border,
     shadowColor: '#000', shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.2, shadowRadius: 10, elevation: 6,
   },
   palIcon: {

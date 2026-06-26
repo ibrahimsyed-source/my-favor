@@ -25,8 +25,8 @@ export const palette = {
   black: '#000000',
   white: '#FFFFFF',
   textPrimary: '#1A1A1A',
-  textSecondary: '#68707F', // "Text/Grey 5"
-  textTertiary: '#959595',
+  textSecondary: '#68707F', // "Text/Grey 5" (~4.9:1 on white)
+  textTertiary: '#767676', // darkened from #959595 to pass WCAG AA (4.54:1) for placeholders/captions
   disabled: '#999999',
   border: '#ECEBED', // Grey 25%
   divider: '#E5E5E5',
@@ -38,6 +38,21 @@ export const palette = {
   darkSurface: '#1C2331', // side drawer navy
   darkSurfaceAlt: '#253246',
   darkBorder: '#2C3647',
+} as const;
+
+// Named dark-surface tokens for the black/navy screens (profile, pal, payouts).
+// Use these instead of scattering near-duplicate literals across screens.
+export const darkTokens = {
+  bg: '#0C0C0C', // near-black screen background (Profile/EditProfile/Pal feedback)
+  bgAlt: '#11161F', // dark map backdrop
+  surface: '#141A24', // bottom sheet
+  surfaceAlt: '#1C2331', // raised sheet / filled field
+  field: '#262C40', // input field navy (BankInfo)
+  border: '#2C3647',
+  divider: '#262C38',
+  textSubtle: '#9BA1A6', // secondary text on dark
+  textMuted: '#8A8A8A', // tertiary text on dark
+  onDarkShadow: 'rgba(0,0,0,0.6)',
 } as const;
 
 export interface AppTheme {

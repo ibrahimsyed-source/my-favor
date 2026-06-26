@@ -6,9 +6,10 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import * as ImagePicker from 'expo-image-picker';
-import { Screen, Txt, Button, Row, TopBar } from '../components';
+import { Screen, Txt, Button, Row, TopBar, InfoModal } from '../components';
 import { useTheme } from '../theme';
 import { useStore } from '../store';
+import { roleSwitchLabel } from '../types';
 
 // ---------------------------------------------------------------------------
 // Module palette — Profile / EditProfile are dark, Settings light, drawer navy.
@@ -28,13 +29,18 @@ const DARK_DIVIDER = '#262626';
 function DarkHeader({ title, onBack, rightIcon, onRight }: any) {
   return (
     <View style={st.darkHeader}>
-      <TouchableOpacity onPress={onBack} hitSlop={10} style={{ width: 40 }}>
-        <Ionicons name="chevron-back" size={26} color="#fff" />
-      </TouchableOpacity>
+      {/* Root tab screens (Profile) pass no onBack, so no back chevron renders. */}
+      <View style={{ width: 40 }}>
+        {onBack ? (
+          <TouchableOpacity onPress={onBack} hitSlop={10} accessibilityRole="button" accessibilityLabel="Go back">
+            <Ionicons name="chevron-back" size={26} color="#fff" />
+          </TouchableOpacity>
+        ) : null}
+      </View>
       <Txt variant="h6" color="#fff">{title}</Txt>
       <View style={{ width: 40, alignItems: 'flex-end' }}>
         {rightIcon ? (
-          <TouchableOpacity onPress={onRight} hitSlop={10}>
+          <TouchableOpacity onPress={onRight} hitSlop={10} accessibilityRole="button" accessibilityLabel="Edit profile">
             <Ionicons name={rightIcon} size={22} color="#fff" />
           </TouchableOpacity>
         ) : null}
@@ -79,8 +85,10 @@ function PhoneField({ value, onChangeText }: any) {
   return (
     <View>
       <Text style={st.darkLabel}>Phone Number</Text>
-      <View style={st.darkInput}>
-        <Text style={{ fontSize: 18 }}>🇺🇸</Text>
+      <View style={st.darkInput} accessibilityLabel="Country code, United States, plus 1">
+        {/* Plain text rather than the regional-indicator flag emoji, which degrades
+            to bare letters on Windows/web and to tofu boxes on some Android builds. */}
+        <Text style={{ color: '#fff', fontSize: 13, fontWeight: '700' }}>US</Text>
         <Text style={{ color: '#fff', fontSize: 16, marginLeft: 8, marginRight: 4 }}>+1</Text>
         <Ionicons name="chevron-down" size={16} color={SUBTLE} />
         <View style={{ width: 1, height: 24, backgroundColor: '#33384A', marginHorizontal: 12 }} />
@@ -106,14 +114,15 @@ export const Profile = ({ navigation }: any) => {
   if (!user) return null;
 
   const isPal = user.role === 'pal';
-  const switchLabel = isPal ? 'Switch to be a Favor Pal' : 'Switch to request a favor';
+  // One shared helper so the Profile toggle copy can never disagree with Home.
+  const switchLabel = roleSwitchLabel(user.role);
   const toggleRole = () => s.setRole(isPal ? 'member' : 'pal');
 
   return (
     <SafeAreaView edges={['top']} style={{ flex: 1, backgroundColor: DARK_BG }}>
+      {/* Profile is a root tab, not a pushed screen, so no back chevron. */}
       <DarkHeader
         title="Profile"
-        onBack={() => (navigation.canGoBack() ? navigation.goBack() : navigation.navigate('SideDrawer'))}
         rightIcon="pencil"
         onRight={() => navigation.navigate('EditProfile')}
       />
@@ -139,6 +148,9 @@ export const Profile = ({ navigation }: any) => {
             onValueChange={toggleRole}
             trackColor={{ false: '#D1D5DB', true: RED }}
             thumbColor="#fff"
+            accessibilityRole="switch"
+            accessibilityLabel={switchLabel}
+            accessibilityState={{ checked: isPal }}
           />
         </View>
 
@@ -154,10 +166,38 @@ export const Profile = ({ navigation }: any) => {
         <InfoRow icon="call" title="Phone" subtitle={user.phone} onPress={() => navigation.navigate('EditProfile')} />
         <InfoRow icon="home" title="Home" subtitle={user.homeAddress} onPress={() => navigation.navigate('EditProfile')} />
         <InfoRow icon="lock-closed" title="Password" subtitle="Change Password" onPress={() => navigation.navigate('EditProfile')} />
+
+        {/* Account hub — the SideDrawer only opens from Home, so the Profile tab is
+            the only reliable path to these account controls. */}
+        <Text style={st.hubLabel}>Account</Text>
+        <NavRow icon="card" label="Payment Methods" onPress={() => navigation.navigate('Payment')} />
+        {isPal && (
+          <NavRow icon="wallet" label="Payouts & Bank" onPress={() => navigation.navigate('StripeOnboarding')} />
+        )}
+        <NavRow icon="settings" label="Settings" onPress={() => navigation.navigate('Settings')} />
+        <NavRow icon="help-circle" label="Help" onPress={() => navigation.navigate('Help')} />
+        <NavRow icon="log-out" label="Log Out" onPress={() => s.logout()} danger />
       </ScrollView>
     </SafeAreaView>
   );
 };
+
+function NavRow({ icon, label, onPress, danger }: any) {
+  const tint = danger ? RED : '#fff';
+  return (
+    <TouchableOpacity
+      onPress={onPress}
+      activeOpacity={0.7}
+      style={st.infoRow}
+      accessibilityRole="button"
+      accessibilityLabel={label}
+    >
+      <Ionicons name={icon} size={22} color={tint} style={{ width: 32 }} />
+      <Text style={{ color: tint, fontWeight: '700', fontSize: 16, flex: 1 }}>{label}</Text>
+      {danger ? null : <Ionicons name="chevron-forward" size={18} color={PLACEHOLDER} />}
+    </TouchableOpacity>
+  );
+}
 
 function Stat({ value, label, star }: any) {
   return (
@@ -202,6 +242,7 @@ export const EditProfile = ({ navigation }: any) => {
   const [currentPw, setCurrentPw] = useState('');
   const [newPw, setNewPw] = useState('');
   const [avatar, setAvatar] = useState(u?.avatar);
+  const [modal, setModal] = useState<{ title: string; message: string; success?: boolean } | null>(null);
 
   const pickImage = async () => {
     try {
@@ -215,11 +256,42 @@ export const EditProfile = ({ navigation }: any) => {
   };
 
   const onSave = async () => {
+    // A new/current password entry means the user wants to change it — actually
+    // submit it via changePassword instead of silently dropping the fields.
+    const wantsPwChange = !!(newPw.trim() || currentPw.trim());
+    if (wantsPwChange) {
+      const ok = await s.changePassword(currentPw, newPw);
+      if (!ok) {
+        setModal({
+          title: 'Password Not Changed',
+          message: 'Enter your current password and a new password of at least 6 characters.',
+        });
+        return;
+      }
+    }
+
     await s.updateProfile({
       firstName, lastName, bio, email, phone,
       homeAddress, city, state: stateName, zip, avatar,
     });
+
+    if (wantsPwChange) {
+      setCurrentPw('');
+      setNewPw('');
+      setModal({
+        title: 'Profile Updated',
+        message: 'Your changes were saved and your password was updated.',
+        success: true,
+      });
+      return;
+    }
     navigation.goBack();
+  };
+
+  const closeModal = () => {
+    const wasSuccess = modal?.success;
+    setModal(null);
+    if (wasSuccess) navigation.goBack();
   };
 
   return (
@@ -276,6 +348,13 @@ export const EditProfile = ({ navigation }: any) => {
           <Button title="SAVE" variant="white" onPress={onSave} style={{ marginTop: 16 }} />
         </ScrollView>
       </KeyboardAvoidingView>
+      <InfoModal
+        visible={!!modal}
+        title={modal?.title ?? ''}
+        message={modal?.message ?? ''}
+        buttonLabel="OK"
+        onClose={closeModal}
+      />
     </SafeAreaView>
   );
 };
@@ -386,7 +465,7 @@ export const Help = ({ navigation }: any) => {
             onChangeText={setMsg}
             multiline
             maxLength={700}
-            placeholder="Provide as much detail as possible about your favor!  Let your provider know about what they will be doing, what they will need to bring, special requirements, etc."
+            placeholder="Tell us what's going on and how we can help."
             placeholderTextColor={theme.textTertiary}
           />
         </View>
@@ -452,12 +531,13 @@ export const SideDrawer = ({ navigation }: any) => {
           {u?.role === 'pal' && (
             <DrawerRow icon="cash-outline" label="Earnings" onPress={() => go('Earnings')} />
           )}
-          {/* Pals manage their Stripe/bank payout account; members manage cards. */}
-          <DrawerRow
-            icon="card-outline"
-            label="Account"
-            onPress={() => go(u?.role === 'pal' ? 'StripeOnboarding' : 'Payment')}
-          />
+          {/* Two stable, distinctly-labeled rows instead of one role-retargeting
+              "Account" row, so neither financial surface silently changes destination
+              (or vanishes) when the role toggle flips on another screen. */}
+          <DrawerRow icon="card-outline" label="Payment Methods" onPress={() => go('Payment')} />
+          {u?.role === 'pal' && (
+            <DrawerRow icon="wallet-outline" label="Payouts & Bank" onPress={() => go('StripeOnboarding')} />
+          )}
 
           <View style={{ flex: 1 }} />
 
@@ -504,7 +584,14 @@ export const SetStatus = ({ navigation }: any) => {
         {STATUS_OPTIONS.map((opt) => {
           const sel = current === opt.key;
           return (
-            <TouchableOpacity key={opt.key} activeOpacity={0.7} onPress={() => choose(opt.key)}>
+            <TouchableOpacity
+              key={opt.key}
+              activeOpacity={0.7}
+              onPress={() => choose(opt.key)}
+              accessibilityRole="radio"
+              accessibilityLabel={opt.label}
+              accessibilityState={{ selected: sel, checked: sel }}
+            >
               <View style={st.statusRow}>
                 <View style={[st.statusRadio, { borderColor: opt.dot === 'transparent' ? '#8A909B' : opt.dot, backgroundColor: opt.dot }]} />
                 <Text style={{ color: sel ? theme.text : '#6B7280', fontSize: 18, fontWeight: sel ? '700' : '400' }}>{opt.label}</Text>
@@ -548,6 +635,10 @@ const st = StyleSheet.create({
   infoRow: {
     flexDirection: 'row', alignItems: 'center', gap: 14, paddingVertical: 18,
     borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: DARK_DIVIDER,
+  },
+  hubLabel: {
+    color: SUBTLE, fontSize: 13, fontWeight: '700', letterSpacing: 0.8,
+    textTransform: 'uppercase', marginTop: 24, marginBottom: 2,
   },
 
   // EditProfile avatar
