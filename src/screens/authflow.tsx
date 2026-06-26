@@ -3,7 +3,7 @@ import {
   View, Text, TextInput, TouchableOpacity, ScrollView, Image, StyleSheet, ViewStyle,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
-import { Screen, TopBar, Txt, Button, Field, InfoModal } from '../components';
+import { Screen, TopBar, Txt, Button, Field } from '../components';
 import { useTheme, tokens, fonts } from '../theme';
 import { useStore } from '../store';
 
@@ -212,7 +212,6 @@ export const Signup = ({ navigation, route }: any) => {
   const [password, setPassword] = useState('');
   const [agree, setAgree] = useState(false);
   const [submitting, setSubmitting] = useState(false);
-  const [termsVisible, setTermsVisible] = useState(false);
 
   // SIGNUP is gated on `agree`; this guard also blocks double-taps from firing
   // signup() + navigate twice. Pass the destination forward so OtpVerify can
@@ -318,14 +317,23 @@ export const Signup = ({ navigation, route }: any) => {
             {agree ? <Ionicons name="checkmark" size={16} color="#FFFFFF" /> : null}
           </View>
           <Txt variant="body">
-            I agree to{' '}
+            I agree to the{' '}
             <Text
               style={{ fontFamily: fonts.bodyBold, color: theme.text }}
-              onPress={() => setTermsVisible(true)}
+              onPress={(e) => { e.stopPropagation?.(); navigation.navigate('Legal', { doc: 'terms' }); }}
               accessibilityRole="link"
-              accessibilityLabel="View Terms and Conditions"
+              accessibilityLabel="View Terms of Service"
             >
-              Terms &amp; Conditions
+              Terms
+            </Text>
+            {' '}&amp;{' '}
+            <Text
+              style={{ fontFamily: fonts.bodyBold, color: theme.text }}
+              onPress={(e) => { e.stopPropagation?.(); navigation.navigate('Legal', { doc: 'privacy' }); }}
+              accessibilityRole="link"
+              accessibilityLabel="View Privacy Policy"
+            >
+              Privacy Policy
             </Text>
           </Txt>
         </TouchableOpacity>
@@ -338,22 +346,6 @@ export const Signup = ({ navigation, route }: any) => {
           disabled={!agree || submitting}
         />
       </ScrollView>
-
-      <InfoModal
-        visible={termsVisible}
-        title="Terms & Conditions"
-        message={
-          'By creating a My Favor account you agree that:\n\n' +
-          '• My Favor connects Members who request favors with Favor Pals who perform them; it is not a party to that agreement.\n' +
-          '• Payments are processed securely. Members are charged the favor price plus a service and transaction fee; Favor Pals are paid the favor price minus a platform commission.\n' +
-          '• Cancellations may incur a fee once a Pal is on the way, as shown before you confirm.\n' +
-          '• You must provide accurate information, be 18+, and treat other users respectfully.\n' +
-          '• We handle your data per our Privacy Policy.\n\n' +
-          'This is a summary for the prototype, not the full legal agreement.'
-        }
-        buttonLabel="Got it"
-        onClose={() => setTermsVisible(false)}
-      />
     </Screen>
   );
 };

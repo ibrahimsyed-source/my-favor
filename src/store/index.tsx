@@ -23,6 +23,7 @@ interface StoreValue {
   verifyOtp: (code: string) => Promise<boolean>;
   login: (email: string, password: string) => Promise<boolean>;
   logout: () => void;
+  deleteAccount: () => Promise<void>;
   updateProfile: (patch: Partial<User>) => Promise<void>;
   changePassword: (current: string, next: string) => Promise<boolean>;
   setRole: (role: Role) => void;
@@ -125,6 +126,26 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     setCards(seed.cards);
     setTransactions(seed.transactions);
     setEarnings(seed.earnings);
+    setBlockedUsers([]);
+  }, []);
+
+  // Permanently delete the account + all associated data (App Store guideline
+  // 5.1.1(v)). Mock: a real impl calls the backend to erase the account record;
+  // here we wipe every session collection and sign the user out.
+  const deleteAccount = useCallback(async () => {
+    await delay();
+    setUser(null);
+    setPendingSignup(null);
+    setDraftFavor(null);
+    setActiveFavor(null);
+    setHistory([]);
+    setIncomingFavors([]);
+    setCards([]);
+    setTransactions([]);
+    setEarnings([]);
+    setThreads([]);
+    setMessages([]);
+    setNotifications([]);
     setBlockedUsers([]);
   }, []);
 
@@ -261,7 +282,7 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
 
   const value = useMemo<StoreValue>(
     () => ({
-      user, isAuthenticated: !!user, signup, verifyOtp, login, logout, updateProfile, changePassword,
+      user, isAuthenticated: !!user, signup, verifyOtp, login, logout, deleteAccount, updateProfile, changePassword,
       setRole, setStatus,
       pals: seed.nearbyPals, draftFavor, setDraft, clearDraft,
       activeFavor, activePal: palById(activeFavor?.palId) ?? null, palById, history,
@@ -271,7 +292,7 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       cards, addCard, removeCard, transactions, earnings,
       threads, messagesFor, sendMessage, notifications, markNotificationRead,
     }),
-    [user, signup, verifyOtp, login, logout, updateProfile, changePassword, setRole, setStatus, draftFavor,
+    [user, signup, verifyOtp, login, logout, deleteAccount, updateProfile, changePassword, setRole, setStatus, draftFavor,
       setDraft, clearDraft, activeFavor, palById, history, requestFavor, advanceFavor, cancelFavor, rateFavor,
       incomingFavors, acceptFavor, declineFavor, assignPal, finishFavorAsPal, blockedUsers, reportUser, blockUser,
       cards, addCard, removeCard, transactions, earnings, threads, messagesFor, sendMessage,

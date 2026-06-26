@@ -51,6 +51,7 @@ export type RootStackParamList = {
   FavorHistoryDetail: { favorId: string };
   Help: undefined;
   Notifications: undefined;
+  Legal: { doc: 'privacy' | 'terms' };
 };
 
 export type TabParamList = {

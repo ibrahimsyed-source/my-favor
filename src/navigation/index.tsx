@@ -20,6 +20,7 @@ import * as Prof from '../screens/profile';
 import * as Pay from '../screens/payment';
 import * as Hist from '../screens/history';
 import * as Notif from '../screens/notifications';
+import * as LegalScr from '../screens/legal';
 
 const Stack = createNativeStackNavigator<RootStackParamList>();
 const Tab = createBottomTabNavigator<TabParamList>();
@@ -70,6 +71,8 @@ export default function RootNavigator() {
           <Stack.Screen name="OtpVerify" component={AuthF.OtpVerify} />
           <Stack.Screen name="ForgotPassword" component={AuthF.ForgotPassword} />
           <Stack.Screen name="NewPassword" component={AuthF.NewPassword} />
+          {/* Reachable from the signup Terms link before authentication. */}
+          <Stack.Screen name="Legal" component={LegalScr.Legal} />
         </Stack.Group>
       ) : (
         <Stack.Group>
@@ -115,6 +118,7 @@ export default function RootNavigator() {
           <Stack.Screen name="FavorHistoryDetail" component={Hist.FavorHistoryDetail} />
           <Stack.Screen name="Notifications" component={Notif.Notifications} />
           <Stack.Screen name="Vetting" component={Onb.Vetting} />
+          <Stack.Screen name="Legal" component={LegalScr.Legal} />
         </Stack.Group>
       )}
     </Stack.Navigator>

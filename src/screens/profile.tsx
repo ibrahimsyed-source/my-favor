@@ -1,12 +1,12 @@
 import React, { useState } from 'react';
 import {
   View, Text, TextInput, TouchableOpacity, Pressable, ScrollView, Switch,
-  StyleSheet, Image, Alert, KeyboardAvoidingView, Platform,
+  StyleSheet, Image, KeyboardAvoidingView, Platform,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import * as ImagePicker from 'expo-image-picker';
-import { Screen, Txt, Button, Row, TopBar, InfoModal } from '../components';
+import { Screen, Txt, Button, Row, TopBar, InfoModal, ConfirmModal } from '../components';
 import { useTheme } from '../theme';
 import { useStore } from '../store';
 import { roleSwitchLabel } from '../types';
@@ -368,18 +368,19 @@ export const Settings = ({ navigation }: any) => {
   const [push, setPush] = useState(true);
   const [emailN, setEmailN] = useState(false);
   const [loc, setLoc] = useState(true);
+  const [deleting, setDeleting] = useState(false);
+  const [confirmingDelete, setConfirmingDelete] = useState(false);
 
   const track = { false: '#D1D5DB', true: theme.primary };
 
-  const confirmDelete = () =>
-    Alert.alert(
-      'Delete Account',
-      'This permanently deletes your account and all of your data. This cannot be undone.',
-      [
-        { text: 'Cancel', style: 'cancel' },
-        { text: 'Delete', style: 'destructive', onPress: () => s.logout() },
-      ]
-    );
+  // App Store guideline 5.1.1(v): account deletion must be initiated and
+  // completed in-app. ConfirmModal works on web + native (Alert.alert no-ops on web).
+  const runDelete = async () => {
+    setConfirmingDelete(false);
+    setDeleting(true);
+    await s.deleteAccount();
+    // store wipes the session + signs out; the auth navigator unmounts this screen.
+  };
 
   return (
     <Screen padded={false}>
@@ -399,19 +400,36 @@ export const Settings = ({ navigation }: any) => {
 
         <SectionLabel>Support</SectionLabel>
         <Row icon="help-circle-outline" title="Help Center" onPress={() => navigation.navigate('Help')} />
-        <Row icon="document-text-outline" title="Privacy Policy" onPress={() => {}} />
-        <Row icon="shield-checkmark-outline" title="Terms of Service" onPress={() => {}} />
+        <Row icon="document-text-outline" title="Privacy Policy" onPress={() => navigation.navigate('Legal', { doc: 'privacy' })} />
+        <Row icon="shield-checkmark-outline" title="Terms of Service" onPress={() => navigation.navigate('Legal', { doc: 'terms' })} />
 
         <SectionLabel>Account Actions</SectionLabel>
-        <TouchableOpacity onPress={confirmDelete} activeOpacity={0.7} style={[st.lightRow, { borderBottomColor: theme.divider }]}>
+        <TouchableOpacity
+          onPress={() => setConfirmingDelete(true)}
+          disabled={deleting}
+          activeOpacity={0.7}
+          style={[st.lightRow, { borderBottomColor: theme.divider, opacity: deleting ? 0.5 : 1 }]}
+        >
           <Ionicons name="trash-outline" size={22} color={theme.danger} style={{ marginRight: 14 }} />
-          <Txt variant="label" color={theme.danger} style={{ flex: 1 }}>Delete Account</Txt>
+          <Txt variant="label" color={theme.danger} style={{ flex: 1 }}>
+            {deleting ? 'Deleting…' : 'Delete Account'}
+          </Txt>
         </TouchableOpacity>
         <TouchableOpacity onPress={() => s.logout()} activeOpacity={0.7} style={[st.lightRow, { borderBottomColor: theme.divider }]}>
           <Ionicons name="log-out-outline" size={22} color={theme.textSecondary} style={{ marginRight: 14 }} />
           <Txt variant="label" style={{ flex: 1 }}>Log Out</Txt>
         </TouchableOpacity>
       </ScrollView>
+      <ConfirmModal
+        visible={confirmingDelete}
+        title="Delete Account?"
+        message="This permanently deletes your account and all of your data — favors, messages, payment methods, and history. This cannot be undone."
+        confirmLabel="Delete Account"
+        cancelLabel="Cancel"
+        destructive
+        onConfirm={runDelete}
+        onCancel={() => setConfirmingDelete(false)}
+      />
     </Screen>
   );
 };
