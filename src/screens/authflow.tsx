@@ -131,7 +131,7 @@ export const Login = ({ navigation }: any) => {
         <View style={{ flex: 1 }} />
         <View style={{ flexDirection: 'row', justifyContent: 'center', marginTop: tokens.spacing.xl }}>
           <Txt variant="body" color={theme.textSecondary}>Don't have an account? </Txt>
-          <TouchableOpacity onPress={() => navigation.navigate('Signup')} hitSlop={8}>
+          <TouchableOpacity onPress={() => navigation.navigate('Welcome')} hitSlop={8}>
             <Txt variant="body" color={theme.link} style={{ fontFamily: fonts.bodyBold }}>Sign Up</Txt>
           </TouchableOpacity>
         </View>
@@ -199,9 +199,12 @@ export const NewPassword = ({ navigation }: any) => {
 // 4. Signup — avatar w/ red plus badge, name row, email, phone, password,
 //    terms checkbox, black SIGNUP.
 // ---------------------------------------------------------------------------
-export const Signup = ({ navigation }: any) => {
+export const Signup = ({ navigation, route }: any) => {
   const { theme } = useTheme();
   const s = useStore();
+  // Role chosen on the preceding Welcome screen (member vs pal), carried through
+  // so the account is created with the role the user actually picked.
+  const role = route?.params?.role;
   const [firstName, setFirstName] = useState('');
   const [lastName, setLastName] = useState('');
   const [email, setEmail] = useState('');
@@ -218,7 +221,7 @@ export const Signup = ({ navigation }: any) => {
     if (submitting || !agree) return;
     setSubmitting(true);
     try {
-      await s.signup({ firstName, lastName, email, phone, password });
+      await s.signup({ firstName, lastName, email, phone, password, ...(role ? { role } : {}) });
       navigation.navigate('OtpVerify', { destination: phone || email });
     } catch (e) {
       // Signup failed — re-enable the button so the user can retry.
