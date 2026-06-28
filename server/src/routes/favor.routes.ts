@@ -217,11 +217,9 @@ favorRouter.post(
 );
 
 // POST /api/favors/:id/advance — the assigned pal moves the favor forward.
-const FORWARD: Record<string, string[]> = {
-  matched: ['enroute'],
-  enroute: ['arrived'],
-  arrived: ['in_progress'],
-};
+// Transitions must move FORWARD along this order, but may skip steps (the app's
+// pal flow goes matched -> arrived directly, without an explicit "en route").
+const STATUS_ORDER = ['matched', 'enroute', 'arrived', 'in_progress'];
 favorRouter.post(
   '/:id/advance',
   validate({ params: idParam, body: z.object({ status: z.enum(['enroute', 'arrived', 'in_progress']) }) }),
@@ -230,7 +228,9 @@ favorRouter.post(
     const { status } = req.body as { status: string };
     const favor = await getParticipantFavor(req.params.id, me);
     if (favor.palId !== me) throw forbidden('Only the assigned pal can advance this favor');
-    if (!FORWARD[favor.status]?.includes(status)) {
+    const from = STATUS_ORDER.indexOf(favor.status);
+    const to = STATUS_ORDER.indexOf(status);
+    if (from < 0 || to <= from) {
       throw conflict(`Cannot move from ${favor.status} to ${status}`);
     }
     // Atomic transition guarded on the exact current status, so concurrent

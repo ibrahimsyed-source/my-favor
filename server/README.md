@@ -104,13 +104,27 @@ require a `Bearer <accessToken>` header.
 
 ## Connecting the app
 
-The app's `src/store/index.tsx` currently fills the `StoreValue` interface with
-mock data. To go live, replace the mock bodies with `fetch` calls to these
-endpoints (store the access token in memory + refresh token in secure storage;
-attach `Authorization: Bearer` on each call; refresh on 401). The interface and
-every screen stay the same.
+**The app is already wired to this API.** `src/store/index.tsx` fills the
+`StoreValue` interface from `src/api` (`client.ts` handles the base URL, the
+in-memory access token, the persisted+rotated refresh token, and auto-refresh on
+401; `endpoints.ts` maps each route). The screens were unchanged — synchronous
+mutators do an optimistic update and persist in the background, collections load
+after auth, and the member's active favor is polled so the tracking timeline goes
+live as the pal advances it.
 
-Point the app at the API with an env var, e.g. `EXPO_PUBLIC_API_URL=http://<lan-ip>:4000`.
+Run the full stack:
+```bash
+# terminal 1 — API
+cd server && npm run dev
+
+# terminal 2 — app (point it at the API)
+EXPO_PUBLIC_API_URL=http://localhost:4000 npx expo start
+# physical device: use your machine's LAN IP instead of localhost, e.g.
+# EXPO_PUBLIC_API_URL=http://192.168.1.50:4000
+```
+`EXPO_PUBLIC_API_URL` defaults to `http://localhost:4000` if unset. Log in with a
+seeded demo account (`alex@example.com` / `Password123`) or sign up — in dev the
+OTP code is printed to the API console and the app console (`[dev OTP] ######`).
 
 ---
 

@@ -76,17 +76,20 @@ export const Login = ({ navigation }: any) => {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [submitting, setSubmitting] = useState(false);
+  const [error, setError] = useState('');
 
-  // Guard against double-taps: a second tap while the (async) login is in
-  // flight would fire login() + navigate twice and corrupt the stack.
+  // Guard against double-taps. On success the store sets the user, which flips
+  // isAuthenticated and swaps the navigator to Tabs automatically — so there's
+  // no explicit navigate here. On failure we surface an inline error.
   const onLogin = async () => {
     if (submitting) return;
     setSubmitting(true);
+    setError('');
     try {
-      await s.login(email, password);
-      navigation.navigate('Tabs');
+      const ok = await s.login(email, password);
+      if (!ok) setError('Invalid email or password.');
     } catch (e) {
-      // Login failed — re-enable the button so the user can retry.
+      setError('Could not sign in. Please try again.');
     } finally {
       setSubmitting(false);
     }
@@ -125,6 +128,12 @@ export const Login = ({ navigation }: any) => {
             Forgot Password?
           </Txt>
         </TouchableOpacity>
+
+        {error ? (
+          <Txt variant="bodySm" color={theme.danger} style={{ marginTop: tokens.spacing.sm }}>
+            {error}
+          </Txt>
+        ) : null}
 
         <Button title="LOGIN" variant="primary" onPress={onLogin} loading={submitting} disabled={submitting} style={{ marginTop: tokens.spacing.base }} />
 
@@ -212,18 +221,21 @@ export const Signup = ({ navigation, route }: any) => {
   const [password, setPassword] = useState('');
   const [agree, setAgree] = useState(false);
   const [submitting, setSubmitting] = useState(false);
+  const [error, setError] = useState('');
 
   // SIGNUP is gated on `agree`; this guard also blocks double-taps from firing
-  // signup() + navigate twice. Pass the destination forward so OtpVerify can
-  // tell the user (masked) where the code was sent.
+  // signup() + navigate twice. The verification code is sent to the email, so
+  // OtpVerify masks that destination. A failed signup (e.g. email already in
+  // use) surfaces an inline error.
   const onSignup = async () => {
     if (submitting || !agree) return;
     setSubmitting(true);
+    setError('');
     try {
       await s.signup({ firstName, lastName, email, phone, password, ...(role ? { role } : {}) });
-      navigation.navigate('OtpVerify', { destination: phone || email });
-    } catch (e) {
-      // Signup failed — re-enable the button so the user can retry.
+      navigation.navigate('OtpVerify', { destination: email });
+    } catch (e: any) {
+      setError(e?.message || 'Could not sign up. Please try again.');
     } finally {
       setSubmitting(false);
     }
@@ -338,6 +350,12 @@ export const Signup = ({ navigation, route }: any) => {
           </Txt>
         </TouchableOpacity>
 
+        {error ? (
+          <Txt variant="bodySm" color={theme.danger} style={{ marginBottom: tokens.spacing.sm }}>
+            {error}
+          </Txt>
+        ) : null}
+
         <Button
           title="SIGNUP"
           variant="primary"
@@ -359,7 +377,7 @@ const OTP_SECONDS = 43;
 export const OtpVerify = ({ navigation, route }: any) => {
   const { theme } = useTheme();
   const s = useStore();
-  const [code, setCode] = useState(['', '', '', '']);
+  const [code, setCode] = useState(['', '', '', '', '', '']);
   const [error, setError] = useState('');
   const [submitting, setSubmitting] = useState(false);
   const [seconds, setSeconds] = useState(OTP_SECONDS);
@@ -385,7 +403,7 @@ export const OtpVerify = ({ navigation, route }: any) => {
       next[i] = ch;
       return next;
     });
-    if (ch && i < 3) inputs.current[i + 1]?.focus();
+    if (ch && i < 5) inputs.current[i + 1]?.focus();
   };
 
   const onKeyPress = (i: number, e: any) => {
@@ -403,7 +421,7 @@ export const OtpVerify = ({ navigation, route }: any) => {
     try {
       const ok = await s.verifyOtp(code.join(''));
       if (!ok) {
-        setError('Incorrect code. Please enter the full 4-digit code.');
+        setError('Incorrect or expired code. Please enter the full 6-digit code.');
         return;
       }
     } catch (e) {
@@ -417,7 +435,7 @@ export const OtpVerify = ({ navigation, route }: any) => {
   // resetting the countdown. Disabled until the current code expires.
   const onResend = () => {
     if (seconds > 0) return;
-    setCode(['', '', '', '']);
+    setCode(['', '', '', '', '', '']);
     setError('');
     setSeconds(OTP_SECONDS);
     inputs.current[0]?.focus();
@@ -443,7 +461,7 @@ export const OtpVerify = ({ navigation, route }: any) => {
 
         <Txt variant="h1" center style={{ marginBottom: tokens.spacing.base }}>Verification</Txt>
         <Txt variant="body" center color={theme.textSecondary}>
-          Please enter 4 digit code to verify your account.
+          Please enter the 6 digit code to verify your account.
         </Txt>
         {maskedDest ? (
           <Txt variant="bodySm" center color={theme.textSecondary} style={{ marginTop: 4 }}>
@@ -454,8 +472,8 @@ export const OtpVerify = ({ navigation, route }: any) => {
           {seconds > 0 ? `Code expires in ${fmt(seconds)}` : 'Code expired'}
         </Txt>
 
-        <View style={{ flexDirection: 'row', justifyContent: 'center', gap: tokens.spacing.md, marginTop: tokens.spacing.xl }}>
-          {[0, 1, 2, 3].map((i) => (
+        <View style={{ flexDirection: 'row', justifyContent: 'center', gap: tokens.spacing.sm, marginTop: tokens.spacing.xl }}>
+          {[0, 1, 2, 3, 4, 5].map((i) => (
             <TextInput
               key={i}
               ref={(el) => { inputs.current[i] = el; }}
@@ -534,11 +552,11 @@ const styles = StyleSheet.create({
     paddingHorizontal: tokens.spacing.xl,
   },
   otpBox: {
-    width: 64,
-    height: 64,
+    width: 48,
+    height: 58,
     borderRadius: tokens.radius.md,
     textAlign: 'center',
-    fontSize: 26,
+    fontSize: 24,
     fontFamily: fonts.bodyBold,
   },
 });
