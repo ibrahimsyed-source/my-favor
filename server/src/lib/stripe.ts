@@ -137,10 +137,38 @@ export async function chargeFavor(args: {
   return pi.id;
 }
 
+// Charge the member an arbitrary amount and route ALL of it to the pal's
+// connected account (used for tips and cancellation fees — no platform fee).
+// Idempotent per key. Throws on failure so the caller doesn't credit unfunded.
+export async function chargeToPal(args: {
+  memberId: string;
+  palConnectId: string;
+  amount: number;
+  paymentMethodId: string;
+  idempotencyKey: string;
+  metadata?: Record<string, string>;
+}): Promise<string> {
+  const customerId = await getOrCreateCustomer(args.memberId);
+  const pi = await stripe!.paymentIntents.create(
+    {
+      amount: cents(args.amount),
+      currency: 'usd',
+      customer: customerId,
+      payment_method: args.paymentMethodId,
+      off_session: true,
+      confirm: true,
+      transfer_data: { destination: args.palConnectId },
+      metadata: args.metadata ?? {},
+    },
+    { idempotencyKey: args.idempotencyKey },
+  );
+  return pi.id;
+}
+
 // --- Cashing out (instant payout from the pal's connected account) ----------
-export async function payoutToPal(connectId: string, amount: number, idempotencyKey: string): Promise<string> {
+export async function payoutToPal(connectId: string, amount: number, idempotencyKey: string, metadata?: Record<string, string>): Promise<string> {
   const payout = await stripe!.payouts.create(
-    { amount: cents(amount), currency: 'usd' },
+    { amount: cents(amount), currency: 'usd', metadata: metadata ?? {} },
     { stripeAccount: connectId, idempotencyKey },
   );
   return payout.id;

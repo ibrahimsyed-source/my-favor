@@ -99,7 +99,8 @@ export type TransactionStatus =
   | 'declined'
   | 'incomplete'
   | 'deleted'
-  | 'paid_out';
+  | 'paid_out'
+  | 'processing';
 
 export interface Transaction {
   id: string;

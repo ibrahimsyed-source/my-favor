@@ -237,8 +237,8 @@ test('SECURITY: late cancellation persists the fee to the ledger', async () => {
   assert.equal(cancel.status, 200);
   assert.ok(cancel.json.cancellation.fee > 0, 'in-progress cancel has a fee');
   const txns = await api('/api/payments/transactions', { token: member.token });
-  const feeTxn = txns.json.transactions.find((t: any) => t.favorId === favorId && t.status === 'cancelled');
-  assert.ok(feeTxn, 'cancellation fee is recorded as a transaction');
+  const feeTxn = txns.json.transactions.find((t: any) => t.favorId === favorId && t.kind === 'payment');
+  assert.ok(feeTxn, 'cancellation fee is recorded as a member charge');
   assert.equal(feeTxn.amount, cancel.json.cancellation.fee, 'recorded fee matches policy');
 });
 
@@ -300,6 +300,18 @@ test('cancellation compensation is cashable by the committed pal', async () => {
   const cash = await api('/api/payments/cashout', { method: 'POST', token: pal.token });
   assert.equal(cash.status, 200);
   assert.ok(cash.json.amount >= cancel.json.cancellation.fee, 'pal can cash out the compensation');
+});
+
+test('SECURITY: a tip charges the member and credits the pal equally (no unfunded earning)', async () => {
+  const { member, pal, favorId } = await activeFavor({ advanceTo: 'in_progress' });
+  await api(`/api/favors/${favorId}/finish`, { method: 'POST', token: pal.token });
+  await api(`/api/favors/${favorId}/rate`, { method: 'POST', token: member.token, body: { rating: 5, tip: 10 } });
+  const txns = await api('/api/payments/transactions', { token: member.token });
+  const earns = await api('/api/payments/earnings', { token: pal.token });
+  const memberTip = txns.json.transactions.find((t: any) => t.favorId === favorId && t.amount === 10 && t.kind === 'payment');
+  const palTip = earns.json.earnings.find((t: any) => t.favorId === favorId && t.amount === 10 && t.kind === 'earning');
+  assert.ok(memberTip, 'member is charged for the tip');
+  assert.ok(palTip, 'pal is credited the tip — funded by the member charge');
 });
 
 test('account deletion is permanent', async () => {

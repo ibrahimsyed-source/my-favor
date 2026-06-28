@@ -28,24 +28,49 @@ stripeRouter.post('/webhook', raw({ type: 'application/json' }), async (req, res
 
   try {
     switch (event.type) {
-      case 'payment_intent.payment_failed': {
-        // A favor charge failed (e.g. card declined). Flag it for follow-up.
+      case 'payment_intent.succeeded': {
+        // Charge confirmed — promote the favor's (member payment + pal earning)
+        // rows to cashable if they were left pending after a synchronous hiccup.
         const pi = event.data.object as Stripe.PaymentIntent;
         const favorId = pi.metadata?.favorId;
         if (favorId) {
           await prisma.transaction.updateMany({
-            where: { favorId, kind: 'payment' },
+            where: { favorId, status: 'incomplete' },
+            data: { status: 'completed' },
+          });
+        }
+        break;
+      }
+      case 'payment_intent.payment_failed': {
+        // Charge failed — mark BOTH ledgers for the favor uncollected so the pal
+        // earning is not cashable without real funds.
+        const pi = event.data.object as Stripe.PaymentIntent;
+        const favorId = pi.metadata?.favorId;
+        if (favorId) {
+          await prisma.transaction.updateMany({
+            where: { favorId, status: { in: ['completed', 'processing'] } },
             data: { status: 'incomplete' },
           });
         }
         break;
       }
-      case 'account.updated': {
-        // Connect onboarding progressed; payouts_enabled is now reflected by the
-        // live GET /connect/status, so nothing to persist — left as a hook.
+      case 'payout.failed': {
+        // A cash-out payout failed asynchronously — return the batch's earnings to
+        // 'available' so the pal can cash out again. (Sync failures already revert.)
+        const payout = event.data.object as Stripe.Payout;
+        const batch = payout.metadata?.batch;
+        if (batch) {
+          await prisma.transaction.updateMany({
+            where: { payoutBatch: batch },
+            data: { status: 'completed', payoutBatch: null },
+          });
+        }
         break;
       }
-      case 'payment_intent.succeeded':
+      case 'payout.paid':
+      case 'account.updated':
+        // Confirmation / onboarding progress — reflected by live status reads.
+        break;
       default:
         break;
     }

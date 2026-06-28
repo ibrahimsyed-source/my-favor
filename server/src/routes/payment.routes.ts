@@ -164,45 +164,56 @@ paymentRouter.get(
   }),
 );
 
-// POST /api/payments/cashout — pay out the available (completed, not-yet-paid)
-// earnings balance. Marks the earnings paid out atomically, then (when Stripe is
-// live) triggers a real Connect payout to the pal's bank.
+// POST /api/payments/cashout — pay out the available earnings balance.
+// Claims rows into a batch as 'processing' (so concurrent submits and the amount
+// are computed from exactly the claimed rows), then attempts the payout. Rows
+// become 'paid_out' ONLY after the payout succeeds; on any failure they revert to
+// 'completed' so the balance is never stranded.
 paymentRouter.post(
   '/cashout',
   asyncHandler(async (req, res) => {
     const userId = req.user!.id;
-    const result = await prisma.$transaction(async (tx) => {
-      const available = await tx.transaction.findMany({
-        where: { userId, kind: 'earning', status: 'completed' },
-        select: { id: true, amount: true },
-      });
-      const amount = Math.round(available.reduce((sum, t) => sum + t.amount, 0) * 100) / 100;
-      if (amount <= 0) return { amount: 0, count: 0, ids: [] as string[] };
-      // State-gated claim (status still 'completed'), so a concurrent double-
-      // submit can't pay out the same balance twice — the loser claims 0 rows.
-      const claimed = await tx.transaction.updateMany({
-        where: { id: { in: available.map((t) => t.id) }, status: 'completed' },
-        data: { status: 'paid_out' },
-      });
-      if (claimed.count === 0) return { amount: 0, count: 0, ids: [] as string[] };
-      return { amount, count: claimed.count, ids: available.map((t) => t.id) };
-    });
-    if (result.amount <= 0) throw badRequest('No funds available to cash out');
+    const batch = crypto.randomUUID();
 
-    // Trigger the real bank payout when Stripe is live. Idempotency key is
-    // derived from the exact claimed rows, so a retry can't double-pay.
-    if (stripeEnabled()) {
-      const pal = await prisma.user.findUniqueOrThrow({ where: { id: userId } });
-      if (pal.stripeConnectId) {
-        const key = 'cashout_' + crypto.createHash('sha256').update(result.ids.join(',')).digest('hex').slice(0, 32);
-        try {
-          await payoutToPal(pal.stripeConnectId, result.amount, key);
-        } catch (err) {
-          // eslint-disable-next-line no-console
-          console.error('Stripe payout failed (earnings still marked paid_out, reconcile via webhook):', err);
-        }
-      }
+    const claim = await prisma.$transaction(async (tx) => {
+      const claimed = await tx.transaction.updateMany({
+        where: { userId, kind: 'earning', status: 'completed' },
+        data: { status: 'processing', payoutBatch: batch },
+      });
+      if (claimed.count === 0) return { amount: 0, count: 0 };
+      const rows = await tx.transaction.findMany({ where: { payoutBatch: batch }, select: { amount: true } });
+      const amount = Math.round(rows.reduce((s, r) => s + r.amount, 0) * 100) / 100;
+      return { amount, count: claimed.count };
+    });
+    if (claim.amount <= 0) throw badRequest('No funds available to cash out');
+
+    const finalize = (status: 'paid_out' | 'completed') =>
+      prisma.transaction.updateMany({
+        where: { payoutBatch: batch },
+        data: status === 'completed' ? { status: 'completed', payoutBatch: null } : { status: 'paid_out' },
+      });
+
+    // Mock mode: no real payout, settle instantly.
+    if (!stripeEnabled()) {
+      await finalize('paid_out');
+      return res.json({ ok: true, amount: claim.amount, count: claim.count });
     }
-    res.json({ ok: true, amount: result.amount, count: result.count });
+
+    // Live mode: require a Connect account; never consume the balance otherwise.
+    const pal = await prisma.user.findUniqueOrThrow({ where: { id: userId } });
+    if (!pal.stripeConnectId) {
+      await finalize('completed');
+      throw badRequest('Set up payouts before cashing out');
+    }
+    try {
+      await payoutToPal(pal.stripeConnectId, claim.amount, `cashout_${batch}`, { batch });
+      await finalize('paid_out');
+      return res.json({ ok: true, amount: claim.amount, count: claim.count });
+    } catch (err) {
+      // eslint-disable-next-line no-console
+      console.error('Stripe payout failed — reverting earnings to available:', err);
+      await finalize('completed');
+      throw badRequest('Payout could not be completed — your balance is unchanged. Please try again.');
+    }
   }),
 );

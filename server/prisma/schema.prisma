@@ -148,14 +148,15 @@ model PaymentMethod {
 }
 
 model Transaction {
-  id      String   @id @default(uuid())
-  userId  String
-  favorId String
-  title   String
-  amount  Float
-  status  String // TransactionStatus
-  kind    String // "payment" | "earning"
-  date    DateTime @default(now())
+  id          String   @id @default(uuid())
+  userId      String
+  favorId     String
+  title       String
+  amount      Float
+  status      String // TransactionStatus (completed | processing | paid_out | incomplete | cancelled | ...)
+  kind        String // "payment" | "earning"
+  payoutBatch String? // groups earnings claimed by one cash-out, for safe accounting
+  date        DateTime @default(now())
 
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 

@@ -6,7 +6,7 @@ import { asyncHandler, badRequest, notFound, forbidden, conflict } from '../lib/
 import { authenticate, requireRole } from '../middleware/authenticate';
 import { publicFavor, publicFavorOpen } from '../lib/serialize';
 import { computeFees, computePayout, computeCancellation, FAVOR_TIERS } from '../lib/money';
-import { stripeEnabled, chargeFavor } from '../lib/stripe';
+import { stripeEnabled, chargeFavor, chargeToPal } from '../lib/stripe';
 
 export const favorRouter = Router();
 favorRouter.use(authenticate);
@@ -29,6 +29,61 @@ async function getParticipantFavor(favorId: string, userId: string) {
 
 async function notify(userId: string, type: string, title: string, body: string) {
   await prisma.notification.create({ data: { userId, type, title, body } });
+}
+
+// Settle money for a favor: the member is debited and the pal credited together,
+// so a cashable pal earning ONLY ever exists when the member's money was actually
+// collected. Mock mode = instant ('completed'). Live mode charges the member's
+// card and routes funds to the pal's connected account; rows are 'completed' on
+// success, else 'incomplete' (not cashable). `charge` runs only in live mode and
+// receives the resolved (palConnectId, paymentMethodId).
+async function settle(opts: {
+  favorId: string;
+  memberId: string;
+  palId?: string | null;
+  memberTitle: string;
+  memberAmount: number;
+  palTitle?: string;
+  palAmount?: number;
+  charge: (palConnectId: string, paymentMethodId: string) => Promise<string>;
+}): Promise<'completed' | 'incomplete'> {
+  const writeRows = async (status: 'completed' | 'incomplete') => {
+    await prisma.transaction.create({
+      data: { userId: opts.memberId, favorId: opts.favorId, title: opts.memberTitle, amount: opts.memberAmount, status, kind: 'payment' },
+    });
+    if (opts.palId && opts.palAmount != null) {
+      await prisma.transaction.create({
+        data: { userId: opts.palId, favorId: opts.favorId, title: opts.palTitle ?? opts.memberTitle, amount: opts.palAmount, status, kind: 'earning' },
+      });
+    }
+  };
+
+  if (!stripeEnabled()) {
+    await writeRows('completed');
+    return 'completed';
+  }
+
+  const [pal, card] = await Promise.all([
+    opts.palId ? prisma.user.findUnique({ where: { id: opts.palId } }) : Promise.resolve(null),
+    prisma.paymentMethod.findFirst({ where: { userId: opts.memberId }, orderBy: { isDefault: 'desc' } }),
+  ]);
+  if (pal?.stripeConnectId && card?.stripePmId) {
+    try {
+      const pi = await opts.charge(pal.stripeConnectId, card.stripePmId);
+      await prisma.favor.update({ where: { id: opts.favorId }, data: { stripePaymentIntentId: pi } }).catch(() => undefined);
+      await writeRows('completed');
+      return 'completed';
+    } catch (err) {
+      // eslint-disable-next-line no-console
+      console.error('Stripe settle failed:', err);
+      await writeRows('incomplete'); // not cashable until collected
+      return 'incomplete';
+    }
+  }
+  // Live but can't collect (member has no card, or pal hasn't onboarded payouts):
+  // record uncollected so the pal earning is never cashable without real funds.
+  await writeRows('incomplete');
+  return 'incomplete';
 }
 
 // POST /api/favors — member creates a favor. Price + fees are server-computed.
@@ -269,51 +324,35 @@ favorRouter.post(
       throw conflict('Favor is not in a completable state');
     }
 
-    const { payout } = computePayout(favor.price, favor.tip ?? 0);
+    const { payout } = computePayout(favor.price);
 
+    // Atomic state gate: only one concurrent /finish flips the favor to completed.
     const updated = await prisma.$transaction(async (tx) => {
-      // Atomic state gate INSIDE the transaction: only one concurrent /finish
-      // can flip arrived/in_progress -> completed; the rest get count===0 and
-      // abort, so the payout + member charge are written exactly once.
       const done = await tx.favor.updateMany({
         where: { id: favor.id, palId: me, status: { in: ['arrived', 'in_progress'] } },
         data: { status: 'completed' },
       });
       if (done.count === 0) throw conflict('Favor is not in a completable state');
-
       const f = await tx.favor.findUniqueOrThrow({ where: { id: favor.id }, include: memberInclude });
       await tx.favorEvent.create({ data: { favorId: favor.id, status: 'completed', actorId: me } });
-      await tx.transaction.create({
-        data: { userId: favor.memberId, favorId: favor.id, title: f.description.slice(0, 80), amount: f.total, status: 'completed', kind: 'payment' },
-      });
-      await tx.transaction.create({
-        data: { userId: me, favorId: favor.id, title: f.description.slice(0, 80), amount: payout, status: 'completed', kind: 'earning' },
-      });
       await tx.user.update({ where: { id: me }, data: { totalFavors: { increment: 1 } } });
       return f;
     });
 
-    // When Stripe is live, charge the member and route the pal's share to their
-    // connected account (destination charge). Best-effort: the favor is already
-    // completed in the ledger; declines/onboarding gaps are reconciled out-of-band.
-    if (stripeEnabled()) {
-      try {
-        const [pal, card] = await Promise.all([
-          prisma.user.findUniqueOrThrow({ where: { id: me } }),
-          prisma.paymentMethod.findFirst({ where: { userId: favor.memberId }, orderBy: { isDefault: 'desc' } }),
-        ]);
-        if (pal.stripeConnectId && card?.stripePmId) {
-          const pi = await chargeFavor({
-            favorId: favor.id, memberId: favor.memberId, palConnectId: pal.stripeConnectId,
-            total: updated.total, base: updated.price, tip: updated.tip ?? 0, paymentMethodId: card.stripePmId,
-          });
-          await prisma.favor.update({ where: { id: favor.id }, data: { stripePaymentIntentId: pi } });
-        }
-      } catch (err) {
-        // eslint-disable-next-line no-console
-        console.error('Stripe charge on finish failed:', err);
-      }
-    }
+    // Charge the member (total) and credit the pal (payout) — together, so the
+    // pal's earning is only cashable when the member's money is collected.
+    await settle({
+      favorId: favor.id,
+      memberId: favor.memberId,
+      palId: me,
+      memberTitle: updated.description.slice(0, 80),
+      memberAmount: updated.total,
+      palAmount: payout,
+      charge: (cid, pm) => chargeFavor({
+        favorId: favor.id, memberId: favor.memberId, palConnectId: cid,
+        total: updated.total, base: updated.price, tip: 0, paymentMethodId: pm,
+      }),
+    });
 
     await notify(favor.memberId, 'general', 'Favor completed', 'Your favor was completed. Please leave a rating.');
     res.json({ favor: publicFavor(updated), payout });
@@ -356,8 +395,8 @@ favorRouter.post(
 
     const cancellation = computeCancellation({ status: favor.status, price: favor.price, total: favor.total });
 
+    // Atomic gate so a cancel can't race a finish (only one terminal write wins).
     const updated = await prisma.$transaction(async (tx) => {
-      // Atomic gate so a cancel can't race a finish (only one terminal write wins).
       const done = await tx.favor.updateMany({
         where: { id: favor.id, memberId: me, status: { in: ACTIVE_STATUSES } },
         data: { status: 'cancelled' },
@@ -365,23 +404,26 @@ favorRouter.post(
       if (done.count === 0) throw conflict('Favor cannot be cancelled');
       const f = await tx.favor.findUniqueOrThrow({ where: { id: favor.id } });
       await tx.favorEvent.create({ data: { favorId: favor.id, status: 'cancelled', actorId: me } });
-
-      // Persist the policy: charge the member the cancellation fee and, when a
-      // pal was already committed, credit that fee to them as compensation.
-      if (cancellation.fee > 0) {
-        await tx.transaction.create({
-          data: { userId: me, favorId: favor.id, title: `Cancellation fee: ${f.description.slice(0, 60)}`, amount: cancellation.fee, status: 'cancelled', kind: 'payment' },
-        });
-        if (favor.palId) {
-          // 'completed' so it counts toward the pal's available balance and can
-          // actually be cashed out (the cash-out path only pays 'completed').
-          await tx.transaction.create({
-            data: { userId: favor.palId, favorId: favor.id, title: `Cancellation compensation: ${f.description.slice(0, 50)}`, amount: cancellation.fee, status: 'completed', kind: 'earning' },
-          });
-        }
-      }
       return f;
     });
+
+    // Charge the member the cancellation fee and compensate the committed pal —
+    // together, so the pal's compensation is only cashable once actually collected.
+    if (cancellation.fee > 0 && favor.palId) {
+      await settle({
+        favorId: favor.id,
+        memberId: me,
+        palId: favor.palId,
+        memberTitle: `Cancellation fee: ${updated.description.slice(0, 60)}`,
+        memberAmount: cancellation.fee,
+        palTitle: `Cancellation compensation: ${updated.description.slice(0, 50)}`,
+        palAmount: cancellation.fee,
+        charge: (cid, pm) => chargeToPal({
+          memberId: me, palConnectId: cid, amount: cancellation.fee, paymentMethodId: pm,
+          idempotencyKey: `favor_cancel_${favor.id}`, metadata: { favorId: favor.id },
+        }),
+      });
+    }
 
     if (favor.palId) {
       await notify(favor.palId, 'cancellation', 'Favor cancelled', 'A favor you accepted was cancelled.');
@@ -426,14 +468,26 @@ favorRouter.post(
           where: { id: favor.palId },
           data: { rating: Math.round((agg._avg.rating ?? rating) * 10) / 10 },
         });
-        if (tip && tip > 0) {
-          await tx.transaction.create({
-            data: { userId: favor.palId, favorId: favor.id, title: `Tip: ${f.description.slice(0, 60)}`, amount: tip, status: 'completed', kind: 'earning' },
-          });
-        }
       }
       return f;
     });
+
+    // Charge the member for the tip and credit the pal — together, so a tip is
+    // never an unfunded cashable earning.
+    if (tip && tip > 0 && favor.palId) {
+      await settle({
+        favorId: favor.id,
+        memberId: me,
+        palId: favor.palId,
+        memberTitle: `Tip: ${updated.description.slice(0, 60)}`,
+        memberAmount: tip,
+        palAmount: tip,
+        charge: (cid, pm) => chargeToPal({
+          memberId: me, palConnectId: cid, amount: tip, paymentMethodId: pm,
+          idempotencyKey: `favor_tip_${favor.id}`, metadata: { favorId: favor.id },
+        }),
+      });
+    }
     res.json({ favor: publicFavor(updated) });
   }),
 );
