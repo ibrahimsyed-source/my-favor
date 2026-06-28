@@ -257,6 +257,51 @@ test('SECURITY: open favor feed exposes only coarse location', async () => {
   assert.equal(f.location.lat, 30.27, 'coordinates are coarsened');
 });
 
+test('assigned pal sees the member name on the active favor', async () => {
+  const { pal } = await activeFavor({ advanceTo: 'matched' });
+  const active = await api('/api/favors/active', { token: pal.token });
+  assert.equal(active.status, 200);
+  assert.ok(active.json.favor?.memberName, 'memberName present for the assigned pal');
+});
+
+test('cashout pays the available balance exactly once', async () => {
+  const { pal, favorId } = await activeFavor({ advanceTo: 'in_progress' });
+  await api(`/api/favors/${favorId}/finish`, { method: 'POST', token: pal.token });
+  const cash1 = await api('/api/payments/cashout', { method: 'POST', token: pal.token });
+  assert.equal(cash1.status, 200);
+  assert.ok(cash1.json.amount > 0, 'positive payout');
+  const cash2 = await api('/api/payments/cashout', { method: 'POST', token: pal.token });
+  assert.equal(cash2.status, 400, 'no funds left after cashout');
+});
+
+test('pal can rate the member once', async () => {
+  const { pal, favorId } = await activeFavor({ advanceTo: 'in_progress' });
+  await api(`/api/favors/${favorId}/finish`, { method: 'POST', token: pal.token });
+  const r1 = await api(`/api/favors/${favorId}/rate-member`, { method: 'POST', token: pal.token, body: { rating: 5, feedback: 'Great member' } });
+  assert.equal(r1.status, 200);
+  const r2 = await api(`/api/favors/${favorId}/rate-member`, { method: 'POST', token: pal.token, body: { rating: 1 } });
+  assert.equal(r2.status, 409, 'cannot rate the member twice');
+});
+
+test('pal reviews reflect member ratings', async () => {
+  const { member, pal, favorId } = await activeFavor({ advanceTo: 'in_progress' });
+  await api(`/api/favors/${favorId}/finish`, { method: 'POST', token: pal.token });
+  await api(`/api/favors/${favorId}/rate`, { method: 'POST', token: member.token, body: { rating: 5, feedback: 'Fantastic pal' } });
+  const reviews = await api(`/api/profile/pals/${pal.id}/reviews`, { token: member.token });
+  assert.equal(reviews.status, 200);
+  assert.ok(reviews.json.reviews.some((r: any) => r.comment === 'Fantastic pal' && r.rating === 5), 'review present');
+});
+
+test('cancellation compensation is cashable by the committed pal', async () => {
+  const { member, pal, favorId } = await activeFavor({ advanceTo: 'in_progress' });
+  const cancel = await api(`/api/favors/${favorId}/cancel`, { method: 'POST', token: member.token });
+  assert.equal(cancel.status, 200);
+  assert.ok(cancel.json.cancellation.fee > 0, 'in-progress cancel has a fee');
+  const cash = await api('/api/payments/cashout', { method: 'POST', token: pal.token });
+  assert.equal(cash.status, 200);
+  assert.ok(cash.json.amount >= cancel.json.cancellation.fee, 'pal can cash out the compensation');
+});
+
 test('account deletion is permanent', async () => {
   const member = await makeUser('member');
   const del = await api('/api/auth/account', { method: 'DELETE', token: member.token });

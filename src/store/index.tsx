@@ -7,7 +7,7 @@ import { setSession, clearSession, getStoredRefresh } from '../api/client';
 import {
   signupApi, verifyOtpApi, loginApi, logoutApi, deleteAccountApi, changePasswordApi,
   getMeApi, updateProfileApi, setRoleApi, setStatusApi, getPalsApi, getPalApi,
-  createFavorApi, getFavorsApi, getActiveFavorApi, getIncomingApi,
+  createFavorApi, getFavorsApi, getActiveFavorApi, getFavorApi, getIncomingApi,
   acceptFavorApi, declineFavorApi, assignPalApi, advanceFavorApi, finishFavorApi, cancelFavorApi, rateFavorApi, rateMemberApi,
   getCardsApi, addCardApi, removeCardApi, getTransactionsApi, getEarningsApi, cashoutApi,
   getThreadsApi, getMessagesApi, sendMessageApi, createThreadApi,
@@ -204,6 +204,8 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
   // progress (matched -> en route -> arrived -> ...) without a manual refresh. ----
   useEffect(() => {
     if (!user || !activeFavor || !ACTIVE.includes(activeFavor.status)) return;
+    const activeId = activeFavor.id;
+    const role = user.role;
     const id = setInterval(async () => {
       try {
         const { favor } = await getActiveFavorApi();
@@ -214,6 +216,19 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
               const { pal } = await getPalApi(favor.palId);
               mergePal(asUser(pal));
             } catch { /* ignore */ }
+          }
+        } else {
+          // The favor left the active set (counterparty completed or cancelled).
+          // For the member, surface the final completed record so the tracking
+          // screen can flip to "completed" and prompt a rating; otherwise clear
+          // it. Either way activeFavor is no longer ACTIVE, so this poll stops.
+          if (role === 'member') {
+            try {
+              const { favor: final } = await getFavorApi(activeId);
+              setActiveFavor(final && final.status === 'completed' ? final : null);
+            } catch { setActiveFavor(null); }
+          } else {
+            setActiveFavor(null);
           }
         }
       } catch { /* ignore transient errors */ }
@@ -429,7 +444,14 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       void finishFavorApi(f.id)
         .then(() => Promise.all([getEarningsApi(), getFavorsApi()]))
         .then(([e, hist]) => { setEarnings(e.earnings); setHistory(hist.favors); })
-        .catch(() => undefined);
+        .catch(() => {
+          // The favor is still in_progress server-side; reconcile to server truth
+          // so the phantom earning/history clear and the favor can be re-finished.
+          lastFinishedRef.current = null;
+          void Promise.all([getActiveFavorApi(), getEarningsApi(), getFavorsApi()])
+            .then(([a, e, hist]) => { setActiveFavor(a.favor); setEarnings(e.earnings); setHistory(hist.favors); })
+            .catch(() => undefined);
+        });
     }
     setActiveFavor(null);
     return payout;
@@ -471,10 +493,16 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
   }, []);
 
   // Cash out the available balance; refresh the ledger so the summary updates.
+  // The (cosmetic) refresh is isolated so a refresh hiccup can't masquerade as a
+  // failed cashout after the money already moved.
   const cashOut = useCallback(async () => {
     const { amount } = await cashoutApi();
-    const { earnings: e } = await getEarningsApi();
-    setEarnings(e);
+    try {
+      const { earnings: e } = await getEarningsApi();
+      setEarnings(e);
+    } catch {
+      /* the payout succeeded; the ledger will refresh on next load */
+    }
     return amount;
   }, []);
 
@@ -486,15 +514,27 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     setMessages((m) => [...m, optimistic]);
     setThreads((t) => t.map((th) => (th.id === threadId ? { ...th, lastMessage: text, unread: 0 } : th)));
     void sendMessageApi(threadId, text)
-      .then(({ message }) => setMessages((m) => m.map((x) => (x.id === optimistic.id ? message : x))))
+      .then(({ message }) => setMessages((m) => {
+        // Replace the optimistic bubble with the real one, then dedupe by id in
+        // case a poll already pulled the confirmed message in.
+        const replaced = m.map((x) => (x.id === optimistic.id ? message : x));
+        const seen = new Set<string>();
+        return replaced.filter((x) => (seen.has(x.id) ? false : (seen.add(x.id), true)));
+      }))
       .catch(() => undefined);
   }, []);
 
   // Live-ish messaging: re-fetch a thread's messages (polled while it's open).
+  // Keep any still-in-flight optimistic (pending_) sends so a poll mid-send
+  // doesn't make the user's just-sent bubble vanish.
   const refreshMessages = useCallback(async (threadId: string) => {
     try {
       const { messages: m } = await getMessagesApi(threadId);
-      setMessages((prev) => [...prev.filter((x) => x.threadId !== threadId), ...m]);
+      setMessages((prev) => {
+        const others = prev.filter((x) => x.threadId !== threadId);
+        const pending = prev.filter((x) => x.threadId === threadId && x.id.startsWith('pending_'));
+        return [...others, ...m, ...pending];
+      });
     } catch {
       /* ignore */
     }

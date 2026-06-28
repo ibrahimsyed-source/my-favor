@@ -93,7 +93,7 @@ export const Messages = ({ navigation }: any) => {
             <View style={{ paddingTop: 80, alignItems: 'center' }}>
               <Ionicons name="chatbubbles-outline" size={40} color={theme.textTertiary} />
               <Txt variant="body" color={theme.textSecondary} style={{ marginTop: 12 }}>
-                No unread messages
+                {onlyUnread ? 'No unread messages' : 'No conversations yet'}
               </Txt>
             </View>
           }

@@ -89,12 +89,44 @@ export async function verifyOtp(opts: {
   return { ok: true, userId: record.userId };
 }
 
-// Where a real integration goes. For now we log in dev only (never log codes in
-// production — guarded by NODE_ENV).
+// Deliver the code. When an email provider (Resend) is configured we send a real
+// email; otherwise (dev) we log it. Codes are NEVER logged in production.
 async function dispatch(destination: string, code: string): Promise<void> {
+  if (config.email.enabled) {
+    await sendOtpEmail(destination, code);
+    return;
+  }
   if (!config.isProd) {
     // eslint-disable-next-line no-console
     console.log(`[otp] code for ${destination}: ${code}`);
   }
-  // TODO: integrate Twilio (SMS) / email provider here for production.
+  // No provider configured in production → the boot warning in config.ts fired.
+  // (To add SMS instead, send via Twilio here when destination is a phone number.)
+}
+
+// Send the OTP via Resend's REST API (no SDK dependency — uses fetch). Swap for
+// SendGrid/Postmark/Twilio by changing this one function.
+async function sendOtpEmail(to: string, code: string): Promise<void> {
+  try {
+    const res = await fetch('https://api.resend.com/emails', {
+      method: 'POST',
+      headers: {
+        authorization: `Bearer ${config.email.resendApiKey}`,
+        'content-type': 'application/json',
+      },
+      body: JSON.stringify({
+        from: config.email.from,
+        to,
+        subject: 'Your My Favor verification code',
+        html: `<p>Your My Favor verification code is:</p><p style="font-size:28px;font-weight:700;letter-spacing:4px">${code}</p><p>It expires in ${config.otp.ttlMinutes} minutes. If you didn't request this, you can ignore this email.</p>`,
+      }),
+    });
+    if (!res.ok) {
+      // eslint-disable-next-line no-console
+      console.error('OTP email failed:', res.status, await res.text().catch(() => ''));
+    }
+  } catch (err) {
+    // eslint-disable-next-line no-console
+    console.error('OTP email error:', err);
+  }
 }

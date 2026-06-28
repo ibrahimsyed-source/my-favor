@@ -98,11 +98,14 @@ paymentRouter.post(
       });
       const amount = Math.round(available.reduce((sum, t) => sum + t.amount, 0) * 100) / 100;
       if (amount <= 0) return { amount: 0, count: 0 };
-      await tx.transaction.updateMany({
-        where: { id: { in: available.map((t) => t.id) } },
+      // State-gated claim (status still 'completed'), so a concurrent double-
+      // submit can't pay out the same balance twice — the loser claims 0 rows.
+      const claimed = await tx.transaction.updateMany({
+        where: { id: { in: available.map((t) => t.id) }, status: 'completed' },
         data: { status: 'paid_out' },
       });
-      return { amount, count: available.length };
+      if (claimed.count === 0) return { amount: 0, count: 0 };
+      return { amount, count: claimed.count };
     });
     if (result.amount <= 0) throw badRequest('No funds available to cash out');
     res.json({ ok: true, ...result });

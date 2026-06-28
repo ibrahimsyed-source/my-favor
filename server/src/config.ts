@@ -25,6 +25,9 @@ const rawSchema = z.object({
   OTP_TTL_MINUTES: z.coerce.number().int().positive().default(10),
   STRIPE_SECRET_KEY: z.string().optional().default(''),
   STRIPE_WEBHOOK_SECRET: z.string().optional().default(''),
+  // Email delivery for OTP codes (Resend). Leave blank in dev (codes are logged).
+  RESEND_API_KEY: z.string().optional().default(''),
+  OTP_FROM_EMAIL: z.string().optional().default('My Favor <onboarding@resend.dev>'),
 });
 
 const parsed = rawSchema.safeParse(process.env);
@@ -88,4 +91,16 @@ export const config = {
     webhookSecret: env.STRIPE_WEBHOOK_SECRET,
     enabled: env.STRIPE_SECRET_KEY.length > 0,
   },
+  email: {
+    resendApiKey: env.RESEND_API_KEY,
+    from: env.OTP_FROM_EMAIL,
+    enabled: env.RESEND_API_KEY.length > 0,
+  },
 } as const;
+
+// In production you need a real way to deliver OTP codes (dev-return is blocked
+// above). Warn loudly if no email provider is configured.
+if (isProd && !env.RESEND_API_KEY) {
+  // eslint-disable-next-line no-console
+  console.warn('⚠️  No RESEND_API_KEY set — OTP codes cannot be delivered. Wire an email/SMS provider before launch.');
+}

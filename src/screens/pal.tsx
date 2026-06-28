@@ -296,7 +296,12 @@ const bw = StyleSheet.create({
 export const PalFavorDetail = ({ navigation, route }: any) => {
   const s = useStore();
   const [expanded, setExpanded] = useState(false);
-  const favor = s.incomingFavors.find((f) => f.id === route?.params?.favorId) ?? s.incomingFavors[0];
+  // Bind strictly to the requested favor. Only fall back to the first open favor
+  // when no id was passed (e.g. a bare deep-link) — never substitute a different
+  // favor, or ACCEPT/DECLINE would silently act on the wrong one after a refresh.
+  const favorId = route?.params?.favorId;
+  const favor = favorId ? s.incomingFavors.find((f) => f.id === favorId) : s.incomingFavors[0];
+  const gone = !!favorId && !favor;
   const base = favor?.price ?? 20;
   // Real favor framing. The requester stays anonymous until the pal accepts
   // (privacy), so we show the request itself, not a fake person.
@@ -309,6 +314,28 @@ export const PalFavorDetail = ({ navigation, route }: any) => {
     : favor?.createdAt
       ? `Requested ${relTime(favor.createdAt)}`
       : 'As soon as possible';
+
+  if (gone) {
+    return (
+      <View style={{ flex: 1, backgroundColor: DARK_BG }}>
+        <MapBackdrop />
+        <MapTopBar navigation={navigation} />
+        <View style={st.sheet}>
+          <Handle />
+          <View style={{ alignItems: 'center', paddingVertical: 24 }}>
+            <Ionicons name="time-outline" size={48} color={SUBTLE} />
+            <Txt variant="h4" color="#fff" center style={{ marginTop: 14 }}>This favor was just taken</Txt>
+            <Txt variant="body" color={SUBTLE} center style={{ marginTop: 8 }}>
+              Another Favor Pal accepted it, or the member cancelled. Browse other open favors.
+            </Txt>
+            <TouchableOpacity style={[st.whiteBtn, { alignSelf: 'stretch' }]} onPress={() => navigation.goBack()}>
+              <Text style={st.whiteBtnTxt}>BACK TO FAVORS</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      </View>
+    );
+  }
 
   return (
     <View style={{ flex: 1, backgroundColor: DARK_BG }}>
@@ -359,7 +386,7 @@ export const PalFavorDetail = ({ navigation, route }: any) => {
           style={st.whiteBtn}
           accessibilityRole="button"
           accessibilityLabel="Accept this favor"
-          onPress={() => { if (favor) s.acceptFavor(favor.id); navigation.navigate('Navigation'); }}
+          onPress={() => { if (!favor) return; s.acceptFavor(favor.id); navigation.navigate('Navigation'); }}
         >
           <Text style={st.whiteBtnTxt}>ACCEPT</Text>
         </TouchableOpacity>

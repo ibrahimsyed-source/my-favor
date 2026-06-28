@@ -350,8 +350,10 @@ favorRouter.post(
           data: { userId: me, favorId: favor.id, title: `Cancellation fee: ${f.description.slice(0, 60)}`, amount: cancellation.fee, status: 'cancelled', kind: 'payment' },
         });
         if (favor.palId) {
+          // 'completed' so it counts toward the pal's available balance and can
+          // actually be cashed out (the cash-out path only pays 'completed').
           await tx.transaction.create({
-            data: { userId: favor.palId, favorId: favor.id, title: `Cancellation compensation: ${f.description.slice(0, 50)}`, amount: cancellation.fee, status: 'cancelled', kind: 'earning' },
+            data: { userId: favor.palId, favorId: favor.id, title: `Cancellation compensation: ${f.description.slice(0, 50)}`, amount: cancellation.fee, status: 'completed', kind: 'earning' },
           });
         }
       }

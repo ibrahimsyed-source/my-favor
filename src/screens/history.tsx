@@ -199,6 +199,10 @@ export const FavorHistoryDetail = ({ navigation, route }: any) => {
       description: favor.description,
       images: favor.images,
       location: favor.location,
+      // Clear any carry-over scheduling from a previous draft so the re-request
+      // defaults to "now" rather than a stale (often past) time the user never picked.
+      scheduledFor: undefined,
+      hours: undefined,
     });
     navigation.navigate('FavorSummary');
   };
