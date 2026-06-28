@@ -19,9 +19,14 @@ RUN apt-get update -y && apt-get install -y openssl && rm -rf /var/lib/apt/lists
 COPY package*.json ./
 RUN npm ci --omit=dev
 COPY prisma ./prisma
+# Production runs on Postgres. The committed schema uses SQLite for zero-setup
+# local dev; flip the provider here so the image targets Postgres without
+# changing local. (Schema uses only portable types, so this is safe.)
+RUN sed -i 's/provider = "sqlite"/provider = "postgresql"/' prisma/schema.prisma
 RUN npx prisma generate
 COPY --from=build /app/dist ./dist
 EXPOSE 4000
-# Apply pending migrations, then start. (For the very first Postgres deploy you
-# can swap `migrate deploy` for `db push` — see DEPLOY.md.)
-CMD ["sh", "-c", "npx prisma migrate deploy && node dist/index.js"]
+# Sync the schema to the Postgres DB, then start. db push (no migration files
+# needed) keeps the SQLite-vs-Postgres migration histories from diverging; it
+# applies non-destructive changes and refuses silent data loss.
+CMD ["sh", "-c", "npx prisma db push --skip-generate && node dist/index.js"]

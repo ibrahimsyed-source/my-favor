@@ -1,10 +1,32 @@
 # Deploying the My Favor API
 
 The server runs locally on **SQLite** for zero-setup dev. Production needs
-**Postgres** (SQLite isn't suitable for a hosted, multi-user, money-handling
-app). This guide takes you from localhost to a deployed API.
+**Postgres**. The included `Dockerfile` + `render.yaml` handle the switch
+automatically, so **local stays on SQLite and you don't touch the schema.**
 
 ---
+
+## Render (recommended — one-click Blueprint)
+
+1. **Push the repo to GitHub** (Render deploys from Git).
+2. In Render: **New ▸ Blueprint**, connect the repo. Render reads `render.yaml`
+   and creates a **Postgres database** + the **API web service** (Docker).
+3. When prompted, fill the secret env vars (the `sync: false` ones):
+   `CORS_ORIGINS`, `STRIPE_SECRET_KEY`, `STRIPE_WEBHOOK_SECRET`, `RESEND_API_KEY`,
+   `OTP_FROM_EMAIL`. (`DATABASE_URL` + JWT secrets are wired/generated for you.)
+4. Deploy. The image flips Prisma to Postgres and runs `prisma db push` to create
+   the tables on first boot. Health check: `GET /health`.
+5. **(Optional) seed a reviewer demo account:** in the service's Shell, run
+   `npx tsx prisma/seed.ts` once — or just sign up a reviewer account in the app.
+6. Copy the service URL (e.g. `https://my-favor-api.onrender.com`) → build the app
+   with `EXPO_PUBLIC_API_URL=<that URL>` and add it to `CORS_ORIGINS`.
+
+> Notes: the Blueprint uses a **free** DB (30-day) — upgrade to a paid plan before
+> launch — and a **starter** web instance ($7/mo) so there are no cold starts.
+
+---
+
+## Manual / other hosts (Railway, Fly, etc.)
 
 ## 1. Provision Postgres
 
