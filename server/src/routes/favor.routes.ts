@@ -292,6 +292,28 @@ favorRouter.post(
   }),
 );
 
+// POST /api/favors/:id/rate-member — the pal rates the member after completion.
+favorRouter.post(
+  '/:id/rate-member',
+  requireRole('pal'),
+  validate({ params: idParam, body: z.object({ rating: z.number().int().min(1).max(5), feedback: z.string().max(1000).default('') }) }),
+  asyncHandler(async (req, res) => {
+    const me = req.user!.id;
+    const { rating, feedback } = req.body as { rating: number; feedback: string };
+    const favor = await prisma.favor.findUnique({ where: { id: req.params.id } });
+    if (!favor) throw notFound('Favor not found');
+    if (favor.palId !== me) throw forbidden('Only the assigned pal can rate this favor');
+    if (favor.status !== 'completed') throw conflict('Only completed favors can be rated');
+    // Atomic single-rating gate (mirrors the member rate flow).
+    const rated = await prisma.favor.updateMany({
+      where: { id: favor.id, palId: me, palRating: null },
+      data: { palRating: rating, palFeedback: feedback },
+    });
+    if (rated.count === 0) throw conflict('Favor already rated');
+    res.json({ ok: true });
+  }),
+);
+
 // POST /api/favors/:id/cancel — the member cancels; cancellation fee per policy.
 favorRouter.post(
   '/:id/cancel',

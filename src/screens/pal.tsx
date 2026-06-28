@@ -565,10 +565,15 @@ export const PalFavorSuccess = ({ navigation, route }: any) => {
 // 5. PalFavorComplete — Thank You / feedback (figma 97:6337 / 97:6307)
 // ===========================================================================
 export const PalFavorComplete = ({ navigation }: any) => {
+  const s = useStore();
   const [rating, setRating] = useState(0);
   const [feedback, setFeedback] = useState('');
-  // The favor was already recorded by finishFavorAsPal() at MARK FAVOR DONE, so
-  // submitting here only dismisses the flow — do NOT rate/record it a second time.
+  // The favor itself was completed at MARK FAVOR DONE; here the pal rates the
+  // MEMBER (the reverse review), persisted via rateMember().
+  const onSubmit = () => {
+    if (rating) s.rateMember(rating, feedback);
+    navigation.navigate('Tabs');
+  };
   return (
     <SafeAreaView edges={['top', 'bottom']} style={{ flex: 1, backgroundColor: DARK_BG }}>
       <ScrollView contentContainerStyle={{ paddingHorizontal: 24, paddingBottom: 24, flexGrow: 1 }}>
@@ -611,7 +616,7 @@ export const PalFavorComplete = ({ navigation }: any) => {
           accessibilityRole="button"
           accessibilityLabel="Submit feedback"
           accessibilityState={{ disabled: !rating }}
-          onPress={() => navigation.navigate('Tabs')}
+          onPress={onSubmit}
         >
           <Text style={st.whiteBtnTxt}>SUBMIT FEEDBACK</Text>
         </TouchableOpacity>

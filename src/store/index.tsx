@@ -8,7 +8,7 @@ import {
   signupApi, verifyOtpApi, loginApi, logoutApi, deleteAccountApi, changePasswordApi,
   getMeApi, updateProfileApi, setRoleApi, setStatusApi, getPalsApi, getPalApi,
   createFavorApi, getFavorsApi, getActiveFavorApi, getIncomingApi,
-  acceptFavorApi, declineFavorApi, assignPalApi, advanceFavorApi, finishFavorApi, cancelFavorApi, rateFavorApi,
+  acceptFavorApi, declineFavorApi, assignPalApi, advanceFavorApi, finishFavorApi, cancelFavorApi, rateFavorApi, rateMemberApi,
   getCardsApi, addCardApi, removeCardApi, getTransactionsApi, getEarningsApi, cashoutApi,
   getThreadsApi, getMessagesApi, sendMessageApi,
   getNotificationsApi, markNotificationReadApi,
@@ -81,6 +81,7 @@ interface StoreValue {
   declineFavor: (favorId: string) => void;
   assignPal: (palId: string) => void;
   finishFavorAsPal: () => number;
+  rateMember: (rating: number, feedback: string) => void;
   // moderation
   blockedUsers: string[];
   reportUser: (userId: string, reason?: string) => void;
@@ -127,6 +128,9 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
   // Keep a ref of pals so the poll loop can dedupe without re-subscribing.
   const palsRef = useRef<User[]>([]);
   palsRef.current = pals;
+  // Remember the favor a pal just finished, so the post-completion screen can
+  // submit the pal's rating of the member for the right favor.
+  const lastFinishedRef = useRef<string | null>(null);
 
   const mergePal = useCallback((p: User) => {
     setPals((list) => (list.find((x) => x.id === p.id) ? list : [...list, p]));
@@ -418,6 +422,7 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       };
       setEarnings((e) => [optimistic, ...e]);
       setHistory((h) => [{ ...f, palId: user?.id, status: 'completed' }, ...h]);
+      lastFinishedRef.current = f.id;
       void finishFavorApi(f.id)
         .then(() => Promise.all([getEarningsApi(), getFavorsApi()]))
         .then(([e, hist]) => { setEarnings(e.earnings); setHistory(hist.favors); })
@@ -426,6 +431,12 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     setActiveFavor(null);
     return payout;
   }, [activeFavor, user]);
+
+  // Pal rates the member they just helped (persists to the finished favor).
+  const rateMember = useCallback((rating: number, feedback: string) => {
+    const id = lastFinishedRef.current;
+    if (id) void rateMemberApi(id, { rating, feedback: feedback ?? '' }).catch(() => undefined);
+  }, []);
 
   // ---- moderation ----
   const reportUser = useCallback((userId: string, reason?: string) => {
@@ -508,14 +519,14 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       pals, draftFavor, setDraft, clearDraft,
       activeFavor, activePal: palById(activeFavor?.palId) ?? null, palById, history,
       requestFavor, advanceFavor, cancelFavor, rateFavor, incomingFavors, refreshIncoming, acceptFavor,
-      declineFavor, assignPal, finishFavorAsPal,
+      declineFavor, assignPal, finishFavorAsPal, rateMember,
       blockedUsers, reportUser, blockUser,
       cards, addCard, removeCard, transactions, earnings, cashOut,
       threads, messagesFor, sendMessage, refreshMessages, refreshThreads, notifications, markNotificationRead,
     }),
     [user, signup, verifyOtp, login, logout, deleteAccount, updateProfile, changePassword, setRole, setStatus,
       pals, draftFavor, setDraft, clearDraft, activeFavor, palById, history, requestFavor, advanceFavor, cancelFavor,
-      rateFavor, incomingFavors, refreshIncoming, acceptFavor, declineFavor, assignPal, finishFavorAsPal, blockedUsers, reportUser,
+      rateFavor, incomingFavors, refreshIncoming, acceptFavor, declineFavor, assignPal, finishFavorAsPal, rateMember, blockedUsers, reportUser,
       blockUser, cards, addCard, removeCard, transactions, earnings, cashOut, threads, messagesFor, sendMessage,
       refreshMessages, refreshThreads, notifications, markNotificationRead]
   );

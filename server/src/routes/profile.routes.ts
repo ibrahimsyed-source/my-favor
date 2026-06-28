@@ -104,3 +104,26 @@ profileRouter.get(
     res.json({ pal: publicPal(pal) });
   }),
 );
+
+// GET /api/profile/pals/:id/reviews — reviews members left for this pal.
+profileRouter.get(
+  '/pals/:id/reviews',
+  validate({ params: z.object({ id: z.string().uuid() }) }),
+  asyncHandler(async (req, res) => {
+    const rated = await prisma.favor.findMany({
+      where: { palId: req.params.id, rating: { not: null } },
+      orderBy: { updatedAt: 'desc' },
+      take: 50,
+      include: { member: { select: { firstName: true, lastName: true } } },
+    });
+    const reviews = rated.map((f) => ({
+      id: f.id,
+      rating: f.rating ?? 0,
+      comment: f.feedback ?? '',
+      // First name + last initial — reviews are public but we don't expose full names.
+      authorName: `${f.member.firstName} ${f.member.lastName ? f.member.lastName[0] + '.' : ''}`.trim(),
+      date: f.updatedAt.getTime(),
+    }));
+    res.json({ reviews });
+  }),
+);

@@ -1,6 +1,6 @@
 import { apiRequest } from './client';
 import {
-  User, Favor, PaymentCard, Transaction, Thread, Message, AppNotification, Role, UserStatus,
+  User, Favor, PaymentCard, Transaction, Thread, Message, AppNotification, Role, UserStatus, Review,
 } from '../types';
 
 // Typed wrappers over the backend routes. Response shapes mirror the server's
@@ -42,6 +42,7 @@ export const setStatusApi = (status: UserStatus) =>
   apiRequest<{ user: User }>('/api/profile/status', { method: 'POST', auth: true, body: { status } });
 export const getPalsApi = () => apiRequest<{ pals: Partial<User>[] }>('/api/profile/pals', { auth: true });
 export const getPalApi = (id: string) => apiRequest<{ pal: Partial<User> }>(`/api/profile/pals/${id}`, { auth: true });
+export const getPalReviewsApi = (id: string) => apiRequest<{ reviews: Review[] }>(`/api/profile/pals/${id}/reviews`, { auth: true });
 
 // --- favors ---
 export type CreateFavorInput = {
@@ -62,6 +63,8 @@ export const finishFavorApi = (id: string) => apiRequest<{ favor: Favor; payout:
 export const cancelFavorApi = (id: string) => apiRequest<{ favor: Favor; cancellation: { fee: number; refund: number } }>(`/api/favors/${id}/cancel`, { method: 'POST', auth: true });
 export const rateFavorApi = (id: string, body: { rating: number; feedback: string; tip?: number }) =>
   apiRequest<{ favor: Favor }>(`/api/favors/${id}/rate`, { method: 'POST', auth: true, body });
+export const rateMemberApi = (id: string, body: { rating: number; feedback: string }) =>
+  apiRequest<{ ok: boolean }>(`/api/favors/${id}/rate-member`, { method: 'POST', auth: true, body });
 
 // --- payments ---
 export const getCardsApi = () => apiRequest<{ cards: PaymentCard[] }>('/api/payments/cards', { auth: true });

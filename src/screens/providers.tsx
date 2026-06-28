@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   View, ScrollView, StyleSheet, TouchableOpacity, useWindowDimensions, DimensionValue,
 } from 'react-native';
@@ -6,7 +6,8 @@ import { Ionicons } from '@expo/vector-icons';
 import { Screen, Txt, Button, Avatar, MapPlaceholder } from '../components';
 import { useTheme, tokens } from '../theme';
 import { useStore } from '../store';
-import { reviews as seedReviews, palReviews } from '../data/mockData';
+import { getPalReviewsApi } from '../api/endpoints';
+import { Review } from '../types';
 
 const PIN_RED = '#D40000';
 const MONTHS = [
@@ -98,8 +99,13 @@ export const ProviderDetail = ({ navigation, route }: any) => {
   const pal = pals.find((p) => p.id === route?.params?.palId) ?? pals[0];
 
   const mapH = SCREEN_H * 0.36;
-  // Per-pal reviews so reputation is no longer identical copy for everyone.
-  const palRevs = palReviews[pal.id] ?? seedReviews;
+  // Real reviews members have left for this pal (fetched from the backend).
+  const [palRevs, setPalRevs] = useState<Review[]>([]);
+  useEffect(() => {
+    let alive = true;
+    getPalReviewsApi(pal.id).then(({ reviews }) => { if (alive) setPalRevs(reviews); }).catch(() => undefined);
+    return () => { alive = false; };
+  }, [pal.id]);
   // Surface a rebook loop when the member has completed a favor with this pal before.
   const bookedBefore = history.some((h) => h.palId === pal.id && h.status === 'completed');
 
@@ -179,6 +185,14 @@ export const ProviderDetail = ({ navigation, route }: any) => {
 
             {/* Reviews */}
             <View style={{ marginTop: tokens.spacing.lg }}>
+              <Txt variant="label" style={{ fontSize: 15, marginBottom: tokens.spacing.md }}>
+                Reviews{palRevs.length ? ` (${palRevs.length})` : ''}
+              </Txt>
+              {palRevs.length === 0 ? (
+                <Txt variant="bodySm" color={theme.textSecondary} style={{ fontStyle: 'italic' }}>
+                  No reviews yet — be the first to book {pal.firstName}.
+                </Txt>
+              ) : null}
               {palRevs.map((r) => (
                 <View key={r.id} style={{ marginBottom: tokens.spacing.base }}>
                   <Txt
