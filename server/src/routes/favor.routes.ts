@@ -12,9 +12,13 @@ favorRouter.use(authenticate);
 
 const ACTIVE_STATUSES = ['requested', 'matched', 'enroute', 'arrived', 'in_progress'];
 
+// Include the member's first name on participant-facing favor responses so the
+// assigned pal sees who they're helping (the open feed never uses this).
+const memberInclude = { member: { select: { firstName: true } } } as const;
+
 // Fetch a favor the caller is allowed to see (member or assigned pal).
 async function getParticipantFavor(favorId: string, userId: string) {
-  const favor = await prisma.favor.findUnique({ where: { id: favorId } });
+  const favor = await prisma.favor.findUnique({ where: { id: favorId }, include: memberInclude });
   if (!favor) throw notFound('Favor not found');
   if (favor.memberId !== userId && favor.palId !== userId) {
     throw forbidden('You are not a participant in this favor');
@@ -103,6 +107,7 @@ favorRouter.get(
     const favor = await prisma.favor.findFirst({
       where: { OR: [{ memberId: me }, { palId: me }], status: { in: ACTIVE_STATUSES } },
       orderBy: { createdAt: 'desc' },
+      include: memberInclude,
     });
     res.json({ favor: favor ? publicFavor(favor) : null });
   }),
@@ -166,7 +171,7 @@ favorRouter.post(
     await prisma.favorEvent.create({ data: { favorId: req.params.id, status: 'matched', actorId: me } });
     await notify(favor.memberId, 'match', 'Favor accepted', 'A Favor Pal accepted your request.');
 
-    const updated = await prisma.favor.findUniqueOrThrow({ where: { id: req.params.id } });
+    const updated = await prisma.favor.findUniqueOrThrow({ where: { id: req.params.id }, include: memberInclude });
     res.json({ favor: publicFavor(updated) });
   }),
 );
@@ -244,7 +249,7 @@ favorRouter.post(
     if (status === 'arrived') {
       await notify(favor.memberId, 'arrived', 'Your Pal has arrived', 'Your Favor Pal is at the location.');
     }
-    const updated = await prisma.favor.findUniqueOrThrow({ where: { id: favor.id } });
+    const updated = await prisma.favor.findUniqueOrThrow({ where: { id: favor.id }, include: memberInclude });
     res.json({ favor: publicFavor(updated) });
   }),
 );
@@ -275,7 +280,7 @@ favorRouter.post(
       });
       if (done.count === 0) throw conflict('Favor is not in a completable state');
 
-      const f = await tx.favor.findUniqueOrThrow({ where: { id: favor.id } });
+      const f = await tx.favor.findUniqueOrThrow({ where: { id: favor.id }, include: memberInclude });
       await tx.favorEvent.create({ data: { favorId: favor.id, status: 'completed', actorId: me } });
       await tx.transaction.create({
         data: { userId: favor.memberId, favorId: favor.id, title: f.description.slice(0, 80), amount: f.total, status: 'completed', kind: 'payment' },

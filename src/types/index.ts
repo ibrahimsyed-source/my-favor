@@ -59,6 +59,7 @@ export interface GeoPoint {
 export interface Favor {
   id: string;
   memberId: string;
+  memberName?: string; // first name of the requester — present to the assigned pal
   palId?: string;
   tier: FavorTier;
   price: number; // base price

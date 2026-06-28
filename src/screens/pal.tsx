@@ -4,7 +4,7 @@ import {
 } from 'react-native';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
-import { Txt, InfoModal } from '../components';
+import { Txt, InfoModal, Avatar } from '../components';
 import { useStore } from '../store';
 import { computePayout, FAVOR_TIERS, Favor } from '../types';
 import { darkTokens, tokens } from '../theme';
@@ -20,6 +20,15 @@ const SUBTLE = darkTokens.textSubtle;
 const DIVIDER = darkTokens.divider;
 
 const CHARACTERS = require('../../assets/img/onboarding/launch-people.png');
+
+// Tier illustration per favor tier (custom/negotiate fall back to the small icon).
+const TIER_IMG: Record<string, ReturnType<typeof require>> = {
+  tiny: require('../../assets/img/request/tier-tiny.png'),
+  small: require('../../assets/img/request/tier-small.png'),
+  big: require('../../assets/img/request/tier-big.png'),
+  huge: require('../../assets/img/request/tier-huge.png'),
+};
+const tierImage = (tier?: string) => TIER_IMG[tier ?? ''] ?? TIER_IMG.small;
 
 // ---- shared dark-map backdrop -------------------------------------------------
 function MapBackdrop() {
@@ -381,31 +390,41 @@ function QuickRow({ label, value }: any) {
 // ===========================================================================
 export const Navigation = ({ navigation }: any) => {
   const s = useStore();
+  const fav = s.activeFavor;
   const [callOpen, setCallOpen] = useState(false);
+  const memberName = fav?.memberName ?? 'Favor Member';
+  const tierName = fav ? tierLabel(fav) : 'Favor';
+  const distance = fav ? fmtMiles(favorDistance(fav)) : '';
+  const window = fav?.etaWindow
+    ?? (fav?.scheduledFor ? new Date(fav.scheduledFor).toLocaleString([], { hour: 'numeric', minute: '2-digit' }) : 'As soon as possible');
+
+  const openMessage = async () => {
+    if (!fav?.memberId) return;
+    const id = await s.openThreadWith(fav.memberId);
+    if (id) navigation.navigate('MessageThread', { threadId: id });
+  };
+
   return (
     <View style={{ flex: 1, backgroundColor: DARK_BG }}>
       <MapBackdrop />
-      <MapTopBar navigation={navigation} banner="Head west on 2nd St." />
+      <MapTopBar navigation={navigation} banner="Head to the favor location." />
       <View style={st.sheet}>
         <Handle />
         <Txt variant="h6" color="#fff" center style={{ marginVertical: 12 }}>Favor Booked</Txt>
         <View style={st.divider} />
         <View style={{ flexDirection: 'row', alignItems: 'center', marginTop: 16 }}>
-          <View>
-            <Image source={{ uri: 'https://i.pravatar.cc/150?img=47' }} style={st.avatar} />
-            <View style={st.redBadge}><Text style={{ color: '#fff', fontSize: 11, fontWeight: '700' }}>2</Text></View>
-          </View>
+          <Avatar uri={undefined} size={56} name={memberName} />
           <View style={{ marginLeft: 14 }}>
-            <Text style={{ color: '#fff', fontWeight: '700', fontSize: 18 }}>Stephanie</Text>
-            <Text style={{ color: SUBTLE, fontSize: 14, marginTop: 2 }}>Tiny Favor</Text>
-            <Text style={{ color: SUBTLE, fontSize: 13, marginTop: 2 }}>3 miles away</Text>
+            <Text style={{ color: '#fff', fontWeight: '700', fontSize: 18 }}>{memberName}</Text>
+            <Text style={{ color: SUBTLE, fontSize: 14, marginTop: 2 }}>{tierName}</Text>
+            {distance ? <Text style={{ color: SUBTLE, fontSize: 13, marginTop: 2 }}>{distance}</Text> : null}
           </View>
         </View>
-        <Text style={{ color: '#fff', fontSize: 26, fontWeight: '800', textAlign: 'center', marginTop: 18 }}>11:50 - 12:10PM</Text>
+        <Text style={{ color: '#fff', fontSize: 26, fontWeight: '800', textAlign: 'center', marginTop: 18 }}>{window}</Text>
         <View style={st.windowPill}><Text style={{ color: '#fff', fontSize: 13 }}>Arrival Window</Text></View>
 
         <ActionRow icon="call" label="Call About This Favor" onPress={() => setCallOpen(true)} />
-        <ActionRow icon="mail" label="Message Favor Member" red onPress={() => navigation.navigate('MessageThread', { threadId: 'th1' })} />
+        <ActionRow icon="mail" label="Message Favor Member" red onPress={openMessage} />
 
         <TouchableOpacity
           style={st.whiteBtn}
@@ -461,9 +480,16 @@ export const PalFavorInProgress = ({ navigation }: any) => {
   const base = fav?.price ?? 20;
   // Pal-side breakdown — what the pal takes home, NOT the member's invoice.
   const { payout, commission } = computePayout(base);
-  const description = fav?.description || 'Pick up package from Amazon Hub Lockers';
+  const description = fav?.description || 'No description provided.';
   // Exact address is appropriate here: the pal has already accepted the favor.
-  const address = fav?.location?.address || '2099 Woodvine Rd, Lorman';
+  const address = fav?.location?.address || 'Address shared by the member';
+  const memberName = fav?.memberName ?? 'Favor Member';
+  const tierName = fav ? tierLabel(fav) : 'Favor';
+  const when = fav?.scheduledFor
+    ? new Date(fav.scheduledFor).toLocaleString([], { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })
+    : fav?.createdAt
+      ? new Date(fav.createdAt).toLocaleString([], { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })
+      : '';
   return (
     <View style={{ flex: 1, backgroundColor: DARK_BG }}>
       <MapBackdrop />
@@ -473,18 +499,18 @@ export const PalFavorInProgress = ({ navigation }: any) => {
         <Txt variant="h6" color="#fff" center style={{ marginVertical: 12 }}>You are currently doing a favor.</Txt>
         <View style={st.divider} />
         <View style={{ flexDirection: 'row', marginTop: 16 }}>
-          <Image source={{ uri: 'https://i.pravatar.cc/150?img=52' }} style={st.avatar} />
+          <Avatar uri={undefined} size={56} name={memberName} />
           <View style={{ flex: 1, marginLeft: 14 }}>
-            <Text style={{ color: '#fff', fontWeight: '700', fontSize: 18 }}>Aditya Patil</Text>
+            <Text style={{ color: '#fff', fontWeight: '700', fontSize: 18 }}>{memberName}</Text>
             <Text style={{ color: SUBTLE, fontSize: 14, marginTop: 4 }}>{description}</Text>
-            <Text style={{ color: SUBTLE, fontSize: 13, marginTop: 4 }}>16 February 2023, 1:00PM</Text>
+            {when ? <Text style={{ color: SUBTLE, fontSize: 13, marginTop: 4 }}>{when}</Text> : null}
           </View>
         </View>
         <View style={[st.divider, { marginTop: 18 }]} />
         <View style={{ flexDirection: 'row', alignItems: 'center', marginTop: 16 }}>
-          <Image source={require('../../assets/img/request/tier-tiny.png')} style={{ width: 44, height: 44, marginRight: 12 }} resizeMode="contain" />
+          <Image source={tierImage(fav?.tier)} style={{ width: 44, height: 44, marginRight: 12 }} resizeMode="contain" />
           <View style={{ flex: 1 }}>
-            <CostRow label="Tiny Favor" value={`$${base.toFixed(2)}`} bold />
+            <CostRow label={tierName} value={`$${base.toFixed(2)}`} bold />
             <CostRow label="Platform commission (20%)" value={`-$${commission.toFixed(2)}`} />
             <CostRow label="You earn" value={`$${payout.toFixed(2)}`} bold />
           </View>

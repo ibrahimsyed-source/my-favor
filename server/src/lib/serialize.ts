@@ -58,10 +58,14 @@ function parseImages(raw: string): string[] {
   }
 }
 
-export function publicFavor(f: Favor) {
+// Accepts an optionally-included `member` relation; when present (participant-
+// facing queries) the assigned pal sees the member's first name. The open feed
+// (publicFavorOpen) never includes the relation, so it stays anonymous.
+export function publicFavor(f: Favor & { member?: { firstName: string } | null }) {
   return {
     id: f.id,
     memberId: f.memberId,
+    memberName: f.member?.firstName ?? undefined,
     palId: f.palId ?? undefined,
     tier: f.tier,
     price: f.price,
