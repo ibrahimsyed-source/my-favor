@@ -76,6 +76,7 @@ interface StoreValue {
   rateFavor: (rating: number, feedback: string, tip?: number) => void;
   // pal side
   incomingFavors: Favor[];
+  refreshIncoming: () => Promise<void>;
   acceptFavor: (favorId: string) => void;
   declineFavor: (favorId: string) => void;
   assignPal: (palId: string) => void;
@@ -353,6 +354,17 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     }
   }, [activeFavor]);
 
+  // Re-fetch the open-favors feed (pull-to-refresh / focus on the browse list).
+  const refreshIncoming = useCallback(async () => {
+    if (user?.role !== 'pal') return;
+    try {
+      const { favors } = await getIncomingApi();
+      setIncomingFavors(favors);
+    } catch {
+      /* ignore transient errors */
+    }
+  }, [user]);
+
   const acceptFavor = useCallback((favorId: string) => {
     // optimistic: pull from the feed and make it the active favor
     setIncomingFavors((list) => {
@@ -457,7 +469,7 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       setRole, setStatus,
       pals, draftFavor, setDraft, clearDraft,
       activeFavor, activePal: palById(activeFavor?.palId) ?? null, palById, history,
-      requestFavor, advanceFavor, cancelFavor, rateFavor, incomingFavors, acceptFavor,
+      requestFavor, advanceFavor, cancelFavor, rateFavor, incomingFavors, refreshIncoming, acceptFavor,
       declineFavor, assignPal, finishFavorAsPal,
       blockedUsers, reportUser, blockUser,
       cards, addCard, removeCard, transactions, earnings,
@@ -465,7 +477,7 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     }),
     [user, signup, verifyOtp, login, logout, deleteAccount, updateProfile, changePassword, setRole, setStatus,
       pals, draftFavor, setDraft, clearDraft, activeFavor, palById, history, requestFavor, advanceFavor, cancelFavor,
-      rateFavor, incomingFavors, acceptFavor, declineFavor, assignPal, finishFavorAsPal, blockedUsers, reportUser,
+      rateFavor, incomingFavors, refreshIncoming, acceptFavor, declineFavor, assignPal, finishFavorAsPal, blockedUsers, reportUser,
       blockUser, cards, addCard, removeCard, transactions, earnings, threads, messagesFor, sendMessage,
       notifications, markNotificationRead]
   );

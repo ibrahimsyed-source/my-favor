@@ -1,12 +1,12 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import {
-  View, Text, TextInput, TouchableOpacity, ScrollView, Image, StyleSheet,
+  View, Text, TextInput, TouchableOpacity, ScrollView, Image, StyleSheet, FlatList, RefreshControl,
 } from 'react-native';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { Txt, InfoModal } from '../components';
 import { useStore } from '../store';
-import { computePayout } from '../types';
+import { computePayout, FAVOR_TIERS, Favor } from '../types';
 import { darkTokens, tokens } from '../theme';
 
 // Favor Pal (provider) active-favor flow. All screens sit on a dark map.
@@ -61,6 +61,128 @@ function MapTopBar({ navigation, banner }: any) {
 function Handle() {
   return <View style={st.handle} />;
 }
+
+// ===========================================================================
+// 0. BrowseFavors — a board of ALL open favor requests a pal can browse and
+// pick from (backed by the live /favors/incoming feed in store.incomingFavors).
+// Not in the original Figma; styled to match the pal-side dark surfaces.
+// ===========================================================================
+const tierLabel = (f: Favor) =>
+  (FAVOR_TIERS as Record<string, { label: string }>)[f.tier]?.label ?? 'Custom Favor';
+
+const relTime = (ms?: number) => {
+  if (!ms) return '';
+  const m = Math.round((Date.now() - ms) / 60000);
+  if (m < 1) return 'just now';
+  if (m < 60) return `${m}m ago`;
+  const h = Math.round(m / 60);
+  if (h < 24) return `${h}h ago`;
+  return `${Math.round(h / 24)}d ago`;
+};
+
+function FavorCard({ favor, onPress }: { favor: Favor; onPress: () => void }) {
+  const { payout } = computePayout(favor.price);
+  return (
+    <TouchableOpacity
+      activeOpacity={0.85}
+      onPress={onPress}
+      style={bw.card}
+      accessibilityRole="button"
+      accessibilityLabel={`${tierLabel(favor)}, $${favor.price}. ${favor.description}. You earn $${payout.toFixed(2)}.`}
+    >
+      <View style={bw.cardTop}>
+        <View style={bw.tierPill}><Text style={bw.tierPillText}>{tierLabel(favor)}</Text></View>
+        <Text style={bw.price}>${favor.price}</Text>
+      </View>
+      <Text style={bw.desc} numberOfLines={2}>{favor.description || 'No details provided.'}</Text>
+      <View style={bw.metaRow}>
+        <Ionicons name="location-outline" size={14} color={SUBTLE} />
+        <Text style={bw.meta} numberOfLines={1}>{favor.location?.address || 'Nearby'}</Text>
+        {favor.createdAt ? <Text style={bw.dot}>·</Text> : null}
+        {favor.createdAt ? <Text style={bw.meta}>{relTime(favor.createdAt)}</Text> : null}
+      </View>
+      <View style={bw.cardFooter}>
+        <Text style={bw.earn}>You earn <Text style={bw.earnAmt}>${payout.toFixed(2)}</Text></Text>
+        <View style={bw.viewBtn}>
+          <Text style={bw.viewText}>View</Text>
+          <Ionicons name="chevron-forward" size={15} color="#fff" />
+        </View>
+      </View>
+    </TouchableOpacity>
+  );
+}
+
+export const BrowseFavors = ({ navigation }: any) => {
+  const s = useStore();
+  const insets = useSafeAreaInsets();
+  const [refreshing, setRefreshing] = useState(false);
+  const favors = s.incomingFavors;
+
+  // Refresh the open-favors feed when the screen opens.
+  useEffect(() => { void s.refreshIncoming(); }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const onRefresh = useCallback(async () => {
+    setRefreshing(true);
+    await s.refreshIncoming();
+    setRefreshing(false);
+  }, [s]);
+
+  return (
+    <View style={{ flex: 1, backgroundColor: DARK_BG, paddingTop: insets.top }}>
+      <View style={bw.header}>
+        <TouchableOpacity onPress={() => navigation.goBack()} hitSlop={10} accessibilityRole="button" accessibilityLabel="Go back">
+          <Ionicons name="chevron-back" size={26} color="#fff" />
+        </TouchableOpacity>
+        <View style={{ flex: 1, marginLeft: 8 }}>
+          <Text style={bw.title}>Open Favors</Text>
+          <Text style={bw.subtitle}>{favors.length} {favors.length === 1 ? 'request' : 'requests'} near you</Text>
+        </View>
+        <TouchableOpacity onPress={onRefresh} hitSlop={10} accessibilityRole="button" accessibilityLabel="Refresh">
+          <Ionicons name="refresh" size={22} color="#fff" />
+        </TouchableOpacity>
+      </View>
+      <FlatList
+        data={favors}
+        keyExtractor={(f) => f.id}
+        renderItem={({ item }) => (
+          <FavorCard favor={item} onPress={() => navigation.navigate('PalFavorDetail', { favorId: item.id })} />
+        )}
+        contentContainerStyle={{ padding: 16, paddingBottom: insets.bottom + 24, flexGrow: 1 }}
+        refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor="#FFFFFF" />}
+        ListEmptyComponent={
+          <View style={bw.empty}>
+            <Ionicons name="file-tray-outline" size={56} color={SUBTLE} />
+            <Text style={bw.emptyTitle}>No open favors right now</Text>
+            <Text style={bw.emptySub}>Pull down to refresh — new requests appear here as members post them.</Text>
+          </View>
+        }
+      />
+    </View>
+  );
+};
+
+const bw = StyleSheet.create({
+  header: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: 16, paddingVertical: 14 },
+  title: { color: '#fff', fontSize: 20, fontWeight: '700' },
+  subtitle: { color: SUBTLE, fontSize: 13, marginTop: 2 },
+  card: { backgroundColor: SHEET_ALT, borderRadius: 16, padding: 16, marginBottom: 12 },
+  cardTop: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
+  tierPill: { backgroundColor: 'rgba(237,28,36,0.15)', borderRadius: 999, paddingHorizontal: 10, paddingVertical: 4 },
+  tierPillText: { color: RED, fontSize: 12, fontWeight: '700' },
+  price: { color: '#fff', fontSize: 22, fontWeight: '800' },
+  desc: { color: '#fff', fontSize: 15, marginTop: 12, lineHeight: 21 },
+  metaRow: { flexDirection: 'row', alignItems: 'center', marginTop: 10, gap: 5 },
+  meta: { color: SUBTLE, fontSize: 13 },
+  dot: { color: SUBTLE, fontSize: 13, marginHorizontal: 2 },
+  cardFooter: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginTop: 14, borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: DIVIDER, paddingTop: 14 },
+  earn: { color: SUBTLE, fontSize: 14 },
+  earnAmt: { color: '#fff', fontWeight: '700' },
+  viewBtn: { flexDirection: 'row', alignItems: 'center', gap: 2, backgroundColor: RED, borderRadius: 999, paddingLeft: 14, paddingRight: 10, paddingVertical: 8 },
+  viewText: { color: '#fff', fontWeight: '700', fontSize: 14 },
+  empty: { flex: 1, alignItems: 'center', justifyContent: 'center', paddingTop: 80, paddingHorizontal: 32 },
+  emptyTitle: { color: '#fff', fontSize: 17, fontWeight: '700', marginTop: 16 },
+  emptySub: { color: SUBTLE, fontSize: 14, textAlign: 'center', marginTop: 8, lineHeight: 20 },
+});
 
 // ===========================================================================
 // 1. PalFavorDetail — incoming favor quick view (figma 97:5700)

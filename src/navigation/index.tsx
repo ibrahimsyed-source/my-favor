@@ -90,6 +90,7 @@ export default function RootNavigator() {
           <Stack.Screen name="FavorTracking" component={Track.FavorTracking} />
           <Stack.Screen name="OrderComplete" component={Track.OrderComplete} />
           {/* Pal flow */}
+          <Stack.Screen name="BrowseFavors" component={Pal.BrowseFavors} />
           <Stack.Screen name="PalFavorDetail" component={Pal.PalFavorDetail} />
           <Stack.Screen name="PalFavorInProgress" component={Pal.PalFavorInProgress} />
           <Stack.Screen name="Navigation" component={Pal.Navigation} />

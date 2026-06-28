@@ -250,6 +250,28 @@ export function Home({ navigation }: any) {
           </TouchableOpacity>
         ) : null}
 
+        {/* Browse the full board of open favors (not just the top one). */}
+        {isPal && !active && s.incomingFavors.length > 0 ? (
+          <TouchableOpacity
+            activeOpacity={0.9}
+            onPress={() => navigation.navigate('BrowseFavors')}
+            accessibilityRole="button"
+            accessibilityLabel={`Browse all ${s.incomingFavors.length} open favors`}
+            style={styles.palCard}
+          >
+            <View style={styles.palIcon}>
+              <Ionicons name="list" size={20} color="#FFFFFF" />
+            </View>
+            <View style={{ flex: 1 }}>
+              <Txt variant="caption" color={theme.textSecondary}>Open favors near you</Txt>
+              <Txt variant="label" numberOfLines={1}>
+                Browse all {s.incomingFavors.length} {s.incomingFavors.length === 1 ? 'request' : 'requests'}
+              </Txt>
+            </View>
+            <Ionicons name="chevron-forward" size={18} color={theme.textTertiary} />
+          </TouchableOpacity>
+        ) : null}
+
         {isPal ? (
           <View style={{ flexDirection: 'row', alignItems: 'center', gap: 12 }}>
             <TouchableOpacity

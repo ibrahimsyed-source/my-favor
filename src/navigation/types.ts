@@ -29,6 +29,7 @@ export type RootStackParamList = {
   OrderComplete: undefined;
 
   // --- Pal: provide-a-favor flow ---
+  BrowseFavors: undefined; // list of all open favor requests to browse + accept
   PalFavorDetail: { favorId: string };
   PalFavorInProgress: undefined;
   Navigation: undefined;
