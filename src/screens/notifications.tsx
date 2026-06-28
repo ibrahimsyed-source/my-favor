@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useEffect } from 'react';
 import { View, FlatList, TouchableOpacity } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { Screen, TopBar, Txt } from '../components';
@@ -26,13 +26,30 @@ function timeAgo(ms: number, now: number) {
 // Notifications — the inbox that renders the previously-dead notification model.
 export function Notifications({ navigation }: any) {
   const { theme } = useTheme();
-  const { notifications, markNotificationRead } = useStore();
-  // A stable "now" for relative times (Date.now avoided app-wide).
+  const { notifications, markNotificationRead, markAllNotificationsRead, refreshNotifications } = useStore();
   const now = notifications.reduce((mx, n) => Math.max(mx, n.date), 0) + 300000;
+  const hasUnread = notifications.some((n) => !n.read);
+
+  // Pull fresh notifications on open + whenever the screen regains focus.
+  useEffect(() => {
+    void refreshNotifications();
+    const unsub = navigation.addListener('focus', () => { void refreshNotifications(); });
+    return unsub;
+  }, [navigation]); // eslint-disable-line react-hooks/exhaustive-deps
 
   return (
     <Screen padded={false}>
       <TopBar title="Notifications" onBack={navigation.canGoBack() ? navigation.goBack : undefined} />
+      {hasUnread ? (
+        <TouchableOpacity
+          onPress={markAllNotificationsRead}
+          accessibilityRole="button"
+          accessibilityLabel="Mark all notifications as read"
+          style={{ alignSelf: 'flex-end', paddingHorizontal: tokens.spacing.lg, paddingVertical: 10 }}
+        >
+          <Txt variant="bodySm" color={theme.primary} style={{ fontWeight: '600' }}>Mark all read</Txt>
+        </TouchableOpacity>
+      ) : null}
       {notifications.length === 0 ? (
         <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center', padding: 32 }}>
           <Ionicons name="notifications-off-outline" size={48} color={theme.textTertiary} />

@@ -86,6 +86,7 @@ export const createThreadApi = (withUserId: string) =>
 // --- notifications ---
 export const getNotificationsApi = () => apiRequest<{ notifications: AppNotification[] }>('/api/notifications', { auth: true });
 export const markNotificationReadApi = (id: string) => apiRequest<{ ok: boolean }>(`/api/notifications/${id}/read`, { method: 'POST', auth: true });
+export const markAllNotificationsReadApi = () => apiRequest<{ ok: boolean }>('/api/notifications/read-all', { method: 'POST', auth: true });
 
 // --- moderation ---
 export const reportUserApi = (userId: string, reason?: string) =>

@@ -11,7 +11,7 @@ import {
   acceptFavorApi, declineFavorApi, assignPalApi, advanceFavorApi, finishFavorApi, cancelFavorApi, rateFavorApi, rateMemberApi,
   getCardsApi, addCardApi, removeCardApi, getTransactionsApi, getEarningsApi, cashoutApi,
   getThreadsApi, getMessagesApi, sendMessageApi,
-  getNotificationsApi, markNotificationReadApi,
+  getNotificationsApi, markNotificationReadApi, markAllNotificationsReadApi,
   reportUserApi, blockUserApi, getBlockedApi,
 } from '../api/endpoints';
 
@@ -105,6 +105,8 @@ interface StoreValue {
   // notifications
   notifications: AppNotification[];
   markNotificationRead: (id: string) => void;
+  markAllNotificationsRead: () => void;
+  refreshNotifications: () => Promise<void>;
 }
 
 const StoreContext = createContext<StoreValue | null>(null);
@@ -512,6 +514,28 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     void markNotificationReadApi(id).catch(() => undefined);
   }, []);
 
+  const markAllNotificationsRead = useCallback(() => {
+    setNotifications((n) => n.map((x) => ({ ...x, read: true })));
+    void markAllNotificationsReadApi().catch(() => undefined);
+  }, []);
+
+  const refreshNotifications = useCallback(async () => {
+    try {
+      const { notifications: n } = await getNotificationsApi();
+      setNotifications(n);
+    } catch {
+      /* ignore */
+    }
+  }, []);
+
+  // Poll notifications so the bell's unread count + the list stay current.
+  // (Real device push needs expo-notifications + APNs/FCM — see NEXT_STEPS.)
+  useEffect(() => {
+    if (!user) return;
+    const id = setInterval(() => { void refreshNotifications(); }, 20000);
+    return () => clearInterval(id);
+  }, [user, refreshNotifications]);
+
   const value = useMemo<StoreValue>(
     () => ({
       user, isAuthenticated: !!user, signup, verifyOtp, login, logout, deleteAccount, updateProfile, changePassword,
@@ -522,13 +546,14 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       declineFavor, assignPal, finishFavorAsPal, rateMember,
       blockedUsers, reportUser, blockUser,
       cards, addCard, removeCard, transactions, earnings, cashOut,
-      threads, messagesFor, sendMessage, refreshMessages, refreshThreads, notifications, markNotificationRead,
+      threads, messagesFor, sendMessage, refreshMessages, refreshThreads,
+      notifications, markNotificationRead, markAllNotificationsRead, refreshNotifications,
     }),
     [user, signup, verifyOtp, login, logout, deleteAccount, updateProfile, changePassword, setRole, setStatus,
       pals, draftFavor, setDraft, clearDraft, activeFavor, palById, history, requestFavor, advanceFavor, cancelFavor,
       rateFavor, incomingFavors, refreshIncoming, acceptFavor, declineFavor, assignPal, finishFavorAsPal, rateMember, blockedUsers, reportUser,
       blockUser, cards, addCard, removeCard, transactions, earnings, cashOut, threads, messagesFor, sendMessage,
-      refreshMessages, refreshThreads, notifications, markNotificationRead]
+      refreshMessages, refreshThreads, notifications, markNotificationRead, markAllNotificationsRead, refreshNotifications]
   );
 
   return <StoreContext.Provider value={value}>{children}</StoreContext.Provider>;
