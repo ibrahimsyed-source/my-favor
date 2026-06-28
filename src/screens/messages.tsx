@@ -1,4 +1,4 @@
-import React, { useCallback, useMemo, useState } from 'react';
+import React, { useCallback, useMemo, useState, useEffect } from 'react';
 import {
   View, Text, TextInput, TouchableOpacity, FlatList, StyleSheet,
   KeyboardAvoidingView, Platform, Modal, ListRenderItemInfo,
@@ -33,6 +33,12 @@ export const Messages = ({ navigation }: any) => {
   const { theme } = useTheme();
   const s = useStore();
   const [onlyUnread, setOnlyUnread] = useState(false);
+
+  // Keep the conversation list (and unread counts) fresh on focus.
+  useEffect(() => {
+    const unsub = navigation.addListener('focus', () => { void s.refreshThreads(); });
+    return unsub;
+  }, [navigation]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Hide conversations with blocked users so a block has a visible effect.
   const threads = useMemo(() => {
@@ -166,6 +172,14 @@ export const MessageThread = ({ navigation, route }: any) => {
   const theirAvatar = thread?.withUser.avatar;
   const title = thread?.withUser.name ?? 'Chat';
   const otherUserId = thread?.withUser.id;
+
+  // Live-ish chat: poll this thread's messages on open, on focus, and every 5s.
+  useEffect(() => {
+    void s.refreshMessages(threadId);
+    const unsub = navigation.addListener('focus', () => { void s.refreshMessages(threadId); });
+    const id = setInterval(() => { void s.refreshMessages(threadId); }, 5000);
+    return () => { unsub(); clearInterval(id); };
+  }, [threadId, navigation]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Inverted FlatList renders newest-first (pinned to the bottom), so it never
   // needs the manual scrollToEnd hack. Reverse a copy for that orientation.

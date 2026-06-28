@@ -97,6 +97,8 @@ interface StoreValue {
   threads: Thread[];
   messagesFor: (threadId: string) => Message[];
   sendMessage: (threadId: string, text: string) => void;
+  refreshMessages: (threadId: string) => Promise<void>;
+  refreshThreads: () => Promise<void>;
 
   // notifications
   notifications: AppNotification[];
@@ -365,6 +367,14 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     }
   }, [user]);
 
+  // Pals: keep the open-favors feed fresh app-wide so the Home card + browse
+  // board reflect new requests without a manual refresh.
+  useEffect(() => {
+    if (user?.role !== 'pal') return;
+    const id = setInterval(() => { void refreshIncoming(); }, 20000);
+    return () => clearInterval(id);
+  }, [user, refreshIncoming]);
+
   const acceptFavor = useCallback((favorId: string) => {
     // optimistic: pull from the feed and make it the active favor
     setIncomingFavors((list) => {
@@ -457,6 +467,25 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       .catch(() => undefined);
   }, []);
 
+  // Live-ish messaging: re-fetch a thread's messages (polled while it's open).
+  const refreshMessages = useCallback(async (threadId: string) => {
+    try {
+      const { messages: m } = await getMessagesApi(threadId);
+      setMessages((prev) => [...prev.filter((x) => x.threadId !== threadId), ...m]);
+    } catch {
+      /* ignore */
+    }
+  }, []);
+
+  const refreshThreads = useCallback(async () => {
+    try {
+      const { threads: t } = await getThreadsApi();
+      setThreads(t);
+    } catch {
+      /* ignore */
+    }
+  }, []);
+
   // ---- notifications ----
   const markNotificationRead = useCallback((id: string) => {
     setNotifications((n) => n.map((x) => (x.id === id ? { ...x, read: true } : x)));
@@ -473,13 +502,13 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       declineFavor, assignPal, finishFavorAsPal,
       blockedUsers, reportUser, blockUser,
       cards, addCard, removeCard, transactions, earnings,
-      threads, messagesFor, sendMessage, notifications, markNotificationRead,
+      threads, messagesFor, sendMessage, refreshMessages, refreshThreads, notifications, markNotificationRead,
     }),
     [user, signup, verifyOtp, login, logout, deleteAccount, updateProfile, changePassword, setRole, setStatus,
       pals, draftFavor, setDraft, clearDraft, activeFavor, palById, history, requestFavor, advanceFavor, cancelFavor,
       rateFavor, incomingFavors, refreshIncoming, acceptFavor, declineFavor, assignPal, finishFavorAsPal, blockedUsers, reportUser,
       blockUser, cards, addCard, removeCard, transactions, earnings, threads, messagesFor, sendMessage,
-      notifications, markNotificationRead]
+      refreshMessages, refreshThreads, notifications, markNotificationRead]
   );
 
   return <StoreContext.Provider value={value}>{children}</StoreContext.Provider>;
