@@ -70,6 +70,22 @@ function Handle() {
 const tierLabel = (f: Favor) =>
   (FAVOR_TIERS as Record<string, { label: string }>)[f.tier]?.label ?? 'Custom Favor';
 
+// Pal origin for distance/sort. TODO: replace with the device's live location
+// (expo-location) once a dev build is set up; a fixed city center keeps the
+// distance math real and runnable in the meantime.
+const PAL_ORIGIN = { lat: 30.2672, lng: -97.7431 };
+
+const toRad = (d: number) => (d * Math.PI) / 180;
+function haversineMiles(lat1: number, lng1: number, lat2: number, lng2: number) {
+  const R = 3958.8; // earth radius (mi)
+  const dLat = toRad(lat2 - lat1);
+  const dLng = toRad(lng2 - lng1);
+  const a = Math.sin(dLat / 2) ** 2 + Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) * Math.sin(dLng / 2) ** 2;
+  return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+}
+const favorDistance = (f: Favor) => haversineMiles(PAL_ORIGIN.lat, PAL_ORIGIN.lng, f.location.lat, f.location.lng);
+const fmtMiles = (mi: number) => (mi < 0.1 ? 'nearby' : mi < 10 ? `${mi.toFixed(1)} mi` : `${Math.round(mi)} mi`);
+
 const relTime = (ms?: number) => {
   if (!ms) return '';
   const m = Math.round((Date.now() - ms) / 60000);
@@ -98,6 +114,8 @@ function FavorCard({ favor, onPress }: { favor: Favor; onPress: () => void }) {
       <View style={bw.metaRow}>
         <Ionicons name="location-outline" size={14} color={SUBTLE} />
         <Text style={bw.meta} numberOfLines={1}>{favor.location?.address || 'Nearby'}</Text>
+        <Text style={bw.dot}>·</Text>
+        <Text style={bw.meta}>{fmtMiles(favorDistance(favor))}</Text>
         {favor.createdAt ? <Text style={bw.dot}>·</Text> : null}
         {favor.createdAt ? <Text style={bw.meta}>{relTime(favor.createdAt)}</Text> : null}
       </View>
@@ -112,9 +130,10 @@ function FavorCard({ favor, onPress }: { favor: Favor; onPress: () => void }) {
   );
 }
 
-type SortKey = 'new' | 'high' | 'low';
+type SortKey = 'new' | 'high' | 'low' | 'close';
 const SORTS: { key: SortKey; label: string }[] = [
   { key: 'new', label: 'Newest' },
+  { key: 'close', label: 'Closest' },
   { key: 'high', label: '$ High' },
   { key: 'low', label: '$ Low' },
 ];
@@ -166,9 +185,9 @@ export const BrowseFavors = ({ navigation }: any) => {
   // #2 — filter by tier + sort by recency/payout. (Server returns newest-first.)
   const shown = useMemo(() => {
     let list = tier === 'all' ? favors : favors.filter((f) => f.tier === tier);
-    if (sort !== 'new') {
-      list = [...list].sort((a, b) => (sort === 'high' ? b.price - a.price : a.price - b.price));
-    }
+    if (sort === 'high') list = [...list].sort((a, b) => b.price - a.price);
+    else if (sort === 'low') list = [...list].sort((a, b) => a.price - b.price);
+    else if (sort === 'close') list = [...list].sort((a, b) => favorDistance(a) - favorDistance(b));
     return list;
   }, [favors, tier, sort]);
 
