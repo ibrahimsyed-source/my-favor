@@ -119,6 +119,14 @@ function FavorCard({ favor, onPress }: { favor: Favor; onPress: () => void }) {
         {favor.createdAt ? <Text style={bw.dot}>·</Text> : null}
         {favor.createdAt ? <Text style={bw.meta}>{relTime(favor.createdAt)}</Text> : null}
       </View>
+      {favor.scheduledFor ? (
+        <View style={bw.schedRow}>
+          <Ionicons name="calendar-outline" size={13} color={RED} />
+          <Text style={bw.schedText}>
+            Scheduled · {new Date(favor.scheduledFor).toLocaleString([], { weekday: 'short', hour: 'numeric', minute: '2-digit' })}
+          </Text>
+        </View>
+      ) : null}
       <View style={bw.cardFooter}>
         <Text style={bw.earn}>You earn <Text style={bw.earnAmt}>${payout.toFixed(2)}</Text></Text>
         <View style={bw.viewBtn}>
@@ -261,6 +269,8 @@ const bw = StyleSheet.create({
   metaRow: { flexDirection: 'row', alignItems: 'center', marginTop: 10, gap: 5 },
   meta: { color: SUBTLE, fontSize: 13 },
   dot: { color: SUBTLE, fontSize: 13, marginHorizontal: 2 },
+  schedRow: { flexDirection: 'row', alignItems: 'center', marginTop: 8, gap: 5 },
+  schedText: { color: RED, fontSize: 13, fontWeight: '600' },
   cardFooter: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginTop: 14, borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: DIVIDER, paddingTop: 14 },
   earn: { color: SUBTLE, fontSize: 14 },
   earnAmt: { color: '#fff', fontWeight: '700' },

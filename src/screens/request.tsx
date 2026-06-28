@@ -396,11 +396,14 @@ const MapMarker: React.FC<{ uri?: string }> = ({ uri }) => (
 
 // Honest "When?" options that actually set draft.scheduledFor (requestFavor reads
 // it). The clock icon now describes timing instead of the old mislabeled "Where to?".
+const HOUR = 60 * 60 * 1000;
 const WHEN_OPTIONS: { label: string; offsetMs?: number }[] = [
   { label: 'Now' },
-  { label: 'In 1 hour', offsetMs: 60 * 60 * 1000 },
-  { label: 'In 3 hours', offsetMs: 3 * 60 * 60 * 1000 },
-  { label: 'Tomorrow', offsetMs: 24 * 60 * 60 * 1000 },
+  { label: 'In 1 hour', offsetMs: HOUR },
+  { label: 'In 3 hours', offsetMs: 3 * HOUR },
+  { label: 'In 6 hours', offsetMs: 6 * HOUR },
+  { label: 'Tomorrow', offsetMs: 24 * HOUR },
+  { label: 'In 2 days', offsetMs: 48 * HOUR },
 ];
 
 export function ConfirmAddress({ navigation }: any) {
