@@ -2,7 +2,7 @@ import { Router } from 'express';
 import { z } from 'zod';
 import { prisma } from '../db';
 import { validate } from '../lib/validate';
-import { asyncHandler, notFound } from '../lib/errors';
+import { asyncHandler, notFound, badRequest } from '../lib/errors';
 import { authenticate } from '../middleware/authenticate';
 import { publicCard, publicTransaction } from '../lib/serialize';
 
@@ -81,5 +81,30 @@ paymentRouter.get(
       take: 100,
     });
     res.json({ earnings: txns.map(publicTransaction) });
+  }),
+);
+
+// POST /api/payments/cashout — pay out the available (completed, not-yet-paid)
+// earnings balance. STUB: with real Stripe wired this triggers a Connect payout;
+// here we just mark the earnings paid out and report the amount. Done atomically.
+paymentRouter.post(
+  '/cashout',
+  asyncHandler(async (req, res) => {
+    const userId = req.user!.id;
+    const result = await prisma.$transaction(async (tx) => {
+      const available = await tx.transaction.findMany({
+        where: { userId, kind: 'earning', status: 'completed' },
+        select: { id: true, amount: true },
+      });
+      const amount = Math.round(available.reduce((sum, t) => sum + t.amount, 0) * 100) / 100;
+      if (amount <= 0) return { amount: 0, count: 0 };
+      await tx.transaction.updateMany({
+        where: { id: { in: available.map((t) => t.id) } },
+        data: { status: 'paid_out' },
+      });
+      return { amount, count: available.length };
+    });
+    if (result.amount <= 0) throw badRequest('No funds available to cash out');
+    res.json({ ok: true, ...result });
   }),
 );

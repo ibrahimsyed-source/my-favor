@@ -70,6 +70,7 @@ export const addCardApi = (card: { brand: string; last4: string; expMonth: numbe
 export const removeCardApi = (id: string) => apiRequest<{ ok: boolean }>(`/api/payments/cards/${id}`, { method: 'DELETE', auth: true });
 export const getTransactionsApi = () => apiRequest<{ transactions: Transaction[] }>('/api/payments/transactions', { auth: true });
 export const getEarningsApi = () => apiRequest<{ earnings: Transaction[] }>('/api/payments/earnings', { auth: true });
+export const cashoutApi = () => apiRequest<{ ok: boolean; amount: number; count: number }>('/api/payments/cashout', { method: 'POST', auth: true });
 
 // --- messaging ---
 export const getThreadsApi = () => apiRequest<{ threads: Thread[] }>('/api/messages/threads', { auth: true });

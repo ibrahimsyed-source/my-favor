@@ -139,11 +139,28 @@ function DarkField({
 //    each row names the real destination bank instead of the member's Apple Pay.
 // ---------------------------------------------------------------------------
 export function Earnings({ navigation }: any) {
-  const { earnings } = useStore();
+  const { earnings, cashOut } = useStore();
   const payout = usePayoutAccount();
   const groups = groupByMonth(earnings);
+  const [cashing, setCashing] = useState(false);
+  const [cashedOut, setCashedOut] = useState<number | null>(null);
+  const [cashError, setCashError] = useState('');
 
   const available = sumAmt(earnings.filter((e) => e.status === 'completed'));
+
+  const onCashOut = async () => {
+    if (cashing || available <= 0) return;
+    setCashing(true);
+    setCashError('');
+    try {
+      const amount = await cashOut();
+      setCashedOut(amount);
+    } catch (e: any) {
+      setCashError(e?.message || 'Could not cash out right now. Please try again.');
+    } finally {
+      setCashing(false);
+    }
+  };
   const pendingItems = earnings.filter((e) => e.status === 'in_progress');
   const pending = sumAmt(pendingItems);
   const total = sumAmt(earnings);
@@ -192,6 +209,25 @@ export function Earnings({ navigation }: any) {
             </View>
           </View>
 
+          {/* Instant cash-out of the available balance. */}
+          <TouchableOpacity
+            onPress={onCashOut}
+            disabled={cashing || available <= 0}
+            activeOpacity={0.85}
+            accessibilityRole="button"
+            accessibilityLabel={`Cash out ${money(available)}`}
+            accessibilityState={{ disabled: cashing || available <= 0 }}
+            style={[dark.cashBtn, { opacity: cashing || available <= 0 ? 0.5 : 1 }]}
+          >
+            <Ionicons name="cash-outline" size={18} color="#FFFFFF" />
+            <Txt variant="button" color="#FFFFFF" style={{ marginLeft: 8 }}>
+              {cashing ? 'Cashing out…' : available > 0 ? `Cash out ${money(available)}` : 'No balance to cash out'}
+            </Txt>
+          </TouchableOpacity>
+          {cashError ? (
+            <Txt variant="caption" color={ERROR_RED} style={{ marginTop: 8 }}>{cashError}</Txt>
+          ) : null}
+
           <View style={{ height: 1, backgroundColor: darkTokens.border, marginVertical: 16 }} />
 
           <View style={{ flexDirection: 'row', alignItems: 'center' }}>
@@ -206,6 +242,14 @@ export function Earnings({ navigation }: any) {
             Payouts arrive 2-3 business days after a favor is completed.
           </Txt>
         </View>
+
+        <InfoModal
+          visible={cashedOut != null}
+          title="Cash out started"
+          message={`${money(cashedOut ?? 0)} is on its way to ${destLabel}. It typically arrives in 2-3 business days.`}
+          buttonLabel="Got it"
+          onClose={() => setCashedOut(null)}
+        />
 
         {groups.map((g) => (
           <View key={g.key} style={{ marginTop: 28 }}>
@@ -449,6 +493,15 @@ const dark = StyleSheet.create({
     borderWidth: 1,
     borderColor: darkTokens.border,
     padding: 20,
+  },
+  cashBtn: {
+    marginTop: 18,
+    height: 48,
+    borderRadius: tokens.radius.md,
+    backgroundColor: '#ED1C24',
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
   },
   payBadge: {
     width: 40,

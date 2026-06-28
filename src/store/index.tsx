@@ -9,7 +9,7 @@ import {
   getMeApi, updateProfileApi, setRoleApi, setStatusApi, getPalsApi, getPalApi,
   createFavorApi, getFavorsApi, getActiveFavorApi, getIncomingApi,
   acceptFavorApi, declineFavorApi, assignPalApi, advanceFavorApi, finishFavorApi, cancelFavorApi, rateFavorApi,
-  getCardsApi, addCardApi, removeCardApi, getTransactionsApi, getEarningsApi,
+  getCardsApi, addCardApi, removeCardApi, getTransactionsApi, getEarningsApi, cashoutApi,
   getThreadsApi, getMessagesApi, sendMessageApi,
   getNotificationsApi, markNotificationReadApi,
   reportUserApi, blockUserApi, getBlockedApi,
@@ -92,6 +92,7 @@ interface StoreValue {
   removeCard: (id: string) => void;
   transactions: Transaction[];
   earnings: Transaction[];
+  cashOut: () => Promise<number>; // pays out available balance, returns the amount
 
   // messaging
   threads: Thread[];
@@ -455,6 +456,14 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     void removeCardApi(id).catch(() => undefined);
   }, []);
 
+  // Cash out the available balance; refresh the ledger so the summary updates.
+  const cashOut = useCallback(async () => {
+    const { amount } = await cashoutApi();
+    const { earnings: e } = await getEarningsApi();
+    setEarnings(e);
+    return amount;
+  }, []);
+
   // ---- messaging ----
   const messagesFor = useCallback((threadId: string) => messages.filter((m) => m.threadId === threadId), [messages]);
 
@@ -501,13 +510,13 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       requestFavor, advanceFavor, cancelFavor, rateFavor, incomingFavors, refreshIncoming, acceptFavor,
       declineFavor, assignPal, finishFavorAsPal,
       blockedUsers, reportUser, blockUser,
-      cards, addCard, removeCard, transactions, earnings,
+      cards, addCard, removeCard, transactions, earnings, cashOut,
       threads, messagesFor, sendMessage, refreshMessages, refreshThreads, notifications, markNotificationRead,
     }),
     [user, signup, verifyOtp, login, logout, deleteAccount, updateProfile, changePassword, setRole, setStatus,
       pals, draftFavor, setDraft, clearDraft, activeFavor, palById, history, requestFavor, advanceFavor, cancelFavor,
       rateFavor, incomingFavors, refreshIncoming, acceptFavor, declineFavor, assignPal, finishFavorAsPal, blockedUsers, reportUser,
-      blockUser, cards, addCard, removeCard, transactions, earnings, threads, messagesFor, sendMessage,
+      blockUser, cards, addCard, removeCard, transactions, earnings, cashOut, threads, messagesFor, sendMessage,
       refreshMessages, refreshThreads, notifications, markNotificationRead]
   );
 
