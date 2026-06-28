@@ -94,7 +94,7 @@ function Poi({ top, left }: { top: string; left: string }) {
 // ---------------------------------------------------------------------------
 // Member / Pal avatar pin inside a translucent red radius circle (map center).
 // ---------------------------------------------------------------------------
-function RadiusPin({ avatar }: { avatar?: string }) {
+function RadiusPin({ avatar, name }: { avatar?: string; name?: string }) {
   return (
     <View
       style={[StyleSheet.absoluteFill, { alignItems: 'center', justifyContent: 'center' }]}
@@ -118,7 +118,7 @@ function RadiusPin({ avatar }: { avatar?: string }) {
               borderWidth: 2, borderColor: 'rgba(255,255,255,0.22)',
             }}
           >
-            <Avatar uri={avatar} size={48} name="A" />
+            <Avatar uri={avatar} size={48} name={name ?? '?'} />
           </View>
           <View
             style={{
@@ -174,7 +174,7 @@ export function Home({ navigation }: any) {
       <View style={StyleSheet.absoluteFill}>
         <MapPlaceholder height={WIN_H} label="">
           <DarkMap />
-          <RadiusPin avatar={s.user?.avatar} />
+          <RadiusPin avatar={s.user?.avatar} name={s.user?.firstName} />
         </MapPlaceholder>
       </View>
 

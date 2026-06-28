@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import {
   View, Text, TextInput, TouchableOpacity, ScrollView, Image, StyleSheet, FlatList, RefreshControl,
 } from 'react-native';
@@ -112,20 +112,69 @@ function FavorCard({ favor, onPress }: { favor: Favor; onPress: () => void }) {
   );
 }
 
+type SortKey = 'new' | 'high' | 'low';
+const SORTS: { key: SortKey; label: string }[] = [
+  { key: 'new', label: 'Newest' },
+  { key: 'high', label: '$ High' },
+  { key: 'low', label: '$ Low' },
+];
+const TIERS: { key: string; label: string }[] = [
+  { key: 'all', label: 'All' },
+  { key: 'tiny', label: 'Tiny' },
+  { key: 'small', label: 'Small' },
+  { key: 'big', label: 'Big' },
+  { key: 'huge', label: 'Huge' },
+];
+
+function Chip({ label, active, onPress }: { label: string; active: boolean; onPress: () => void }) {
+  return (
+    <TouchableOpacity
+      onPress={onPress}
+      activeOpacity={0.8}
+      accessibilityRole="button"
+      accessibilityState={{ selected: active }}
+      style={[bw.chip, active && bw.chipActive]}
+    >
+      <Text style={[bw.chipText, active && bw.chipTextActive]}>{label}</Text>
+    </TouchableOpacity>
+  );
+}
+
 export const BrowseFavors = ({ navigation }: any) => {
   const s = useStore();
   const insets = useSafeAreaInsets();
   const [refreshing, setRefreshing] = useState(false);
+  const [sort, setSort] = useState<SortKey>('new');
+  const [tier, setTier] = useState('all');
   const favors = s.incomingFavors;
 
-  // Refresh the open-favors feed when the screen opens.
-  useEffect(() => { void s.refreshIncoming(); }, []); // eslint-disable-line react-hooks/exhaustive-deps
+  // #3 — keep the board fresh: refresh on open, whenever it regains focus, and
+  // on a gentle interval so new requests appear without manual action.
+  useEffect(() => {
+    void s.refreshIncoming();
+    const unsub = navigation.addListener('focus', () => { void s.refreshIncoming(); });
+    const id = setInterval(() => { void s.refreshIncoming(); }, 15000);
+    return () => { unsub(); clearInterval(id); };
+  }, [navigation]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const onRefresh = useCallback(async () => {
     setRefreshing(true);
     await s.refreshIncoming();
     setRefreshing(false);
   }, [s]);
+
+  // #2 — filter by tier + sort by recency/payout. (Server returns newest-first.)
+  const shown = useMemo(() => {
+    let list = tier === 'all' ? favors : favors.filter((f) => f.tier === tier);
+    if (sort !== 'new') {
+      list = [...list].sort((a, b) => (sort === 'high' ? b.price - a.price : a.price - b.price));
+    }
+    return list;
+  }, [favors, tier, sort]);
+
+  const subtitle = shown.length === favors.length
+    ? `${favors.length} ${favors.length === 1 ? 'request' : 'requests'} near you`
+    : `${shown.length} of ${favors.length} requests`;
 
   return (
     <View style={{ flex: 1, backgroundColor: DARK_BG, paddingTop: insets.top }}>
@@ -135,14 +184,24 @@ export const BrowseFavors = ({ navigation }: any) => {
         </TouchableOpacity>
         <View style={{ flex: 1, marginLeft: 8 }}>
           <Text style={bw.title}>Open Favors</Text>
-          <Text style={bw.subtitle}>{favors.length} {favors.length === 1 ? 'request' : 'requests'} near you</Text>
+          <Text style={bw.subtitle}>{subtitle}</Text>
         </View>
         <TouchableOpacity onPress={onRefresh} hitSlop={10} accessibilityRole="button" accessibilityLabel="Refresh">
           <Ionicons name="refresh" size={22} color="#fff" />
         </TouchableOpacity>
       </View>
+
+      {/* Sort + tier filter chips */}
+      <View style={bw.chipRows}>
+        <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={bw.chipRow}>
+          {SORTS.map((o) => <Chip key={o.key} label={o.label} active={sort === o.key} onPress={() => setSort(o.key)} />)}
+          <View style={bw.chipSep} />
+          {TIERS.map((o) => <Chip key={o.key} label={o.label} active={tier === o.key} onPress={() => setTier(o.key)} />)}
+        </ScrollView>
+      </View>
+
       <FlatList
-        data={favors}
+        data={shown}
         keyExtractor={(f) => f.id}
         renderItem={({ item }) => (
           <FavorCard favor={item} onPress={() => navigation.navigate('PalFavorDetail', { favorId: item.id })} />
@@ -152,8 +211,10 @@ export const BrowseFavors = ({ navigation }: any) => {
         ListEmptyComponent={
           <View style={bw.empty}>
             <Ionicons name="file-tray-outline" size={56} color={SUBTLE} />
-            <Text style={bw.emptyTitle}>No open favors right now</Text>
-            <Text style={bw.emptySub}>Pull down to refresh — new requests appear here as members post them.</Text>
+            <Text style={bw.emptyTitle}>{favors.length ? 'No favors match these filters' : 'No open favors right now'}</Text>
+            <Text style={bw.emptySub}>
+              {favors.length ? 'Try clearing the filters above.' : 'Pull down to refresh — new requests appear here as members post them.'}
+            </Text>
           </View>
         }
       />
@@ -165,6 +226,13 @@ const bw = StyleSheet.create({
   header: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: 16, paddingVertical: 14 },
   title: { color: '#fff', fontSize: 20, fontWeight: '700' },
   subtitle: { color: SUBTLE, fontSize: 13, marginTop: 2 },
+  chipRows: { paddingBottom: 4 },
+  chipRow: { paddingHorizontal: 16, paddingVertical: 6, gap: 8, alignItems: 'center' },
+  chipSep: { width: 1, height: 22, backgroundColor: DIVIDER, marginHorizontal: 4 },
+  chip: { backgroundColor: SHEET_ALT, borderRadius: 999, paddingHorizontal: 14, paddingVertical: 7 },
+  chipActive: { backgroundColor: RED },
+  chipText: { color: SUBTLE, fontSize: 13, fontWeight: '600' },
+  chipTextActive: { color: '#fff' },
   card: { backgroundColor: SHEET_ALT, borderRadius: 16, padding: 16, marginBottom: 12 },
   cardTop: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
   tierPill: { backgroundColor: 'rgba(237,28,36,0.15)', borderRadius: 999, paddingHorizontal: 10, paddingVertical: 4 },
@@ -192,10 +260,17 @@ export const PalFavorDetail = ({ navigation, route }: any) => {
   const [expanded, setExpanded] = useState(false);
   const favor = s.incomingFavors.find((f) => f.id === route?.params?.favorId) ?? s.incomingFavors[0];
   const base = favor?.price ?? 20;
-  const title = `Tiny Favor $${base}`;
+  // Real favor framing. The requester stays anonymous until the pal accepts
+  // (privacy), so we show the request itself, not a fake person.
+  const title = favor ? `${tierLabel(favor)} · $${base}` : 'Favor request';
   // Pal-side economics: what THEY take home (never the member invoice total).
   const { payout } = computePayout(base);
-  const distance = '3 miles away';
+  const area = favor?.location?.address ?? 'Nearby';
+  const when = favor?.scheduledFor
+    ? new Date(favor.scheduledFor).toLocaleString([], { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })
+    : favor?.createdAt
+      ? `Requested ${relTime(favor.createdAt)}`
+      : 'As soon as possible';
 
   return (
     <View style={{ flex: 1, backgroundColor: DARK_BG }}>
@@ -206,16 +281,18 @@ export const PalFavorDetail = ({ navigation, route }: any) => {
         <Txt variant="h3" color="#fff" center style={{ marginVertical: 14 }}>{title}</Txt>
         <View style={st.divider} />
         <View style={{ flexDirection: 'row', marginTop: 16 }}>
-          <Image source={{ uri: 'https://i.pravatar.cc/150?img=52' }} style={st.avatar} />
+          <View style={[st.avatar, { backgroundColor: SHEET_ALT, alignItems: 'center', justifyContent: 'center' }]}>
+            <Ionicons name="cube" size={26} color="#fff" />
+          </View>
           <View style={{ flex: 1, marginLeft: 14 }}>
-            <Text style={{ color: '#fff', fontWeight: '700', fontSize: 18 }}>Aditya Patil</Text>
+            <Text style={{ color: '#fff', fontWeight: '700', fontSize: 18 }}>New favor request</Text>
             <Text style={{ color: SUBTLE, fontSize: 14, marginTop: 4 }} numberOfLines={expanded ? undefined : 2}>
               {favor?.description || 'No details provided yet.'}
             </Text>
-            <Text style={{ color: SUBTLE, fontSize: 13, marginTop: 6 }}>22 Nov 2021, 1:00PM</Text>
+            <Text style={{ color: SUBTLE, fontSize: 13, marginTop: 6 }}>{when}</Text>
             <Text style={{ fontSize: 14, marginTop: 6 }}>
               <Text style={{ color: '#fff', fontWeight: '700' }}>{`You earn $${payout.toFixed(2)}`}</Text>
-              <Text style={{ color: SUBTLE }}>{`   ·   ${distance}`}</Text>
+              <Text style={{ color: SUBTLE }}>{`   ·   ${area}`}</Text>
             </Text>
             <TouchableOpacity
               onPress={() => setExpanded((v) => !v)}
@@ -233,9 +310,9 @@ export const PalFavorDetail = ({ navigation, route }: any) => {
         {expanded && (
           <View style={{ marginTop: 16 }}>
             <View style={st.divider} />
-            <QuickRow label="Arrival window" value={favor?.etaWindow ?? '1:00PM'} />
+            <QuickRow label="When" value={when} />
             {/* Privacy: precise address is withheld until the pal accepts the favor. */}
-            <QuickRow label="Pickup area" value="Within ~3 mi · exact address shared once you accept" />
+            <QuickRow label="Pickup area" value={`${area} · exact address shared once you accept`} />
             <QuickRow label="You earn (after 20% commission)" value={`$${payout.toFixed(2)}`} />
           </View>
         )}
