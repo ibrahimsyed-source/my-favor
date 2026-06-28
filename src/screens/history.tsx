@@ -190,6 +190,19 @@ export const FavorHistoryDetail = ({ navigation, route }: any) => {
   const palName = pal ? `${pal.firstName} ${pal.lastName}` : 'Favor Pal';
   const feeTotal = (favor?.serviceFee ?? 0) + (favor?.transactionFee ?? 0);
 
+  // Re-order this favor: seed the draft from it and jump into the booking flow.
+  const requestAgain = () => {
+    if (!favor) return;
+    s.setDraft({
+      tier: favor.tier,
+      price: favor.price,
+      description: favor.description,
+      images: favor.images,
+      location: favor.location,
+    });
+    navigation.navigate('FavorSummary');
+  };
+
   const Divider = () => <View style={[styles.divider, { backgroundColor: theme.divider }]} />;
 
   return (
@@ -213,6 +226,14 @@ export const FavorHistoryDetail = ({ navigation, route }: any) => {
             </Txt>
           </View>
         </View>
+
+        <Button
+          title="Request this favor again"
+          variant="secondary"
+          uppercase={false}
+          onPress={requestAgain}
+          style={{ marginTop: tokens.spacing.base }}
+        />
 
         <Divider />
 

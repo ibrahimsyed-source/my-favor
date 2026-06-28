@@ -413,6 +413,21 @@ export function ConfirmAddress({ navigation }: any) {
   const [whenIdx, setWhenIdx] = useState(0);
   const pals = s.pals;
 
+  // Recent/saved addresses — the member's home plus distinct addresses from past
+  // favors, so they can refill in one tap instead of retyping.
+  const recentAddresses = (() => {
+    const seen = new Set<string>();
+    const out: string[] = [];
+    const home = s.user?.homeAddress?.trim();
+    if (home) { seen.add(home); out.push(home); }
+    for (const f of s.history) {
+      const a = f.location?.address?.trim();
+      if (a && !seen.has(a)) { seen.add(a); out.push(a); }
+      if (out.length >= 5) break;
+    }
+    return out;
+  })();
+
   const when = WHEN_OPTIONS[whenIdx];
   const canConfirm = address.trim().length > 0;
 
@@ -472,6 +487,27 @@ export function ConfirmAddress({ navigation }: any) {
                 accessibilityLabel="Favor address"
               />
             </View>
+
+            {recentAddresses.length > 0 ? (
+              <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginTop: 10 }}>
+                {recentAddresses.map((a, i) => (
+                  <TouchableOpacity
+                    key={a}
+                    onPress={() => setAddress(a)}
+                    activeOpacity={0.8}
+                    accessibilityRole="button"
+                    accessibilityLabel={`Use address ${a}`}
+                    style={{
+                      backgroundColor: theme.surfaceAlt, borderRadius: 999, paddingHorizontal: 12, paddingVertical: 6,
+                      flexDirection: 'row', alignItems: 'center', gap: 4,
+                    }}
+                  >
+                    <Ionicons name={i === 0 && a === s.user?.homeAddress ? 'home-outline' : 'time-outline'} size={13} color={theme.textSecondary} />
+                    <Txt variant="caption" color={theme.text} numberOfLines={1} style={{ maxWidth: 180 }}>{a}</Txt>
+                  </TouchableOpacity>
+                ))}
+              </View>
+            ) : null}
 
             <View
               style={{
