@@ -6,6 +6,7 @@ import { asyncHandler, badRequest, notFound, forbidden, conflict } from '../lib/
 import { authenticate, requireRole } from '../middleware/authenticate';
 import { publicFavor, publicFavorOpen } from '../lib/serialize';
 import { computeFees, computePayout, computeCancellation, FAVOR_TIERS } from '../lib/money';
+import { stripeEnabled, chargeFavor } from '../lib/stripe';
 
 export const favorRouter = Router();
 favorRouter.use(authenticate);
@@ -291,6 +292,28 @@ favorRouter.post(
       await tx.user.update({ where: { id: me }, data: { totalFavors: { increment: 1 } } });
       return f;
     });
+
+    // When Stripe is live, charge the member and route the pal's share to their
+    // connected account (destination charge). Best-effort: the favor is already
+    // completed in the ledger; declines/onboarding gaps are reconciled out-of-band.
+    if (stripeEnabled()) {
+      try {
+        const [pal, card] = await Promise.all([
+          prisma.user.findUniqueOrThrow({ where: { id: me } }),
+          prisma.paymentMethod.findFirst({ where: { userId: favor.memberId }, orderBy: { isDefault: 'desc' } }),
+        ]);
+        if (pal.stripeConnectId && card?.stripePmId) {
+          const pi = await chargeFavor({
+            favorId: favor.id, memberId: favor.memberId, palConnectId: pal.stripeConnectId,
+            total: updated.total, base: updated.price, tip: updated.tip ?? 0, paymentMethodId: card.stripePmId,
+          });
+          await prisma.favor.update({ where: { id: favor.id }, data: { stripePaymentIntentId: pi } });
+        }
+      } catch (err) {
+        // eslint-disable-next-line no-console
+        console.error('Stripe charge on finish failed:', err);
+      }
+    }
 
     await notify(favor.memberId, 'general', 'Favor completed', 'Your favor was completed. Please leave a rating.');
     res.json({ favor: publicFavor(updated), payout });

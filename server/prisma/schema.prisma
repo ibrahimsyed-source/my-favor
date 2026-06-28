@@ -34,6 +34,10 @@ model User {
   status       String  @default("online") // "online" | "invisible" | "offline"
   verified     Boolean @default(false)
 
+  // Stripe: customer id (member, for charges) + Connect account id (pal, for payouts)
+  stripeCustomerId String?
+  stripeConnectId  String?
+
   // Pal stats
   rating          Float @default(0)
   totalFavors     Int   @default(0)
@@ -94,6 +98,9 @@ model Favor {
   // Reverse review (pal rates member)
   palRating   Int?
   palFeedback String?
+
+  // Stripe charge for this favor (set when payments are live)
+  stripePaymentIntentId String?
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt

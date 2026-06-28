@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import {
   View, TextInput, TouchableOpacity, ScrollView,
-  StyleSheet, KeyboardAvoidingView, Platform,
+  StyleSheet, KeyboardAvoidingView, Platform, Linking,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
@@ -293,6 +293,34 @@ export function Earnings({ navigation }: any) {
 export function StripeOnboarding({ navigation }: any) {
   const { theme } = useTheme();
   const payout = usePayoutAccount();
+  const { paymentsLive, connectOnboard, connectStatus } = useStore();
+  const [conn, setConn] = useState<{ onboarded: boolean; payoutsEnabled: boolean } | null>(null);
+  const [opening, setOpening] = useState(false);
+
+  // When payouts are live, reflect the real Connect status (refreshed on focus,
+  // since onboarding completes on Stripe's hosted page).
+  useEffect(() => {
+    if (!paymentsLive) return;
+    const load = () => { void connectStatus().then(setConn); };
+    load();
+    const unsub = navigation.addListener('focus', load);
+    return unsub;
+  }, [navigation, paymentsLive]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Live: launch Stripe Connect onboarding. Mock: the manual bank form.
+  const setupPayouts = async () => {
+    if (!paymentsLive) { navigation.navigate('BankInfo'); return; }
+    setOpening(true);
+    try {
+      const url = await connectOnboard();
+      if (url) await Linking.openURL(url);
+    } finally {
+      setOpening(false);
+    }
+  };
+
+  const connected = paymentsLive ? !!conn?.payoutsEnabled : payout.connected;
+
   return (
     <Screen padded={false}>
       <TopBar title="Account" onBack={navigation.canGoBack() ? navigation.goBack : undefined} />
@@ -303,41 +331,41 @@ export function StripeOnboarding({ navigation }: any) {
         <View style={{ height: 1, backgroundColor: theme.divider }} />
 
         {/* Payout account — connected bank, or an honest not-yet-set-up prompt */}
-        {payout.connected ? (
+        {connected ? (
           <View
             style={[acct.row, { borderBottomColor: theme.divider }]}
             accessible
             accessibilityLabel={`Payout account connected: ${bankLabel(payout.last4)}`}
           >
             <Ionicons name="card-outline" size={24} color="#8A909B" style={{ width: 30, marginRight: 14 }} />
-            <Txt variant="body" color="#8A909B" style={{ flex: 1 }}>{bankLabel(payout.last4)}</Txt>
+            <Txt variant="body" color="#8A909B" style={{ flex: 1 }}>{paymentsLive ? 'Payouts active (Stripe)' : bankLabel(payout.last4)}</Txt>
             <Ionicons name="checkmark-circle" size={20} color={theme.success} />
           </View>
         ) : (
           <TouchableOpacity
             activeOpacity={0.7}
-            onPress={() => navigation.navigate('BankInfo')}
+            onPress={setupPayouts}
             style={[acct.row, { borderBottomColor: theme.divider }]}
             accessibilityRole="button"
             accessibilityLabel="Set up payouts to get paid"
           >
             <Ionicons name="card-outline" size={24} color="#8A909B" style={{ width: 30, marginRight: 14 }} />
-            <Txt variant="body" color="#8A909B" style={{ flex: 1 }}>Set up payouts to get paid</Txt>
+            <Txt variant="body" color="#8A909B" style={{ flex: 1 }}>{opening ? 'Opening…' : 'Set up payouts to get paid'}</Txt>
             <Ionicons name="chevron-forward" size={22} color="#8A909B" />
           </TouchableOpacity>
         )}
 
-        {/* Edit / add Bank Information → BankInfo */}
+        {/* Edit / add bank info — Stripe Connect when live, else the manual form */}
         <TouchableOpacity
           activeOpacity={0.7}
-          onPress={() => navigation.navigate('BankInfo')}
+          onPress={() => (paymentsLive ? setupPayouts() : navigation.navigate('BankInfo'))}
           style={[acct.row, { borderBottomColor: theme.divider }]}
           accessibilityRole="button"
-          accessibilityLabel={payout.connected ? 'Edit bank information' : 'Add bank information'}
+          accessibilityLabel={connected ? 'Edit bank information' : 'Add bank information'}
         >
           <Ionicons name="pencil" size={22} color="#8A909B" style={{ width: 30, marginRight: 14 }} />
           <Txt variant="body" color="#8A909B" style={{ flex: 1 }}>
-            {payout.connected ? 'Edit Bank Information' : 'Add Bank Information'}
+            {connected ? 'Edit Bank Information' : 'Add Bank Information'}
           </Txt>
           <Ionicons name="chevron-forward" size={22} color="#8A909B" />
         </TouchableOpacity>

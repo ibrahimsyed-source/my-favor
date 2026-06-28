@@ -75,6 +75,16 @@ export const getTransactionsApi = () => apiRequest<{ transactions: Transaction[]
 export const getEarningsApi = () => apiRequest<{ earnings: Transaction[] }>('/api/payments/earnings', { auth: true });
 export const cashoutApi = () => apiRequest<{ ok: boolean; amount: number; count: number }>('/api/payments/cashout', { method: 'POST', auth: true });
 
+// Stripe (hosted-page flow — no native SDK)
+export const getPaymentsConfigApi = () => apiRequest<{ stripeEnabled: boolean }>('/api/payments/config', { auth: true });
+export const createSetupCheckoutApi = (successUrl: string, cancelUrl: string) =>
+  apiRequest<{ url: string }>('/api/payments/checkout/setup', { method: 'POST', auth: true, body: { successUrl, cancelUrl } });
+export const syncCardsApi = () => apiRequest<{ cards: PaymentCard[] }>('/api/payments/cards/sync', { method: 'POST', auth: true });
+export const connectOnboardApi = (returnUrl: string, refreshUrl: string) =>
+  apiRequest<{ url: string }>('/api/payments/connect/onboard', { method: 'POST', auth: true, body: { returnUrl, refreshUrl } });
+export const connectStatusApi = () =>
+  apiRequest<{ onboarded: boolean; payoutsEnabled: boolean; detailsSubmitted: boolean; enabled: boolean }>('/api/payments/connect/status', { auth: true });
+
 // --- messaging ---
 export const getThreadsApi = () => apiRequest<{ threads: Thread[] }>('/api/messages/threads', { auth: true });
 export const getMessagesApi = (threadId: string) => apiRequest<{ messages: Message[] }>(`/api/messages/threads/${threadId}/messages`, { auth: true });

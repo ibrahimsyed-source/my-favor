@@ -1,4 +1,5 @@
 import React, { createContext, useContext, useMemo, useState, useCallback, useEffect, useRef } from 'react';
+import { Platform } from 'react-native';
 import {
   User, Favor, PaymentCard, Transaction, Thread, Message, AppNotification,
   Role, UserStatus, FavorTier, GeoPoint, FavorStatus, computeFees, computePayout,
@@ -10,6 +11,7 @@ import {
   createFavorApi, getFavorsApi, getActiveFavorApi, getFavorApi, getIncomingApi,
   acceptFavorApi, declineFavorApi, assignPalApi, advanceFavorApi, finishFavorApi, cancelFavorApi, rateFavorApi, rateMemberApi,
   getCardsApi, addCardApi, removeCardApi, getTransactionsApi, getEarningsApi, cashoutApi,
+  getPaymentsConfigApi, createSetupCheckoutApi, syncCardsApi, connectOnboardApi, connectStatusApi,
   getThreadsApi, getMessagesApi, sendMessageApi, createThreadApi,
   getNotificationsApi, markNotificationReadApi, markAllNotificationsReadApi,
   reportUserApi, blockUserApi, getBlockedApi,
@@ -94,6 +96,13 @@ interface StoreValue {
   transactions: Transaction[];
   earnings: Transaction[];
   cashOut: () => Promise<number>; // pays out available balance, returns the amount
+  // Stripe (hosted flow). When paymentsLive, cards are added via Stripe Checkout
+  // and pals onboard payouts via Connect; otherwise the mock card form is used.
+  paymentsLive: boolean;
+  startAddCard: () => Promise<string | null>; // hosted card-setup URL, or null when mock
+  syncCards: () => Promise<void>;
+  connectOnboard: () => Promise<string | null>; // pal payout onboarding URL
+  connectStatus: () => Promise<{ onboarded: boolean; payoutsEnabled: boolean }>;
 
   // messaging
   threads: Thread[];
@@ -127,6 +136,7 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
   const [notifications, setNotifications] = useState<AppNotification[]>([]);
   const [blockedUsers, setBlockedUsers] = useState<string[]>([]);
   const [pals, setPals] = useState<User[]>([]);
+  const [paymentsLive, setPaymentsLive] = useState(false);
 
   // Keep a ref of pals so the poll loop can dedupe without re-subscribing.
   const palsRef = useRef<User[]>([]);
@@ -155,11 +165,12 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
 
   const loadAll = useCallback(async (u: User) => {
     const isPal = u.role === 'pal';
-    const [favors, active, cardList, txns, earn, thr, notes, palList, blocked, incoming] =
+    const [favors, active, cardList, txns, earn, thr, notes, palList, blocked, incoming, payCfg] =
       await Promise.allSettled([
         getFavorsApi(), getActiveFavorApi(), getCardsApi(), getTransactionsApi(), getEarningsApi(),
         getThreadsApi(), getNotificationsApi(), getPalsApi(), getBlockedApi(),
         isPal ? getIncomingApi() : Promise.resolve({ favors: [] as Favor[] }),
+        getPaymentsConfigApi(),
       ]);
 
     if (favors.status === 'fulfilled') setHistory(favors.value.favors);
@@ -171,6 +182,7 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     if (palList.status === 'fulfilled') setPals(palList.value.pals.map(asUser));
     if (blocked.status === 'fulfilled') setBlockedUsers(blocked.value.blocked);
     if (incoming.status === 'fulfilled') setIncomingFavors(incoming.value.favors);
+    if (payCfg.status === 'fulfilled') setPaymentsLive(payCfg.value.stripeEnabled);
     if (thr.status === 'fulfilled') {
       setThreads(thr.value.threads);
       void loadMessagesFor(thr.value.threads);
@@ -506,6 +518,50 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     return amount;
   }, []);
 
+  // Return URL for hosted Stripe pages: the web origin on web, the app's deep
+  // link scheme on native.
+  const returnUrl = (path: string) =>
+    Platform.OS === 'web' && typeof window !== 'undefined' ? window.location.origin : `myfavor://${path}`;
+
+  // Begin adding a card. Live: returns a hosted Stripe Checkout URL to open;
+  // mock: returns null so the screen shows the manual dev form.
+  const startAddCard = useCallback(async () => {
+    if (!paymentsLive) return null;
+    try {
+      const { url } = await createSetupCheckoutApi(returnUrl('payment'), returnUrl('payment'));
+      return url;
+    } catch {
+      return null;
+    }
+  }, [paymentsLive]);
+
+  const syncCards = useCallback(async () => {
+    try {
+      const { cards: c } = await syncCardsApi();
+      setCards(c);
+    } catch {
+      /* ignore */
+    }
+  }, []);
+
+  const connectOnboard = useCallback(async () => {
+    try {
+      const { url } = await connectOnboardApi(returnUrl('payouts'), returnUrl('payouts'));
+      return url;
+    } catch {
+      return null;
+    }
+  }, []);
+
+  const connectStatus = useCallback(async () => {
+    try {
+      const s = await connectStatusApi();
+      return { onboarded: s.onboarded, payoutsEnabled: s.payoutsEnabled };
+    } catch {
+      return { onboarded: false, payoutsEnabled: false };
+    }
+  }, []);
+
   // ---- messaging ----
   const messagesFor = useCallback((threadId: string) => messages.filter((m) => m.threadId === threadId), [messages]);
 
@@ -598,13 +654,16 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       declineFavor, assignPal, finishFavorAsPal, rateMember,
       blockedUsers, reportUser, blockUser,
       cards, addCard, removeCard, transactions, earnings, cashOut,
+      paymentsLive, startAddCard, syncCards, connectOnboard, connectStatus,
       threads, messagesFor, sendMessage, refreshMessages, refreshThreads, openThreadWith,
       notifications, markNotificationRead, markAllNotificationsRead, refreshNotifications,
     }),
     [user, signup, verifyOtp, login, logout, deleteAccount, updateProfile, changePassword, setRole, setStatus,
       pals, draftFavor, setDraft, clearDraft, activeFavor, palById, history, requestFavor, advanceFavor, cancelFavor,
       rateFavor, incomingFavors, refreshIncoming, acceptFavor, declineFavor, assignPal, finishFavorAsPal, rateMember, blockedUsers, reportUser,
-      blockUser, cards, addCard, removeCard, transactions, earnings, cashOut, threads, messagesFor, sendMessage,
+      blockUser, cards, addCard, removeCard, transactions, earnings, cashOut,
+      paymentsLive, startAddCard, syncCards, connectOnboard, connectStatus,
+      threads, messagesFor, sendMessage,
       refreshMessages, refreshThreads, openThreadWith, notifications, markNotificationRead, markAllNotificationsRead, refreshNotifications]
   );
 

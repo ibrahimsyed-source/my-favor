@@ -1,5 +1,5 @@
-import React, { useState } from 'react';
-import { View, Image, TouchableOpacity, StyleSheet } from 'react-native';
+import React, { useState, useEffect } from 'react';
+import { View, Image, TouchableOpacity, StyleSheet, Linking } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { Screen, TopBar, Txt, Button, Field, InfoModal, ConfirmModal } from '../components';
 import { useStore } from '../store';
@@ -131,9 +131,29 @@ export function Payment({ navigation }: any) {
 // ---------------------------------------------------------------------------
 export function AddCard({ navigation, route }: any) {
   const { theme } = useTheme();
-  const { addCard, removeCard, cards } = useStore();
+  const { addCard, removeCard, cards, paymentsLive, startAddCard, syncCards } = useStore();
+  const [openingCheckout, setOpeningCheckout] = useState(false);
 
   const editCard = route?.params?.cardId ? cards.find((c: any) => c.id === route.params.cardId) : undefined;
+
+  // When real payments are live, cards are added on Stripe's hosted page; pull in
+  // any newly-saved card whenever this screen regains focus (after returning).
+  useEffect(() => {
+    if (!paymentsLive) return;
+    const unsub = navigation.addListener('focus', () => { void syncCards(); });
+    return unsub;
+  }, [navigation, paymentsLive]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Open Stripe's hosted card-setup page.
+  const addCardViaStripe = async () => {
+    setOpeningCheckout(true);
+    try {
+      const url = await startAddCard();
+      if (url) await Linking.openURL(url);
+    } finally {
+      setOpeningCheckout(false);
+    }
+  };
   // Stored expYear is 2-digit (e.g. 30); render a full 4-digit year for editing.
   const editExpYear = editCard ? (editCard.expYear >= 100 ? editCard.expYear : 2000 + editCard.expYear) : 0;
 
@@ -198,6 +218,30 @@ export function AddCard({ navigation, route }: any) {
     setSaving(false);
     setAdded(true);
   };
+
+  // Live payments: cards are entered on Stripe's hosted page (PCI-compliant), not
+  // in our form. Adding a new card routes there; editing isn't applicable.
+  if (paymentsLive && !editCard) {
+    return (
+      <Screen scroll>
+        <TopBar title="Add Payment Method" onBack={() => navigation.goBack()} />
+        <View style={styles.logoWrap}>
+          <Image source={require('../../assets/img/logo.png')} style={styles.logo} />
+        </View>
+        <Txt center color={theme.text} style={styles.title}>Add a card securely</Txt>
+        <Txt center color={theme.textSecondary} style={{ marginHorizontal: 24, marginBottom: 28, lineHeight: 22 }}>
+          You'll enter your card on Stripe's secure page. My Favor never sees or stores your full card number.
+        </Txt>
+        <Button
+          title={openingCheckout ? 'Opening…' : 'Add card with Stripe'}
+          onPress={addCardViaStripe}
+          loading={openingCheckout}
+          disabled={openingCheckout}
+        />
+        <Button title="Done" variant="secondary" uppercase={false} onPress={() => navigation.goBack()} style={{ marginTop: 12 }} />
+      </Screen>
+    );
+  }
 
   return (
     <Screen scroll>
