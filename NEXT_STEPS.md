@@ -1,21 +1,33 @@
-# Next steps — credential / native-gated work
+# Next steps
 
-The recent feature pass (Browse board, realtime, earnings cash-out, re-request,
-reviews, two-way ratings, scheduling, distance, in-app notifications) was built
-to run **today** in the current setup (Expo web / Expo Go, no custom dev build,
-no external accounts). A few pieces were deliberately stubbed at the JS layer
-because finishing them requires a native module + a custom dev build, or an
-external account/credentials. Those are listed here so nothing is hidden.
+The app + backend are built and wired end-to-end. The remaining integrations are
+**wired and gated behind credentials** — see `CREDENTIALS.md` for the exact keys
+and where they go. Adding a key turns the real service on with no code change.
 
-| Area | What ships now | What's gated, and on what |
+## Wired — just add credentials (CREDENTIALS.md)
+| Integration | State | Turns on with |
 | --- | --- | --- |
-| **Distance / "Closest" sort** (#8) | Real haversine distance from a fixed pal origin (a city center). Sorting + "X mi" labels work. | **Live GPS** needs `expo-location` + a dev build. Swap `PAL_ORIGIN` in `src/screens/pal.tsx` for `getCurrentPositionAsync()`. |
-| **Notifications** (#9) | Records created server-side on events; in-app list + bell poll every 20s; mark-all-read. | **Remote push** needs `expo-notifications` + APNs (iOS) / FCM (Android) creds, a server-side device-token store, and a send step. |
-| **Maps** | Stylized placeholder backdrops. | Real tiles need `react-native-maps` + a Google Maps API key + a dev build. |
-| **Payments** | Server-authoritative ledger; cash-out marks earnings paid out (stub). | Real money needs **Stripe** (`STRIPE_SECRET_KEY`): PaymentIntents for charges, **Connect** for pal payouts/cash-out, webhook reconciliation. |
-| **OTP delivery** | 6-digit codes generated + verified; printed to console in dev. | Real SMS/email needs **Twilio** (or an email provider) wired in `server/src/lib/otp.ts` `dispatch()`. |
-| **Saved addresses** (#5) | Member's home + recent favor addresses as one-tap chips (no backend change). | **Labeled saved places** (Home/Work, managed list) need a small `SavedAddress` model + CRUD endpoints. |
+| **Stripe** (cards, favor charges, Connect payouts, cash-out) | Hosted-page flow, gated; mock ledger until keyed | `STRIPE_SECRET_KEY` + `STRIPE_WEBHOOK_SECRET` (Connect enabled) |
+| **Email OTP** | Resend via fetch, gated; console in dev | `RESEND_API_KEY` + `OTP_FROM_EMAIL` |
+| **Google Maps** | Static-map image on tracking, gated | `EXPO_PUBLIC_GOOGLE_MAPS_KEY` (restricted) |
+| **Postgres** | One-line provider switch + migrations | `DATABASE_URL` (see `server/DEPLOY.md`) |
+| **API URL** | Client reads it at build | `EXPO_PUBLIC_API_URL` |
+| **Apple submit** | `eas.json` placeholders | Apple ID / ASC App ID / Team ID |
 
-None of these block running or demoing the app. They're the same productionization
-items from `BUILD_ROADMAP.md`, now with the JS-side UX already in place so each is
-a focused swap rather than a from-scratch build.
+## Not wired — optional for v1 (need a native dev build)
+These were intentionally left out because they require a native module + a custom
+EAS build (and Apple doesn't require them for launch). The web/Expo-Go demo stays
+intact without them.
+- **Push notifications** — in-app notifications already work via polling. Real
+  device push = `expo-notifications` + APNs (iOS) / FCM (Android) + token storage.
+- **Live GPS + interactive map** — the static map covers display; live device
+  location + a pannable map = `expo-location` + `react-native-maps`. (The distance
+  feature uses a fixed origin until GPS is added — `PAL_ORIGIN` in `src/screens/pal.tsx`.)
+
+## The path to the App Store
+1. You: create the accounts in `CREDENTIALS.md` (Apple has the longest lead time —
+   start it first; D-U-N-S too if publishing as a company).
+2. Deploy the backend + Postgres (`server/DEPLOY.md`), set the env vars.
+3. Drop in the keys → everything goes live; smoke-test the real flows.
+4. `eas build` (production) → TestFlight → App Store Connect (screenshots, privacy
+   labels, age rating, demo account) → submit. (`APP_STORE_COMPLIANCE.md`.)

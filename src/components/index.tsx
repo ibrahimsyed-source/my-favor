@@ -270,6 +270,37 @@ export const MapPlaceholder: React.FC<{ height?: number; label?: string; childre
 };
 
 // ---------------------------------------------------------------------------
+// StaticMap — a real map via Google's Static Maps API (an image URL with the
+// key), so it works on web + native with no native module. Falls back to the
+// MapPlaceholder when no key is set or coords are missing. Set the key with
+// EXPO_PUBLIC_GOOGLE_MAPS_KEY. `children` (markers/pins) overlay the image.
+// ---------------------------------------------------------------------------
+const MAPS_KEY = process.env.EXPO_PUBLIC_GOOGLE_MAPS_KEY || '';
+
+export const StaticMap: React.FC<{
+  lat?: number;
+  lng?: number;
+  height?: number;
+  zoom?: number;
+  label?: string;
+  children?: React.ReactNode;
+}> = ({ lat, lng, height = 240, zoom = 14, label, children }) => {
+  if (!MAPS_KEY || lat == null || lng == null) {
+    return <MapPlaceholder height={height} label={label ?? 'Map'}>{children}</MapPlaceholder>;
+  }
+  const px = Math.min(640, Math.max(120, Math.round(height)));
+  const url =
+    `https://maps.googleapis.com/maps/api/staticmap?center=${lat},${lng}&zoom=${zoom}` +
+    `&size=640x${px}&scale=2&markers=color:0xED1C24%7C${lat},${lng}&key=${MAPS_KEY}`;
+  return (
+    <View style={{ height, borderRadius: tokens.radius.lg, overflow: 'hidden' }}>
+      <Image source={{ uri: url }} style={{ width: '100%', height }} resizeMode="cover" />
+      {children}
+    </View>
+  );
+};
+
+// ---------------------------------------------------------------------------
 // Row helper (label + value list items)
 // ---------------------------------------------------------------------------
 export const Row: React.FC<{

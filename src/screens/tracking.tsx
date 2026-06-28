@@ -5,7 +5,7 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import {
-  Screen, Txt, Button, Field, Avatar, StarRating, InfoModal, ConfirmModal,
+  Screen, Txt, Button, Field, Avatar, StarRating, InfoModal, ConfirmModal, StaticMap,
 } from '../components';
 import { useTheme, tokens, palette } from '../theme';
 import { useStore } from '../store';
@@ -84,8 +84,17 @@ export const FavorTracking = ({ navigation }: any) => {
     }).catch(() => {});
   };
 
+  // Real map of the favor location when a Google Maps key is configured; the
+  // dark backdrop remains otherwise (so the UI is unaffected without a key).
+  const mapsKey = process.env.EXPO_PUBLIC_GOOGLE_MAPS_KEY;
+
   return (
     <SafeAreaView style={{ flex: 1, backgroundColor: MAP_BG }} edges={['top', 'bottom']}>
+      {mapsKey && fav?.location ? (
+        <View style={{ position: 'absolute', top: 0, left: 0, right: 0, height: 440 }} pointerEvents="none">
+          <StaticMap lat={fav.location.lat} lng={fav.location.lng} height={440} zoom={14} />
+        </View>
+      ) : null}
       {/* Top nav banner over the (dark) map */}
       <View style={styles.navRow}>
         <TouchableOpacity
