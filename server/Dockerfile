@@ -17,10 +17,11 @@ WORKDIR /app
 ENV NODE_ENV=production
 RUN apt-get update -y && apt-get install -y openssl && rm -rf /var/lib/apt/lists/*
 COPY package*.json ./
-# Full install (not --omit=dev): the image regenerates the Prisma client for
-# Postgres and runs `prisma db push` on boot, which need the Prisma CLI + tsx
-# (devDependencies). Pinned versions avoid the npx-fetches-latest mismatch.
-RUN npm ci
+# Install incl. devDependencies (--include=dev overrides NODE_ENV=production):
+# the image regenerates the Prisma client for Postgres and runs `prisma db push`
+# on boot, which need the Prisma CLI (+ tsx for seeding) baked in — so restarts
+# don't depend on fetching tools at runtime.
+RUN npm ci --include=dev
 COPY prisma ./prisma
 # Production runs on Postgres. The committed schema uses SQLite for zero-setup
 # local dev; flip the provider here so the image targets Postgres without
