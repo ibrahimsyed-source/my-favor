@@ -5,7 +5,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { MapPlaceholder, Txt, Avatar } from '../components';
 import { useTheme, tokens, darkTokens } from '../theme';
 import { useStore } from '../store';
-import { roleSwitchLabel, UserStatus } from '../types';
+import { UserStatus } from '../types';
 
 const logo = require('../../assets/img/logo.png');
 const WIN_H = Dimensions.get('window').height;
@@ -143,7 +143,6 @@ export function Home({ navigation }: any) {
 
   const role = s.user?.role ?? 'member';
   const isPal = role === 'pal';
-  const pillText = roleSwitchLabel(role);
   const status = s.user?.status ?? 'offline';
   const statusUi = STATUS_UI[status];
   const active = s.activeFavor;
@@ -152,8 +151,6 @@ export function Home({ navigation }: any) {
   // offline/invisible we never surface an incoming request.
   const showIncoming = !active && status === 'online' && !!incoming;
   const unread = s.notifications.filter((n) => !n.read).length;
-
-  const toggleRole = () => s.setRole(isPal ? 'member' : 'pal');
 
   const resumeActive = () => {
     if (!active) return;
@@ -196,22 +193,10 @@ export function Home({ navigation }: any) {
           <Ionicons name="menu" size={24} color="#1A1A1A" />
         </TouchableOpacity>
 
-        {/* role switch pill */}
-        <TouchableOpacity
-          activeOpacity={0.9}
-          onPress={toggleRole}
-          accessibilityRole="switch"
-          accessibilityLabel={pillText}
-          accessibilityState={{ checked: isPal }}
-          style={styles.pill}
-        >
-          <Txt variant="bodySm" color="#1A1A1A" style={{ fontWeight: '600' }}>
-            {pillText}
-          </Txt>
-          <View style={[styles.switchTrack, { alignItems: isPal ? 'flex-end' : 'flex-start' }]}>
-            <View style={styles.switchKnob} />
-          </View>
-        </TouchableOpacity>
+        {/* App title (role is set at signup — no in-app switching) */}
+        <View style={styles.pill}>
+          <Txt variant="label" color="#1A1A1A">{isPal ? 'Favor Pal' : 'My Favor'}</Txt>
+        </View>
 
         {/* notifications bell -> Notifications */}
         <TouchableOpacity

@@ -396,15 +396,6 @@ const MapMarker: React.FC<{ uri?: string }> = ({ uri }) => (
 
 // Honest "When?" options that actually set draft.scheduledFor (requestFavor reads
 // it). The clock icon now describes timing instead of the old mislabeled "Where to?".
-const HOUR = 60 * 60 * 1000;
-const WHEN_OPTIONS: { label: string; offsetMs?: number }[] = [
-  { label: 'Now' },
-  { label: 'In 1 hour', offsetMs: HOUR },
-  { label: 'In 3 hours', offsetMs: 3 * HOUR },
-  { label: 'In 6 hours', offsetMs: 6 * HOUR },
-  { label: 'Tomorrow', offsetMs: 24 * HOUR },
-  { label: 'In 2 days', offsetMs: 48 * HOUR },
-];
 
 export function ConfirmAddress({ navigation }: any) {
   const { theme } = useTheme();
@@ -413,7 +404,9 @@ export function ConfirmAddress({ navigation }: any) {
   const [address, setAddress] = useState(
     s.draftFavor?.location?.address ?? s.user?.homeAddress ?? '2099 Woodvine Rd, Lorman, MS'
   );
-  const [whenIdx, setWhenIdx] = useState(0);
+  const [scheduleMode, setScheduleMode] = useState<'now' | 'later'>('now');
+  const [dateStr, setDateStr] = useState('');
+  const [timeStr, setTimeStr] = useState('');
   const pals = s.pals;
 
   // Recent/saved addresses — the member's home plus distinct addresses from past
@@ -431,12 +424,15 @@ export function ConfirmAddress({ navigation }: any) {
     return out;
   })();
 
-  const when = WHEN_OPTIONS[whenIdx];
-  const canConfirm = address.trim().length > 0;
+  // Parse the typed date + time into a future timestamp (undefined = "now").
+  const parsedSchedule = scheduleMode === 'later' ? new Date(`${dateStr} ${timeStr}`).getTime() : NaN;
+  const scheduleEntered = scheduleMode === 'later' && dateStr.trim() !== '' && timeStr.trim() !== '';
+  const scheduleValid = Number.isFinite(parsedSchedule) && parsedSchedule > Date.now();
+  const canConfirm = address.trim().length > 0 && (scheduleMode === 'now' || scheduleValid);
 
   const onConfirm = () => {
     if (!canConfirm) return;
-    const scheduledFor = when.offsetMs != null ? Date.now() + when.offsetMs : undefined;
+    const scheduledFor = scheduleMode === 'later' && scheduleValid ? parsedSchedule : undefined;
     s.setDraft({
       location: { lat: 31.8069, lng: -91.0593, address: address.trim() },
       scheduledFor,
@@ -514,36 +510,68 @@ export function ConfirmAddress({ navigation }: any) {
 
             <View
               style={{
-                flexDirection: 'row',
-                alignItems: 'center',
-                justifyContent: 'space-between',
                 marginTop: tokens.spacing.md,
                 paddingTop: tokens.spacing.md,
                 borderTopWidth: StyleSheet.hairlineWidth,
                 borderTopColor: theme.divider,
               }}
             >
-              <View style={{ flexDirection: 'row', alignItems: 'center' }}>
-                <Ionicons name="time-outline" size={18} color={theme.textSecondary} />
-                <Txt variant="bodySm" color={theme.textSecondary} style={{ marginLeft: 8 }}>When?</Txt>
+              <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
+                <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+                  <Ionicons name="time-outline" size={18} color={theme.textSecondary} />
+                  <Txt variant="bodySm" color={theme.textSecondary} style={{ marginLeft: 8 }}>When?</Txt>
+                </View>
+                <View style={{ flexDirection: 'row', gap: 6 }}>
+                  {(['now', 'later'] as const).map((m) => {
+                    const on = scheduleMode === m;
+                    return (
+                      <TouchableOpacity
+                        key={m}
+                        onPress={() => setScheduleMode(m)}
+                        activeOpacity={0.8}
+                        accessibilityRole="button"
+                        accessibilityState={{ selected: on }}
+                        style={{
+                          backgroundColor: on ? theme.primary : theme.surfaceAlt,
+                          paddingHorizontal: 16, paddingVertical: 7, borderRadius: tokens.radius.pill,
+                        }}
+                      >
+                        <Txt variant="label" color={on ? '#FFFFFF' : theme.textSecondary}>
+                          {m === 'now' ? 'Now' : 'Schedule'}
+                        </Txt>
+                      </TouchableOpacity>
+                    );
+                  })}
+                </View>
               </View>
-              <TouchableOpacity
-                onPress={() => setWhenIdx((i) => (i + 1) % WHEN_OPTIONS.length)}
-                accessibilityRole="button"
-                accessibilityLabel={`When: ${when.label}`}
-                accessibilityHint="Tap to change when the favor should happen"
-                style={{
-                  backgroundColor: theme.surfaceAlt,
-                  paddingHorizontal: 16,
-                  paddingVertical: 6,
-                  borderRadius: tokens.radius.pill,
-                  flexDirection: 'row',
-                  alignItems: 'center',
-                }}
-              >
-                <Txt variant="label">{when.label}</Txt>
-                <Ionicons name="chevron-down" size={14} color={theme.textSecondary} style={{ marginLeft: 4 }} />
-              </TouchableOpacity>
+
+              {scheduleMode === 'later' ? (
+                <>
+                  <View style={{ flexDirection: 'row', gap: 8, marginTop: 12 }}>
+                    <TextInput
+                      value={dateStr}
+                      onChangeText={setDateStr}
+                      placeholder="MM/DD/YYYY"
+                      placeholderTextColor={theme.textTertiary}
+                      style={[tokens.typography.body, { flex: 1, backgroundColor: theme.inputBg, color: theme.text, borderRadius: tokens.radius.md, paddingHorizontal: 14, paddingVertical: 12 }]}
+                      accessibilityLabel="Favor date"
+                    />
+                    <TextInput
+                      value={timeStr}
+                      onChangeText={setTimeStr}
+                      placeholder="2:30 PM"
+                      placeholderTextColor={theme.textTertiary}
+                      style={[tokens.typography.body, { flex: 1, backgroundColor: theme.inputBg, color: theme.text, borderRadius: tokens.radius.md, paddingHorizontal: 14, paddingVertical: 12 }]}
+                      accessibilityLabel="Favor time"
+                    />
+                  </View>
+                  {scheduleEntered && !scheduleValid ? (
+                    <Txt variant="caption" color={theme.danger} style={{ marginTop: 6 }}>
+                      Enter a valid future date and time (e.g. 06/30/2026 and 2:30 PM).
+                    </Txt>
+                  ) : null}
+                </>
+              ) : null}
             </View>
 
             <View style={{ marginTop: tokens.spacing.base }}>
