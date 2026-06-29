@@ -55,7 +55,7 @@ interface StoreValue {
   isAuthenticated: boolean;
   signup: (data: Partial<User> & { password: string }) => Promise<void>;
   verifyOtp: (code: string) => Promise<boolean>;
-  login: (email: string, password: string) => Promise<boolean>;
+  login: (email: string, password: string) => Promise<'ok' | 'unverified' | 'invalid'>;
   logout: () => void;
   deleteAccount: () => Promise<void>;
   updateProfile: (patch: Partial<User>) => Promise<void>;
@@ -276,17 +276,21 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     }
   }, [pendingDest, loadAll]);
 
-  const login = useCallback(async (email: string, password: string) => {
+  const login = useCallback(async (email: string, password: string): Promise<'ok' | 'unverified' | 'invalid'> => {
     try {
       const session = await loginApi(email.toLowerCase(), password);
       await setSession(session);
       setUser(session.user);
       await loadAll(session.user);
-      return true;
+      return 'ok';
     } catch (e: any) {
-      // Unverified accounts get a fresh code from the server; route to OTP.
-      if (e?.status === 403) setPendingDest(email.toLowerCase());
-      return false;
+      // Unverified accounts get a fresh code from the server; tell the screen to
+      // route to OTP (pendingDest is what verifyOtp() will confirm).
+      if (e?.status === 403) {
+        setPendingDest(email.toLowerCase());
+        return 'unverified';
+      }
+      return 'invalid';
     }
   }, [loadAll]);
 
@@ -349,6 +353,7 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       ...(d.hours != null ? { hours: d.hours } : {}),
     });
     setActiveFavor(favor);
+    setDraftFavor(null); // clear the draft so the next favor starts fresh
     void getFavorsApi().then(({ favors }) => setHistory(favors)).catch(() => undefined);
     return favor;
   }, [draftFavor]);

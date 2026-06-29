@@ -6,6 +6,7 @@ import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context'
 import { Ionicons } from '@expo/vector-icons';
 import { Txt, InfoModal, Avatar } from '../components';
 import { useStore } from '../store';
+import { getIncomingApi } from '../api/endpoints';
 import { computePayout, FAVOR_TIERS, Favor } from '../types';
 import { lightTheme, fonts, tokens } from '../theme';
 
@@ -21,6 +22,7 @@ const DIVIDER = lightTheme.divider;      // hairline dividers
 const TEXT = lightTheme.text;            // primary text
 const MUTED = lightTheme.textTertiary;   // placeholder / tertiary text
 const BORDER = lightTheme.border;        // card / field borders
+const SUCCESS = lightTheme.success;      // success/checkmark green (#02CB00)
 
 const CHARACTERS = require('../../assets/img/onboarding/launch-people.png');
 
@@ -46,7 +48,7 @@ function MapBackdrop() {
   );
 }
 
-function MapTopBar({ navigation, banner }: any) {
+function MapTopBar({ navigation, banner, onBack }: any) {
   const insets = useSafeAreaInsets();
   return (
     <View style={{ position: 'absolute', top: insets.top + 8, left: 0, right: 0, paddingHorizontal: 16 }}>
@@ -57,8 +59,16 @@ function MapTopBar({ navigation, banner }: any) {
         </View>
       ) : (
         <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
-          <TouchableOpacity style={st.iconBtn} onPress={() => navigation.navigate('SideDrawer')}>
-            <Ionicons name="menu" size={22} color="#141414" />
+          {/* Neutral back so a pal can leave the detail without declining. */}
+          {onBack ? (
+            <TouchableOpacity style={st.iconBtn} onPress={onBack} accessibilityRole="button" accessibilityLabel="Go back">
+              <Ionicons name="chevron-back" size={22} color={TEXT} />
+            </TouchableOpacity>
+          ) : (
+            <View style={{ width: 40 }} />
+          )}
+          <TouchableOpacity style={st.iconBtn} onPress={() => navigation.navigate('SideDrawer')} accessibilityRole="button" accessibilityLabel="Open menu">
+            <Ionicons name="menu" size={22} color={TEXT} />
           </TouchableOpacity>
         </View>
       )}
@@ -179,24 +189,33 @@ export const BrowseFavors = ({ navigation }: any) => {
   const s = useStore();
   const insets = useSafeAreaInsets();
   const [refreshing, setRefreshing] = useState(false);
+  const [errored, setErrored] = useState(false);
   const [sort, setSort] = useState<SortKey>('new');
   const [tier, setTier] = useState('all');
   const favors = s.incomingFavors;
 
+  // The store's refreshIncoming() swallows network errors, so a probe of the
+  // same endpoint (run in parallel) tells us whether the fetch actually failed,
+  // letting us show a distinct error state instead of the empty state.
+  const load = useCallback(async () => {
+    const [probe] = await Promise.allSettled([getIncomingApi(), s.refreshIncoming()]);
+    setErrored(probe.status === 'rejected');
+  }, [s]);
+
   // #3 — keep the board fresh: refresh on open, whenever it regains focus, and
   // on a gentle interval so new requests appear without manual action.
   useEffect(() => {
-    void s.refreshIncoming();
-    const unsub = navigation.addListener('focus', () => { void s.refreshIncoming(); });
+    void load();
+    const unsub = navigation.addListener('focus', () => { void load(); });
     const id = setInterval(() => { void s.refreshIncoming(); }, 15000);
     return () => { unsub(); clearInterval(id); };
   }, [navigation]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const onRefresh = useCallback(async () => {
     setRefreshing(true);
-    await s.refreshIncoming();
+    await load();
     setRefreshing(false);
-  }, [s]);
+  }, [load]);
 
   // #2 — filter by tier + sort by recency/payout. (Server returns newest-first.)
   const shown = useMemo(() => {
@@ -244,13 +263,25 @@ export const BrowseFavors = ({ navigation }: any) => {
         contentContainerStyle={{ padding: 16, paddingBottom: insets.bottom + 24, flexGrow: 1 }}
         refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={RED} />}
         ListEmptyComponent={
-          <View style={bw.empty}>
-            <Ionicons name="file-tray-outline" size={56} color={SUBTLE} />
-            <Text style={bw.emptyTitle}>{favors.length ? 'No favors match these filters' : 'No open favors right now'}</Text>
-            <Text style={bw.emptySub}>
-              {favors.length ? 'Try clearing the filters above.' : 'Pull down to refresh — new requests appear here as members post them.'}
-            </Text>
-          </View>
+          errored && favors.length === 0 ? (
+            <View style={bw.empty}>
+              <Ionicons name="cloud-offline-outline" size={56} color={SUBTLE} />
+              <Text style={bw.emptyTitle}>Couldn{'’'}t load favors</Text>
+              <Text style={bw.emptySub}>Check your connection and try again.</Text>
+              <TouchableOpacity onPress={onRefresh} style={bw.retryBtn} accessibilityRole="button" accessibilityLabel="Retry loading favors">
+                <Ionicons name="refresh" size={16} color="#fff" />
+                <Text style={bw.retryText}>Retry</Text>
+              </TouchableOpacity>
+            </View>
+          ) : (
+            <View style={bw.empty}>
+              <Ionicons name="file-tray-outline" size={56} color={SUBTLE} />
+              <Text style={bw.emptyTitle}>{favors.length ? 'No favors match these filters' : 'No open favors right now'}</Text>
+              <Text style={bw.emptySub}>
+                {favors.length ? 'Try clearing the filters above.' : 'Pull down to refresh — new requests appear here as members post them.'}
+              </Text>
+            </View>
+          )
         }
       />
     </View>
@@ -287,6 +318,8 @@ const bw = StyleSheet.create({
   empty: { flex: 1, alignItems: 'center', justifyContent: 'center', paddingTop: 80, paddingHorizontal: 32 },
   emptyTitle: { color: TEXT, fontSize: 17, fontWeight: '700', marginTop: 16, fontFamily: fonts.display },
   emptySub: { color: SUBTLE, fontSize: 14, textAlign: 'center', marginTop: 8, lineHeight: 20, fontFamily: fonts.bodyRegular },
+  retryBtn: { flexDirection: 'row', alignItems: 'center', gap: 6, backgroundColor: RED, borderRadius: 999, paddingHorizontal: 18, paddingVertical: 10, marginTop: 18 },
+  retryText: { color: '#fff', fontWeight: '700', fontSize: 14, fontFamily: fonts.bodyBold },
 });
 
 // ===========================================================================
@@ -318,7 +351,7 @@ export const PalFavorDetail = ({ navigation, route }: any) => {
     return (
       <View style={{ flex: 1, backgroundColor: PAGE_BG }}>
         <MapBackdrop />
-        <MapTopBar navigation={navigation} />
+        <MapTopBar navigation={navigation} onBack={() => navigation.goBack()} />
         <View style={st.sheet}>
           <Handle />
           <View style={{ alignItems: 'center', paddingVertical: 24 }}>
@@ -339,7 +372,7 @@ export const PalFavorDetail = ({ navigation, route }: any) => {
   return (
     <View style={{ flex: 1, backgroundColor: PAGE_BG }}>
       <MapBackdrop />
-      <MapTopBar navigation={navigation} />
+      <MapTopBar navigation={navigation} onBack={() => navigation.goBack()} />
       <View style={st.sheet}>
         <Handle />
         <Txt variant="h3" color={TEXT} center style={{ marginVertical: 14 }}>{title}</Txt>
@@ -464,7 +497,7 @@ export const Navigation = ({ navigation }: any) => {
           style={st.blackBtn}
           accessibilityRole="button"
           accessibilityLabel="Cancel this favor"
-          onPress={() => { s.cancelFavor(); navigation.navigate('Tabs'); }}
+          onPress={() => { s.cancelFavor(); navigation.reset({ index: 0, routes: [{ name: 'Tabs' }] }); }}
         >
           <Text style={{ color: TEXT, fontWeight: '700', letterSpacing: 0.5, fontFamily: fonts.bodySemiBold }}>CANCEL THIS FAVOR</Text>
         </TouchableOpacity>
@@ -544,12 +577,18 @@ export const PalFavorInProgress = ({ navigation }: any) => {
         <Section icon="document-text" title="Description" body={description} />
         <Section icon="location" title="Address" body={address} />
         <TouchableOpacity
-          style={st.whiteBtn}
+          style={[st.whiteBtn, { opacity: fav ? 1 : 0.5 }]}
+          disabled={!fav}
           accessibilityRole="button"
           accessibilityLabel="Mark favor done and get paid"
+          accessibilityState={{ disabled: !fav }}
           onPress={() => {
+            // Guard: never let a null favor produce a phantom payout.
+            if (!s.activeFavor) return;
             const earned = s.finishFavorAsPal();
-            navigation.navigate('PalFavorSuccess', { payout: earned });
+            // Terminal transition: reset so backing out lands on Tabs (not this
+            // now-stale in-progress screen) and can't refire "You got paid".
+            navigation.reset({ index: 1, routes: [{ name: 'Tabs' }, { name: 'PalFavorSuccess', params: { payout: earned } }] });
           }}
         >
           <Text style={st.whiteBtnTxt}>MARK FAVOR DONE</Text>
@@ -589,7 +628,7 @@ export const PalFavorSuccess = ({ navigation, route }: any) => {
   return (
     <SafeAreaView edges={['top', 'bottom']} style={{ flex: 1, backgroundColor: PAGE_BG }}>
       <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 24 }}>
-        <Ionicons name="checkmark-circle-outline" size={120} color="#4CAF50" />
+        <Ionicons name="checkmark-circle-outline" size={120} color={SUCCESS} />
         <Txt variant="h2" color={TEXT} center style={{ marginTop: 24 }}>
           {paid ? `You just got paid $${payout.toFixed(2)}!` : 'You just got paid!'}
         </Txt>
@@ -608,6 +647,15 @@ export const PalFavorSuccess = ({ navigation, route }: any) => {
         >
           <Text style={st.whiteBtnTxt}>ADD FEEDBACK</Text>
         </TouchableOpacity>
+        {/* Feedback is optional — a neutral exit so the pal is never trapped. */}
+        <TouchableOpacity
+          style={st.blackBtn}
+          accessibilityRole="button"
+          accessibilityLabel="Done"
+          onPress={() => navigation.reset({ index: 0, routes: [{ name: 'Tabs' }] })}
+        >
+          <Text style={{ color: TEXT, fontWeight: '700', letterSpacing: 0.5, fontFamily: fonts.bodySemiBold }}>DONE</Text>
+        </TouchableOpacity>
       </View>
     </SafeAreaView>
   );
@@ -624,8 +672,10 @@ export const PalFavorComplete = ({ navigation }: any) => {
   // MEMBER (the reverse review), persisted via rateMember().
   const onSubmit = () => {
     if (rating) s.rateMember(rating, feedback);
-    navigation.navigate('Tabs');
+    navigation.reset({ index: 0, routes: [{ name: 'Tabs' }] });
   };
+  // Rating the member is optional — let the pal leave without being forced to rate.
+  const skip = () => navigation.reset({ index: 0, routes: [{ name: 'Tabs' }] });
   return (
     <SafeAreaView edges={['top', 'bottom']} style={{ flex: 1, backgroundColor: PAGE_BG }}>
       <ScrollView contentContainerStyle={{ paddingHorizontal: 24, paddingBottom: 24, flexGrow: 1 }}>
@@ -671,6 +721,14 @@ export const PalFavorComplete = ({ navigation }: any) => {
           onPress={onSubmit}
         >
           <Text style={st.whiteBtnTxt}>SUBMIT FEEDBACK</Text>
+        </TouchableOpacity>
+        <TouchableOpacity
+          onPress={skip}
+          style={{ alignSelf: 'center', marginTop: 16, paddingVertical: 6 }}
+          accessibilityRole="button"
+          accessibilityLabel="Skip rating and return home"
+        >
+          <Text style={{ color: SUBTLE, fontWeight: '600', fontFamily: fonts.bodySemiBold }}>Maybe later</Text>
         </TouchableOpacity>
       </ScrollView>
     </SafeAreaView>

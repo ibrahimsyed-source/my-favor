@@ -26,9 +26,29 @@ function timeAgo(ms: number, now: number) {
 // Notifications — the inbox that renders the previously-dead notification model.
 export function Notifications({ navigation }: any) {
   const { theme } = useTheme();
-  const { notifications, markNotificationRead, markAllNotificationsRead, refreshNotifications } = useStore();
-  const now = notifications.reduce((mx, n) => Math.max(mx, n.date), 0) + 300000;
+  const { notifications, markNotificationRead, markAllNotificationsRead, refreshNotifications, activeFavor } = useStore();
+  // Anchor relative timestamps to the real clock so a day-old item reads "1d",
+  // not "5m" relative to the newest notification.
+  const now = Date.now();
   const hasUnread = notifications.some((n) => !n.read);
+
+  // Mark read, then deep-link to the related favor when one is implied by type.
+  const handlePress = (item: AppNotification) => {
+    markNotificationRead(item.id);
+    switch (item.type) {
+      case 'match':
+      case 'arrived':
+        if (activeFavor) navigation.navigate('FavorTracking');
+        else navigation.navigate('Tabs', { screen: 'History' });
+        break;
+      case 'cancellation':
+      case 'no_pal':
+        navigation.navigate('Tabs', { screen: 'History' });
+        break;
+      default:
+        break; // 'general' — no destination, mark-read only
+    }
+  };
 
   // Pull fresh notifications on open + whenever the screen regains focus.
   useEffect(() => {
@@ -66,7 +86,7 @@ export function Notifications({ navigation }: any) {
           renderItem={({ item }) => (
             <TouchableOpacity
               activeOpacity={0.7}
-              onPress={() => markNotificationRead(item.id)}
+              onPress={() => handlePress(item)}
               accessibilityRole="button"
               accessibilityLabel={`${item.title}. ${item.body}${item.read ? '' : '. Unread'}`}
               style={{

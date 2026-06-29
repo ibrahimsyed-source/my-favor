@@ -94,7 +94,10 @@ export function Welcome({ navigation }: any) {
         <View style={{ flex: 1, justifyContent: 'center' }}>
           <Txt variant="body" center style={{ fontSize: 28, lineHeight: 40 }}>
             Ask for all the favors you need, or earn{' '}
-            <Text style={{ color: theme.success, fontFamily: fonts.bodyBold }}>$$</Text> doing favors for others.
+            {/* Emphasis only via weight — the bright #02CB00 green failed contrast
+                (~2.2:1 on white) and isn't in the Figma, which shows a plain black
+                "$$". theme.text keeps it figma-faithful and high-contrast (~16:1). */}
+            <Text style={{ color: theme.text, fontFamily: fonts.bodyBold }}>$$</Text> doing favors for others.
           </Txt>
           <Txt variant="body" color={theme.textSecondary} center style={{ marginTop: 16 }}>
             How would you like to start?

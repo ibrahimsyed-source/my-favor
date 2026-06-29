@@ -1,11 +1,14 @@
 import React, { useEffect, useRef, useState } from 'react';
 import {
   View, Text, TextInput, TouchableOpacity, ScrollView, Image, StyleSheet, ViewStyle,
+  KeyboardAvoidingView, Platform,
 } from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { Screen, TopBar, Txt, Button, Field } from '../components';
 import { useTheme, tokens, fonts } from '../theme';
 import { useStore } from '../store';
+import { resendOtpApi } from '../api/endpoints';
 
 const logo = require('../../assets/img/logo.png');
 
@@ -86,8 +89,15 @@ export const Login = ({ navigation }: any) => {
     setSubmitting(true);
     setError('');
     try {
-      const ok = await s.login(email, password);
-      if (!ok) setError('Invalid email or password.');
+      const r = await s.login(email, password);
+      if (r === 'unverified') {
+        // Correct password but the account was never verified — route the user
+        // to OTP (same param shape the signup flow uses) instead of falsely
+        // claiming bad credentials.
+        navigation.navigate('OtpVerify', { destination: email.trim().toLowerCase() });
+      } else if (r === 'invalid') {
+        setError('Invalid email or password.');
+      }
     } catch (e) {
       setError('Could not sign in. Please try again.');
     } finally {
@@ -183,8 +193,21 @@ export const ForgotPassword = ({ navigation }: any) => {
 // 3. New Password — new + confirm password (eye toggles), black SUBMIT.
 // ---------------------------------------------------------------------------
 export const NewPassword = ({ navigation }: any) => {
+  const { theme } = useTheme();
   const [pw, setPw] = useState('');
   const [confirm, setConfirm] = useState('');
+  const [error, setError] = useState('');
+
+  // Enforce the matching/length the confirm field implies before reporting
+  // success — previously SUBMIT navigated to Login with zero validation.
+  const onSubmit = () => {
+    if (!pw || !confirm) { setError('Please enter and confirm your new password.'); return; }
+    if (pw.length < 6) { setError('Password must be at least 6 characters.'); return; }
+    if (pw !== confirm) { setError('Passwords do not match.'); return; }
+    setError('');
+    navigation.navigate('Login');
+  };
+
   return (
     <Screen padded={false}>
       <TopBar title="New Password" onBack={navigation.canGoBack() ? navigation.goBack : undefined} />
@@ -195,10 +218,15 @@ export const NewPassword = ({ navigation }: any) => {
         <Txt variant="h4" center style={{ fontSize: 22, lineHeight: 30, marginTop: tokens.spacing.lg, marginBottom: tokens.spacing.xxl }}>
           Enter your new password
         </Txt>
-        <PasswordField label="New Password" value={pw} onChangeText={setPw} placeholder="Enter New Password" />
-        <PasswordField label="Confirm New Password" value={confirm} onChangeText={setConfirm} placeholder="Confirm New Password" />
+        <PasswordField label="New Password" value={pw} onChangeText={(t) => { setPw(t); setError(''); }} placeholder="Enter New Password" />
+        <PasswordField label="Confirm New Password" value={confirm} onChangeText={(t) => { setConfirm(t); setError(''); }} placeholder="Confirm New Password" />
+        {error ? (
+          <Txt variant="bodySm" color={theme.danger} style={{ marginTop: tokens.spacing.sm }}>
+            {error}
+          </Txt>
+        ) : null}
         <View style={{ flex: 1 }} />
-        <Button title="SUBMIT" variant="primary" onPress={() => navigation.navigate('Login')} />
+        <Button title="SUBMIT" variant="primary" onPress={onSubmit} />
       </ScrollView>
     </Screen>
   );
@@ -248,26 +276,17 @@ export const Signup = ({ navigation, route }: any) => {
         contentContainerStyle={{ padding: tokens.spacing.lg, paddingBottom: tokens.spacing.xxl }}
         keyboardShouldPersistTaps="handled"
       >
-        {/* Avatar with red plus badge */}
+        {/* Avatar placeholder. Photo-at-signup is out of scope (no picker wired
+            here), so we render a plain, non-interactive placeholder rather than a
+            fake tappable "+" badge that did nothing. */}
         <View style={{ alignItems: 'center', marginTop: tokens.spacing.sm, marginBottom: tokens.spacing.xl }}>
-          <View style={{ width: 140, height: 140 }}>
-            <View
-              style={{
-                width: 140, height: 140, borderRadius: 70, backgroundColor: theme.surfaceAlt,
-                alignItems: 'center', justifyContent: 'center',
-              }}
-            >
-              <Ionicons name="person" size={62} color="#B7B7B7" />
-            </View>
-            <TouchableOpacity
-              activeOpacity={0.85}
-              style={{
-                position: 'absolute', bottom: 6, right: 2, width: 44, height: 44, borderRadius: 22,
-                backgroundColor: theme.primary, alignItems: 'center', justifyContent: 'center',
-              }}
-            >
-              <Ionicons name="add" size={26} color="#FFFFFF" />
-            </TouchableOpacity>
+          <View
+            style={{
+              width: 140, height: 140, borderRadius: 70, backgroundColor: theme.surfaceAlt,
+              alignItems: 'center', justifyContent: 'center',
+            }}
+          >
+            <Ionicons name="person" size={62} color="#B7B7B7" />
           </View>
         </View>
 
@@ -290,15 +309,22 @@ export const Signup = ({ navigation, route }: any) => {
           autoCapitalize="none"
         />
 
-        {/* Phone with US flag + +1 dropdown */}
+        {/* Phone with a fixed US +1 prefix. Non-interactive (there's no country
+            picker), and uses plain "US" rather than the regional-indicator flag
+            emoji, which degrades to bare letters on Windows/web and to tofu boxes
+            on some Android builds — matching profile.tsx's PhoneField. */}
         <FieldBox label="Phone Number">
-          <TouchableOpacity activeOpacity={0.7} style={{ flexDirection: 'row', alignItems: 'center' }}>
-            <Text style={{ fontSize: 22 }}>🇺🇸</Text>
-            <Txt variant="body" style={{ marginLeft: 6, marginRight: 4 }}>+1</Txt>
-            <Ionicons name="chevron-down" size={16} color={theme.text} />
-          </TouchableOpacity>
+          <View
+            style={{ flexDirection: 'row', alignItems: 'center' }}
+            accessibilityLabel="Country code, United States, plus 1"
+          >
+            <Txt color={theme.text} style={{ fontSize: 13, fontFamily: fonts.bodyBold }}>US</Txt>
+            <Txt color={theme.text} style={{ fontSize: 16, marginLeft: 8, marginRight: 4 }}>+1</Txt>
+            <Ionicons name="chevron-down" size={16} color={theme.textSecondary} />
+            <View style={{ width: 1, height: 24, backgroundColor: theme.divider, marginHorizontal: 12 }} />
+          </View>
           <TextInput
-            style={{ flex: 1, color: theme.text, fontSize: 16, marginLeft: 12 }}
+            style={{ flex: 1, color: theme.text, fontSize: 16 }}
             value={phone}
             onChangeText={setPhone}
             placeholder="0000 - 000 - 000"
@@ -321,12 +347,12 @@ export const Signup = ({ navigation, route }: any) => {
         >
           <View
             style={{
-              width: 24, height: 24, borderRadius: 5, borderWidth: 2, borderColor: theme.text,
+              width: 24, height: 24, borderRadius: 5, borderWidth: 2, borderColor: theme.cta,
               alignItems: 'center', justifyContent: 'center', marginRight: tokens.spacing.md,
-              backgroundColor: agree ? theme.text : 'transparent',
+              backgroundColor: agree ? theme.cta : 'transparent',
             }}
           >
-            {agree ? <Ionicons name="checkmark" size={16} color="#FFFFFF" /> : null}
+            {agree ? <Ionicons name="checkmark" size={16} color={theme.ctaText} /> : null}
           </View>
           <Txt variant="body">
             I agree to the{' '}
@@ -379,10 +405,13 @@ export const OtpVerify = ({ navigation, route }: any) => {
   const s = useStore();
   const [code, setCode] = useState(['', '', '', '', '', '']);
   const [error, setError] = useState('');
+  const [notice, setNotice] = useState('');
   const [submitting, setSubmitting] = useState(false);
+  const [resending, setResending] = useState(false);
   const [seconds, setSeconds] = useState(OTP_SECONDS);
   const inputs = useRef<Array<TextInput | null>>([]);
-  const maskedDest = maskDestination(route?.params?.destination);
+  const dest: string | undefined = route?.params?.destination;
+  const maskedDest = maskDestination(dest);
 
   // Real countdown (was a frozen "00:43" string). Ticks down to 0, then stops
   // and unlocks Resend.
@@ -398,6 +427,7 @@ export const OtpVerify = ({ navigation, route }: any) => {
   const setDigit = (i: number, v: string) => {
     const ch = v.replace(/[^0-9]/g, '').slice(-1);
     setError('');
+    setNotice('');
     setCode((prev) => {
       const next = [...prev];
       next[i] = ch;
@@ -418,6 +448,7 @@ export const OtpVerify = ({ navigation, route }: any) => {
     if (submitting) return;
     setSubmitting(true);
     setError('');
+    setNotice('');
     try {
       const ok = await s.verifyOtp(code.join(''));
       if (!ok) {
@@ -431,14 +462,26 @@ export const OtpVerify = ({ navigation, route }: any) => {
     }
   };
 
-  // Working Resend: re-triggers the (mock) send by clearing the boxes and
-  // resetting the countdown. Disabled until the current code expires.
-  const onResend = () => {
-    if (seconds > 0) return;
-    setCode(['', '', '', '', '', '']);
+  // Working Resend: actually requests a fresh code from the backend (so an
+  // expired code is replaced), then clears the boxes, restarts the countdown,
+  // and surfaces a brief "code sent" confirmation. Disabled until the current
+  // code expires.
+  const onResend = async () => {
+    if (seconds > 0 || resending) return;
+    setResending(true);
     setError('');
-    setSeconds(OTP_SECONDS);
-    inputs.current[0]?.focus();
+    setNotice('');
+    try {
+      if (dest) await resendOtpApi(dest, 'signup');
+      setCode(['', '', '', '', '', '']);
+      setSeconds(OTP_SECONDS);
+      setNotice('A new code has been sent.');
+      inputs.current[0]?.focus();
+    } catch (e) {
+      setError('Could not resend the code. Please try again.');
+    } finally {
+      setResending(false);
+    }
   };
 
   const onClose = () => {
@@ -446,9 +489,21 @@ export const OtpVerify = ({ navigation, route }: any) => {
   };
 
   return (
-    <View style={styles.overlay}>
-      <View style={styles.modalCard}>
-        {/* Close affordance so the screen isn't a dead-end. */}
+    <KeyboardAvoidingView
+      style={styles.overlay}
+      behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+    >
+      <SafeAreaView style={{ flex: 1, width: '100%' }} edges={['top', 'bottom']}>
+        <ScrollView
+          contentContainerStyle={{
+            flexGrow: 1, justifyContent: 'center', alignItems: 'center',
+            paddingHorizontal: tokens.spacing.xl, paddingVertical: tokens.spacing.xl,
+          }}
+          keyboardShouldPersistTaps="handled"
+          showsVerticalScrollIndicator={false}
+        >
+          <View style={[styles.modalCard, { backgroundColor: theme.card }]}>
+            {/* Close affordance so the screen isn't a dead-end. */}
         <TouchableOpacity
           onPress={onClose}
           hitSlop={10}
@@ -503,28 +558,36 @@ export const OtpVerify = ({ navigation, route }: any) => {
         </Txt>
         <TouchableOpacity
           onPress={onResend}
-          disabled={seconds > 0}
+          disabled={seconds > 0 || resending}
           hitSlop={8}
           style={{ alignSelf: 'center', marginTop: 4 }}
           accessibilityRole="button"
           accessibilityLabel="Resend code"
-          accessibilityState={{ disabled: seconds > 0 }}
+          accessibilityState={{ disabled: seconds > 0 || resending }}
         >
-          <Txt variant="body" color={seconds > 0 ? theme.textTertiary : theme.text} style={{ fontFamily: fonts.bodyBold }}>
-            Resend
+          <Txt variant="body" color={seconds > 0 || resending ? theme.textTertiary : theme.text} style={{ fontFamily: fonts.bodyBold }}>
+            {resending ? 'Sending…' : 'Resend'}
           </Txt>
         </TouchableOpacity>
 
-        <Button
-          title="VERIFY"
-          variant="primary"
-          onPress={onVerify}
-          loading={submitting}
-          disabled={submitting}
-          style={{ marginTop: tokens.spacing.lg }}
-        />
-      </View>
-    </View>
+        {notice ? (
+          <Txt variant="bodySm" center color={theme.success} style={{ marginTop: tokens.spacing.sm }}>
+            {notice}
+          </Txt>
+        ) : null}
+
+            <Button
+              title="VERIFY"
+              variant="primary"
+              onPress={onVerify}
+              loading={submitting}
+              disabled={submitting}
+              style={{ marginTop: tokens.spacing.lg }}
+            />
+          </View>
+        </ScrollView>
+      </SafeAreaView>
+    </KeyboardAvoidingView>
   );
 };
 
@@ -546,7 +609,6 @@ const styles = StyleSheet.create({
   modalCard: {
     width: '100%',
     maxWidth: 360,
-    backgroundColor: '#FFFFFF',
     borderRadius: tokens.radius.xl,
     paddingVertical: tokens.spacing.xl,
     paddingHorizontal: tokens.spacing.xl,

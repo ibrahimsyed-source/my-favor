@@ -68,7 +68,11 @@ export default function RootNavigator() {
           <Stack.Screen name="SignupLogin" component={Onb.SignupLogin} />
           <Stack.Screen name="Login" component={AuthF.Login} />
           <Stack.Screen name="Signup" component={AuthF.Signup} />
-          <Stack.Screen name="OtpVerify" component={AuthF.OtpVerify} />
+          <Stack.Screen
+            name="OtpVerify"
+            component={AuthF.OtpVerify}
+            options={{ presentation: 'transparentModal', animation: 'fade' }}
+          />
           <Stack.Screen name="ForgotPassword" component={AuthF.ForgotPassword} />
           <Stack.Screen name="NewPassword" component={AuthF.NewPassword} />
           {/* Reachable from the signup Terms link before authentication. */}

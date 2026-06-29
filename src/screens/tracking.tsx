@@ -81,21 +81,18 @@ export const FavorTracking = ({ navigation }: any) => {
     }).catch(() => {});
   };
 
-  // Real map of the favor location when a Google Maps key is configured; the
-  // dark backdrop remains otherwise (so the UI is unaffected without a key).
-  const mapsKey = process.env.EXPO_PUBLIC_GOOGLE_MAPS_KEY;
-
   return (
     <SafeAreaView style={{ flex: 1, backgroundColor: theme.background }} edges={['top', 'bottom']}>
-      {mapsKey && fav?.location ? (
-        <View style={{ position: 'absolute', top: 0, left: 0, right: 0, height: 440 }} pointerEvents="none">
-          <StaticMap lat={fav.location.lat} lng={fav.location.lng} height={440} zoom={14} />
-        </View>
-      ) : null}
+      {/* Live-tracking map backdrop. StaticMap renders the real Google Static
+          Map when a key + coords are present and falls back to the styled
+          MapPlaceholder grid otherwise, so the area always reads as a map. */}
+      <View style={{ position: 'absolute', top: 0, left: 0, right: 0, height: 440 }} pointerEvents="none">
+        <StaticMap lat={fav?.location?.lat} lng={fav?.location?.lng} height={440} zoom={14} />
+      </View>
       {/* Top nav banner over the (light) map */}
       <View style={styles.navRow}>
         <TouchableOpacity
-          style={[styles.menuBtn, { backgroundColor: theme.card, borderColor: theme.border }]}
+          style={[styles.menuBtn, { backgroundColor: theme.card, borderColor: theme.divider }, tokens.shadow.card]}
           activeOpacity={0.8}
           onPress={() => navigation.navigate('SideDrawer')}
           accessibilityRole="button"
@@ -148,9 +145,16 @@ export const FavorTracking = ({ navigation }: any) => {
               <Txt variant="caption" color={theme.textSecondary} style={{ marginTop: 2 }}>
                 {dateLabel}
               </Txt>
-              <TouchableOpacity activeOpacity={0.7}>
-                <Txt variant="caption" color={RED} style={{ marginTop: 4 }}>View More</Txt>
-              </TouchableOpacity>
+              {fav ? (
+                <TouchableOpacity
+                  activeOpacity={0.7}
+                  onPress={() => navigation.navigate('FavorHistoryDetail', { favorId: fav.id })}
+                  accessibilityRole="button"
+                  accessibilityLabel="View favor details"
+                >
+                  <Txt variant="caption" color={theme.primaryDark} style={{ marginTop: 4 }}>View More</Txt>
+                </TouchableOpacity>
+              ) : null}
             </View>
           </View>
 
@@ -190,15 +194,20 @@ export const FavorTracking = ({ navigation }: any) => {
             {statusLabel}
           </Txt>
 
-          <TouchableOpacity
-            style={[styles.cancelPill, { borderColor: theme.border }]}
-            activeOpacity={0.8}
-            onPress={onCancel}
-            accessibilityRole="button"
-            accessibilityLabel="Cancel favor"
-          >
-            <Txt variant="button" color={theme.text}>CANCEL FAVOR</Txt>
-          </TouchableOpacity>
+          {/* Cancel is only valid while the favor is still in progress — once it
+              is completed the action flips to "RATE YOUR PAL", so hide the pill
+              to avoid pushing a phantom 'cancelled' duplicate into History. */}
+          {!isCompleted ? (
+            <TouchableOpacity
+              style={[styles.cancelPill, { borderColor: theme.border }]}
+              activeOpacity={0.8}
+              onPress={onCancel}
+              accessibilityRole="button"
+              accessibilityLabel="Cancel favor"
+            >
+              <Txt variant="button" color={theme.text}>CANCEL FAVOR</Txt>
+            </TouchableOpacity>
+          ) : null}
 
           <View style={[styles.divider, { backgroundColor: theme.divider }]} />
 
@@ -257,7 +266,18 @@ export const FavorTracking = ({ navigation }: any) => {
                 title="MESSAGE PAL"
                 variant="secondary"
                 style={{ flex: 1 }}
-                onPress={() => navigation.navigate('Tabs', { screen: 'Messages' })}
+                onPress={async () => {
+                  // Open the direct thread with this Pal when possible; fall
+                  // back to the Messages list only if there's no pal/thread.
+                  if (pal) {
+                    const threadId = await s.openThreadWith(pal.id);
+                    if (threadId) {
+                      navigation.navigate('MessageThread', { threadId });
+                      return;
+                    }
+                  }
+                  navigation.navigate('Tabs', { screen: 'Messages' });
+                }}
               />
             )}
           </View>
@@ -285,7 +305,7 @@ export const FavorTracking = ({ navigation }: any) => {
             <View style={styles.homeBtn}>
               <Ionicons name="home" size={22} color={WHITE} />
             </View>
-            <Txt variant="tab" color={RED} style={{ marginTop: 4 }}>HOME</Txt>
+            <Txt variant="tab" color={theme.primaryDark} style={{ marginTop: 4 }}>HOME</Txt>
           </TouchableOpacity>
           <TouchableOpacity
             style={styles.tabItem}

@@ -1,9 +1,9 @@
 import React, { useState } from 'react';
-import { View, ScrollView, TouchableOpacity, StyleSheet } from 'react-native';
+import { View, ScrollView, TouchableOpacity, StyleSheet, Image } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useTheme, tokens } from '../theme';
 import {
-  Screen, Txt, Button, Field, Avatar, StarRating, TopBar,
+  Screen, Txt, Button, Field, Avatar, StarRating, TopBar, InfoModal,
 } from '../components';
 import { useStore } from '../store';
 import { FAVOR_TIERS, Favor, FavorStatus } from '../types';
@@ -120,7 +120,7 @@ export const History = ({ navigation }: any) => {
               key={h.id}
               activeOpacity={0.7}
               onPress={() => navigation.navigate('FavorHistoryDetail', { favorId: h.id })}
-              style={styles.listRow}
+              style={[styles.listRow, { borderBottomColor: theme.divider }]}
               accessibilityRole="button"
               accessibilityLabel={`${name}, ${tierLabel}, ${badge.label}. View favor details`}
             >
@@ -179,6 +179,7 @@ export const FavorHistoryDetail = ({ navigation, route }: any) => {
   const { theme } = useTheme();
   const s = useStore();
   const [message, setMessage] = useState('');
+  const [sent, setSent] = useState(false);
 
   const favorId: string | undefined = route?.params?.favorId;
   const favor: Favor = s.history.find((f) => f.id === favorId) ?? s.history[0];
@@ -207,6 +208,20 @@ export const FavorHistoryDetail = ({ navigation, route }: any) => {
     navigation.navigate('FavorSummary');
   };
 
+  // Send the support question into a real conversation with the assigned pal
+  // (the store's get-or-create thread + send), then confirm before clearing so
+  // the user knows the message went through instead of silently vanishing.
+  const sendMessage = async () => {
+    const text = message.trim();
+    if (!text) return;
+    if (pal?.id) {
+      const threadId = await s.openThreadWith(pal.id);
+      if (threadId) s.sendMessage(threadId, text);
+    }
+    setMessage('');
+    setSent(true);
+  };
+
   const Divider = () => <View style={[styles.divider, { backgroundColor: theme.divider }]} />;
 
   return (
@@ -216,7 +231,11 @@ export const FavorHistoryDetail = ({ navigation, route }: any) => {
         {/* ---- Header: type + schedule ---- */}
         <View style={styles.inline}>
           <View style={[styles.thumb, { backgroundColor: theme.surfaceAlt }]}>
-            <Ionicons name="paw" size={22} color={theme.textTertiary} />
+            {favor?.images?.[0] ? (
+              <Image source={{ uri: favor.images[0] }} style={styles.thumbImg} />
+            ) : (
+              <Ionicons name="cube" size={22} color={theme.textTertiary} />
+            )}
           </View>
           <View style={{ marginLeft: tokens.spacing.md }}>
             <Txt variant="label" style={{ fontSize: 17 }}>
@@ -381,8 +400,20 @@ export const FavorHistoryDetail = ({ navigation, route }: any) => {
         <Txt variant="caption" color={theme.textSecondary} style={{ textAlign: 'right', marginTop: -6, marginBottom: tokens.spacing.lg }}>
           700 characters max.
         </Txt>
-        <Button title="SEND" variant="primary" onPress={() => setMessage('')} />
+        <Button
+          title="SEND"
+          variant="primary"
+          disabled={!message.trim()}
+          onPress={sendMessage}
+        />
       </ScrollView>
+      <InfoModal
+        visible={sent}
+        title="Message sent"
+        message="Thanks for reaching out. We'll get back to you about this favor shortly."
+        buttonLabel="OK"
+        onClose={() => setSent(false)}
+      />
     </Screen>
   );
 };
@@ -394,7 +425,6 @@ const styles = StyleSheet.create({
     paddingHorizontal: tokens.spacing.lg,
     paddingVertical: tokens.spacing.lg,
     borderBottomWidth: StyleSheet.hairlineWidth,
-    borderBottomColor: '#E5E5E5',
   },
   rowBetween: {
     flexDirection: 'row',
@@ -418,6 +448,12 @@ const styles = StyleSheet.create({
     borderRadius: tokens.radius.sm,
     alignItems: 'center',
     justifyContent: 'center',
+    overflow: 'hidden',
+  },
+  thumbImg: {
+    width: '100%',
+    height: '100%',
+    borderRadius: tokens.radius.sm,
   },
   sectionHead: {
     flexDirection: 'row',

@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import {
-  View, Text, TextInput, TouchableOpacity, Pressable, ScrollView, Switch,
+  View, TextInput, TouchableOpacity, Pressable, ScrollView, Switch,
   StyleSheet, Image, KeyboardAvoidingView, Platform,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
@@ -255,22 +255,33 @@ export const EditProfile = ({ navigation }: any) => {
       }
     }
 
-    await s.updateProfile({
-      firstName, lastName, bio, email, phone,
-      homeAddress, city, state: stateName, zip, avatar,
-    });
+    try {
+      await s.updateProfile({
+        firstName, lastName, bio, email, phone,
+        homeAddress, city, state: stateName, zip, avatar,
+      });
+    } catch {
+      // updateProfile can reject on a network error — surface it instead of
+      // leaving the SAVE button looking dead.
+      setModal({
+        title: "Couldn't Save Changes",
+        message: 'Something went wrong while saving your profile. Please check your connection and try again.',
+      });
+      return;
+    }
 
     if (wantsPwChange) {
       setCurrentPw('');
       setNewPw('');
-      setModal({
-        title: 'Profile Updated',
-        message: 'Your changes were saved and your password was updated.',
-        success: true,
-      });
-      return;
     }
-    navigation.goBack();
+    // Always confirm a successful save (closeModal navigates back on success).
+    setModal({
+      title: 'Profile Updated',
+      message: wantsPwChange
+        ? 'Your changes were saved and your password was updated.'
+        : 'Your changes were saved.',
+      success: true,
+    });
   };
 
   const closeModal = () => {
@@ -348,7 +359,7 @@ export const EditProfile = ({ navigation }: any) => {
 // 3. Settings — light list (figma 97:4297)
 // ===========================================================================
 export const Settings = ({ navigation }: any) => {
-  const { theme, isDark, toggleDark } = useTheme();
+  const { theme } = useTheme();
   const s = useStore();
   const [push, setPush] = useState(true);
   const [emailN, setEmailN] = useState(false);
@@ -380,7 +391,6 @@ export const Settings = ({ navigation }: any) => {
         <Row icon="mail-outline" title="Email Notifications" right={<Switch value={emailN} onValueChange={setEmailN} trackColor={track} />} />
 
         <SectionLabel>Preferences</SectionLabel>
-        <Row icon="moon-outline" title="Dark Mode" right={<Switch value={isDark} onValueChange={toggleDark} trackColor={track} />} />
         <Row icon="location-outline" title="Location Services" right={<Switch value={loc} onValueChange={setLoc} trackColor={track} />} />
 
         <SectionLabel>Support</SectionLabel>
@@ -456,7 +466,7 @@ export const Help = ({ navigation }: any) => {
     <Screen padded={false}>
       <TopBar title="Help" onBack={() => navigation.goBack()} />
       <ScrollView contentContainerStyle={{ padding: 24 }} keyboardShouldPersistTaps="handled">
-        <Txt variant="h2" color="#586172">Need help or have a{'\n'}question?</Txt>
+        <Txt variant="h2" color={theme.text}>Need help or have a{'\n'}question?</Txt>
         <Txt variant="body" color={theme.textSecondary} style={{ marginTop: 10, marginBottom: 20 }}>
           Send us a message.
         </Txt>
@@ -584,7 +594,7 @@ export const SetStatus = ({ navigation }: any) => {
   return (
     <Pressable style={st.statusScrim} onPress={() => navigation.goBack()}>
       <Pressable style={[st.statusCard, { backgroundColor: theme.card }]} onPress={() => {}}>
-        <Text style={[st.statusTitle, { color: '#586172' }]}>Set Status</Text>
+        <Txt variant="h2" center color={theme.text} style={{ marginBottom: 18 }}>Set Status</Txt>
         <View style={[st.statusDivider, { backgroundColor: theme.divider }]} />
         {STATUS_OPTIONS.map((opt) => {
           const sel = current === opt.key;
@@ -598,8 +608,13 @@ export const SetStatus = ({ navigation }: any) => {
               accessibilityState={{ selected: sel, checked: sel }}
             >
               <View style={st.statusRow}>
-                <View style={[st.statusRadio, { borderColor: opt.dot === 'transparent' ? '#8A909B' : opt.dot, backgroundColor: opt.dot }]} />
-                <Text style={{ color: sel ? theme.text : '#6B7280', fontSize: 18, fontWeight: sel ? '700' : '400' }}>{opt.label}</Text>
+                <View style={[st.statusRadio, { borderColor: opt.dot === 'transparent' ? theme.textTertiary : opt.dot, backgroundColor: opt.dot }]} />
+                <Txt
+                  color={sel ? theme.text : theme.textSecondary}
+                  style={{ fontSize: 18, fontFamily: sel ? fonts.bodyBold : fonts.bodyRegular }}
+                >
+                  {opt.label}
+                </Txt>
               </View>
               <View style={[st.statusDivider, { backgroundColor: theme.divider }]} />
             </TouchableOpacity>
@@ -664,7 +679,6 @@ const st = StyleSheet.create({
   // SetStatus modal
   statusScrim: { flex: 1, backgroundColor: 'rgba(0,0,0,0.45)', alignItems: 'center', justifyContent: 'center', paddingHorizontal: 28 },
   statusCard: { width: '100%', borderRadius: 18, paddingVertical: 28, paddingHorizontal: 28 },
-  statusTitle: { fontSize: 26, fontWeight: '800', textAlign: 'center', marginBottom: 18 },
   statusDivider: { height: StyleSheet.hairlineWidth },
   statusRow: { flexDirection: 'row', alignItems: 'center', gap: 16, paddingVertical: 20 },
   statusRadio: { width: 16, height: 16, borderRadius: 8, borderWidth: 1.5 },

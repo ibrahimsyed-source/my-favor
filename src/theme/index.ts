@@ -1,5 +1,5 @@
-import React, { createContext, useContext, useMemo, useState } from 'react';
-import { lightTheme, darkTheme, AppTheme } from './colors';
+import React, { createContext, useContext, useMemo } from 'react';
+import { lightTheme, AppTheme } from './colors';
 import { typography } from './typography';
 import { spacing, radius, shadow } from './spacing';
 
@@ -19,15 +19,13 @@ const ThemeContext = createContext<ThemeContextValue>({
   toggleDark: () => {},
 });
 
+// The app ships a single, consistent light theme. (A dark palette still exists
+// in ./colors for reference, but there is no in-app toggle — every screen is
+// light, so the experience is uniform throughout.)
 export const ThemeProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
-  const [isDark, setIsDark] = useState(false);
   const value = useMemo(
-    () => ({
-      theme: isDark ? darkTheme : lightTheme,
-      isDark,
-      toggleDark: () => setIsDark((d) => !d),
-    }),
-    [isDark]
+    () => ({ theme: lightTheme, isDark: false, toggleDark: () => {} }),
+    []
   );
   return React.createElement(ThemeContext.Provider, { value }, children);
 };

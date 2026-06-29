@@ -25,6 +25,13 @@ const PAY_BLUE = '#2D6CE0';
 const FALLBACK_DESC = 'No description provided.';
 const FALLBACK_ADDRESS = '2099 Woodvine Rd, Lorman';
 
+// Schedule label: 'Now' for an immediate favor, otherwise the picked date/time
+// (same toLocaleString shape used on the Pal-side cards in pal.tsx).
+const formatSchedule = (ms?: number) =>
+  ms != null
+    ? new Date(ms).toLocaleString([], { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })
+    : 'Now';
+
 // ---------------------------------------------------------------------------
 // Shared: derive the favor summary from the draft (defaults to Tiny / $20).
 // Fees come from computeFees(base) so the summary, the pay button and the
@@ -43,7 +50,8 @@ function useFavorSummary() {
   const description = draftFavor?.description || FALLBACK_DESC;
   const address = draftFavor?.location?.address || FALLBACK_ADDRESS;
   const image = draftFavor?.images?.[0];
-  return { base, label, fees, payout, description, address, image, tier };
+  const scheduledFor = draftFavor?.scheduledFor;
+  return { base, label, fees, payout, description, address, image, tier, scheduledFor };
 }
 
 // ---------------------------------------------------------------------------
@@ -80,7 +88,7 @@ function CostRow({ left, right, bold }: { left: string; right: string; bold?: bo
 // ---------------------------------------------------------------------------
 function SummaryBody() {
   const { theme } = useTheme();
-  const { base, label, fees, payout, description, address, image, tier } = useFavorSummary();
+  const { base, label, fees, payout, description, address, image, tier, scheduledFor } = useFavorSummary();
   const tierImage = TIER_IMAGES[tier as string];
   return (
     <View style={styles.body}>
@@ -95,13 +103,23 @@ function SummaryBody() {
           )}
         </View>
         <View style={{ flex: 1, marginLeft: 16 }}>
-          <CostRow left={label} right={`$${base}`} bold />
+          <CostRow left={label} right={`$${base.toFixed(2)}`} bold />
           <CostRow left="Service Fee @ 2.9%" right={`$${fees.serviceFee.toFixed(2)}`} />
           <CostRow left="Transaction Fee" right={`$${fees.transactionFee.toFixed(2)}`} />
           <CostRow left="Total Cost" right={`$${fees.total.toFixed(2)}`} />
           <CostRow left="Favor Pal receives" right={`$${payout.toFixed(2)}`} />
         </View>
       </View>
+
+      <View style={[styles.divider, { backgroundColor: theme.divider }]} />
+
+      <View style={styles.sectionHead}>
+        <Ionicons name="time" size={22} color={theme.text} />
+        <Txt variant="h4" style={{ marginLeft: 12 }}>When</Txt>
+      </View>
+      <Txt variant="body" color={theme.textSecondary} style={{ marginTop: 10 }}>
+        {formatSchedule(scheduledFor)}
+      </Txt>
 
       <View style={[styles.divider, { backgroundColor: theme.divider }]} />
 
@@ -298,9 +316,14 @@ export const SelectPayment = ({ navigation }: any) => {
 // ===========================================================================
 export const Searching = ({ navigation }: any) => {
   const { theme } = useTheme();
-  const { pals, advanceFavor, assignPal } = useStore();
+  const { pals, advanceFavor, assignPal, activeFavor } = useStore();
   const matchedPal = pals[0];
   const palName = matchedPal?.firstName ?? 'a Favor Pal';
+
+  // A favor booked for a future time should NOT be matched/en-route the instant
+  // it is paid for — it stays "Scheduled" until its window. Only the immediate
+  // ("Now") flow runs the live-match simulation below.
+  const isScheduled = activeFavor?.scheduledFor != null && activeFavor.scheduledFor > Date.now();
 
   // Simulate the Pal accepting shortly after payment: bind the matched pal so the
   // tracking screen shows the same person named here, advance the favor to
@@ -308,13 +331,14 @@ export const Searching = ({ navigation }: any) => {
   // dump the member back onto this stale Searching modal). The "Choose another
   // Favor Pal" button below stays as the genuine impatient-user fallback.
   useEffect(() => {
+    if (isScheduled) return; // scheduled favors don't drive en-route tracking yet
     const t = setTimeout(() => {
       if (matchedPal) assignPal(matchedPal.id);
       else advanceFavor('matched');
       navigation.replace('FavorTracking');
     }, 2500);
     return () => clearTimeout(t);
-  }, [matchedPal, assignPal, advanceFavor, navigation]);
+  }, [isScheduled, matchedPal, assignPal, advanceFavor, navigation]);
 
   return (
     <View style={{ flex: 1 }}>
@@ -331,18 +355,40 @@ export const Searching = ({ navigation }: any) => {
 
       <View style={[StyleSheet.absoluteFill, styles.modalWrap]}>
         <View style={[styles.modalCard, tokens.shadow.card, { backgroundColor: theme.card }]}>
-          <Txt variant="h3" center>{`You have asked a favor from ${palName}`}</Txt>
-          <Txt variant="body" color={theme.textSecondary} center style={{ marginTop: 12 }}>
-            Please wait while we confirm.
-          </Txt>
-          <Txt variant="bodySm" color={theme.textSecondary} center style={{ marginTop: 16 }}>
-            Taking too long?
-          </Txt>
-          <Button
-            title="CHOOSE ANOTHER FAVOR PAL"
-            onPress={() => navigation.navigate('ProviderResults')}
-            style={{ marginTop: 16 }}
-          />
+          {isScheduled ? (
+            <>
+              <Ionicons
+                name="calendar"
+                size={40}
+                color={theme.primary}
+                style={{ alignSelf: 'center', marginBottom: 12 }}
+              />
+              <Txt variant="h3" center>Favor scheduled</Txt>
+              <Txt variant="body" color={theme.textSecondary} center style={{ marginTop: 12 }}>
+                {`We'll match you with a Favor Pal for ${formatSchedule(activeFavor?.scheduledFor)}.`}
+              </Txt>
+              <Button
+                title="BACK TO HOME"
+                onPress={() => navigation.popToTop()}
+                style={{ marginTop: 20 }}
+              />
+            </>
+          ) : (
+            <>
+              <Txt variant="h3" center>{`You have asked a favor from ${palName}`}</Txt>
+              <Txt variant="body" color={theme.textSecondary} center style={{ marginTop: 12 }}>
+                Please wait while we confirm.
+              </Txt>
+              <Txt variant="bodySm" color={theme.textSecondary} center style={{ marginTop: 16 }}>
+                Taking too long?
+              </Txt>
+              <Button
+                title="CHOOSE ANOTHER FAVOR PAL"
+                onPress={() => navigation.navigate('ProviderResults')}
+                style={{ marginTop: 16 }}
+              />
+            </>
+          )}
         </View>
       </View>
     </View>

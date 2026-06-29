@@ -75,7 +75,7 @@ export const Messages = ({ navigation }: any) => {
           >
             <Txt
               variant="bodySm"
-              color={onlyUnread ? '#FFFFFF' : theme.text}
+              color={onlyUnread ? theme.ctaText : theme.text}
               style={{ fontFamily: tokens.typography.label.fontFamily }}
             >
               Unread
@@ -145,16 +145,17 @@ const ThreadRow = React.memo<{ thread: Thread; onPress: () => void }>(({ thread,
 });
 
 // ---------------------------------------------------------------------------
-// MessageThread — dark chat thread (matches message-thread.png).
+// MessageThread — light chat thread, consistent with the rest of the app.
 // ---------------------------------------------------------------------------
 const C = {
-  bg: '#0D0A0A',
-  bar: '#171922',
-  pill: '#202333',
-  their: '#1F1D2B',
-  mine: '#32364B',
-  placeholder: '#838383',
-  text: '#FFFFFF',
+  bg: '#FFFFFF',
+  bar: '#F5F5F5',       // header border / input bar / action sheet surface
+  pill: '#FFFFFF',      // input pill (bordered) over the gray bar
+  border: '#E5E5E5',
+  their: '#F0F0F0',     // incoming bubble (dark text)
+  mine: '#FFE1E2',      // outgoing bubble — light brand tint (dark text)
+  placeholder: '#9A9A9A',
+  text: '#1A1A1A',
 };
 
 export const MessageThread = ({ navigation, route }: any) => {
@@ -337,7 +338,7 @@ export const MessageThread = ({ navigation, route }: any) => {
             <Ionicons name="happy-outline" size={24} color={C.placeholder} />
           </View>
           <TouchableOpacity onPress={send} hitSlop={8} style={tstyles.sendBtn}>
-            <Ionicons name="send" size={22} color={C.text} />
+            <Ionicons name="send" size={22} color="#ED1C24" />
           </TouchableOpacity>
         </View>
       </View>
@@ -464,6 +465,8 @@ const tstyles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     backgroundColor: C.pill,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: C.border,
     borderRadius: 24,
     minHeight: 48,
     paddingHorizontal: 16,

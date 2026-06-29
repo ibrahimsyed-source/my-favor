@@ -135,7 +135,7 @@ export function SelectFavor({ navigation }: any) {
         >
           <Ionicons name="information-circle-outline" size={16} color={theme.textSecondary} />
           <Txt variant="caption" color={theme.textSecondary} style={{ flex: 1, marginLeft: 6 }}>
-            You'll choose your Favor Pal next — review their profile before they start.
+            We'll match you with a nearby Favor Pal after checkout — you can switch to another Pal if you'd like.
           </Txt>
         </View>
 
@@ -263,6 +263,8 @@ export function FavorDescription({ navigation }: any) {
 // ---------------------------------------------------------------------------
 const HOURLY_RATE = 100; // $/hr — 2hrs => $200 (matches reference thumb).
 const BUBBLE = 48;
+const MIN_HOURS = 1; // A favor must cost something — no $0/0hr request.
+const MAX_HOURS = 24;
 
 // The slider + price bubble + derived labels own their own `hours` state and are
 // memoized, so dragging (which fires on every tick) never re-renders the parent
@@ -277,14 +279,14 @@ const PriceSlider = React.memo(function PriceSlider({
   const [hours, setHours] = useState(2);
   const [trackW, setTrackW] = useState(0);
 
-  const rounded = Math.round(hours);
+  const rounded = Math.max(MIN_HOURS, Math.round(hours));
   const price = rounded * HOURLY_RATE;
-  const frac = hours / 24;
+  const frac = (hours - MIN_HOURS) / (MAX_HOURS - MIN_HOURS);
   const bubbleLeft = frac * Math.max(0, trackW - BUBBLE);
 
   const handleValue = (v: number) => {
     setHours(v);
-    const r = Math.round(v);
+    const r = Math.max(MIN_HOURS, Math.round(v));
     onChange(r, r * HOURLY_RATE);
   };
 
@@ -296,14 +298,14 @@ const PriceSlider = React.memo(function PriceSlider({
       >
         <Slider
           style={{ width: '100%', height: 40 }}
-          minimumValue={0}
-          maximumValue={24}
+          minimumValue={MIN_HOURS}
+          maximumValue={MAX_HOURS}
           step={1}
           value={hours}
           onValueChange={handleValue}
-          minimumTrackTintColor="#141414"
+          minimumTrackTintColor={theme.cta}
           maximumTrackTintColor={theme.divider}
-          thumbTintColor="#141414"
+          thumbTintColor={theme.cta}
           accessibilityRole="adjustable"
           accessibilityLabel="Favor duration"
           accessibilityValue={{ text: `${rounded} hours, $${price}` }}
@@ -316,19 +318,19 @@ const PriceSlider = React.memo(function PriceSlider({
             width: BUBBLE,
             height: BUBBLE,
             borderRadius: BUBBLE / 2,
-            backgroundColor: '#141414',
+            backgroundColor: theme.cta,
             alignItems: 'center',
             justifyContent: 'center',
           }}
         >
-          <Txt variant="caption" color="#FFFFFF" style={{ fontSize: 12 }}>${price}</Txt>
+          <Txt variant="caption" color={theme.ctaText} style={{ fontSize: 12 }}>${price}</Txt>
         </View>
       </View>
 
       <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginTop: tokens.spacing.sm }}>
-        <Txt variant="h6">0</Txt>
+        <Txt variant="h6">{MIN_HOURS}hr</Txt>
         <Txt variant="h6">{rounded}hrs</Txt>
-        <Txt variant="h6">24hrs</Txt>
+        <Txt variant="h6">{MAX_HOURS}hrs</Txt>
       </View>
 
       <Txt variant="body" color={theme.textSecondary} center style={{ marginTop: tokens.spacing.base }}>
@@ -343,6 +345,7 @@ export function Negotiate({ navigation }: any) {
   const s = useStore();
   const [desc, setDesc] = useState(s.draftFavor?.description ?? '');
   // Hold the slider's committed price in a ref so drags don't re-render this screen.
+  // Matches PriceSlider's initial value (2hrs) so an un-dragged slider reports it.
   const priceRef = useRef({ hours: 2, price: 2 * HOURLY_RATE });
 
   const handlePrice = useCallback((hours: number, price: number) => {
@@ -352,7 +355,8 @@ export function Negotiate({ navigation }: any) {
   const canNext = desc.trim().length > 0;
 
   const onNext = () => {
-    if (!canNext) return;
+    // Description is required and a favor must cost something (>= $MIN_HOURS*rate).
+    if (!canNext || priceRef.current.price <= 0) return;
     const { hours, price } = priceRef.current;
     s.setDraft({ tier: 'negotiate', hours, price, description: desc.trim() });
     navigation.navigate('ConfirmAddress');
@@ -424,10 +428,34 @@ export function ConfirmAddress({ navigation }: any) {
     return out;
   })();
 
-  // Parse the typed date + time into a future timestamp (undefined = "now").
-  const parsedSchedule = scheduleMode === 'later' ? new Date(`${dateStr} ${timeStr}`).getTime() : NaN;
+  // Parse the typed date + time into a future timestamp (NaN = unset/invalid).
+  // Hermes (the on-device JS engine) only reliably parses ISO-8601 with the Date
+  // string constructor, so `new Date("06/30/2026 2:30 PM")` returns Invalid Date
+  // on a real device. Parse the locale fields explicitly instead.
+  const parseSchedule = (d: string, t: string): number => {
+    const dm = d.trim().match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
+    const tm = t.trim().match(/^(\d{1,2}):(\d{2})\s*([AaPp][Mm])$/);
+    if (!dm || !tm) return NaN;
+    const mo = Number(dm[1]);
+    const day = Number(dm[2]);
+    const year = Number(dm[3]);
+    let hour = Number(tm[1]);
+    const min = Number(tm[2]);
+    const isPM = tm[3].toUpperCase() === 'PM';
+    // Range-check before constructing — reject out-of-range parts outright.
+    if (mo < 1 || mo > 12 || day < 1 || day > 31) return NaN;
+    if (hour < 1 || hour > 12 || min > 59) return NaN;
+    if (isPM && hour !== 12) hour += 12;
+    if (!isPM && hour === 12) hour = 0;
+    const dt = new Date(year, mo - 1, day, hour, min);
+    // Guard against JS rolling overflow dates forward (e.g. 02/31 -> 03/03).
+    if (dt.getMonth() !== mo - 1 || dt.getDate() !== day) return NaN;
+    return dt.getTime();
+  };
   const scheduleEntered = scheduleMode === 'later' && dateStr.trim() !== '' && timeStr.trim() !== '';
-  const scheduleValid = Number.isFinite(parsedSchedule) && parsedSchedule > Date.now();
+  const parsedSchedule = scheduleMode === 'later' ? parseSchedule(dateStr, timeStr) : NaN;
+  // Require BOTH fields, a valid parse, and a future timestamp before confirming.
+  const scheduleValid = scheduleEntered && Number.isFinite(parsedSchedule) && parsedSchedule > Date.now();
   const canConfirm = address.trim().length > 0 && (scheduleMode === 'now' || scheduleValid);
 
   const onConfirm = () => {
@@ -565,9 +593,15 @@ export function ConfirmAddress({ navigation }: any) {
                       accessibilityLabel="Favor time"
                     />
                   </View>
-                  {scheduleEntered && !scheduleValid ? (
-                    <Txt variant="caption" color={theme.danger} style={{ marginTop: 6 }}>
-                      Enter a valid future date and time (e.g. 06/30/2026 and 2:30 PM).
+                  {!scheduleValid ? (
+                    <Txt
+                      variant="caption"
+                      color={scheduleEntered ? theme.danger : theme.textSecondary}
+                      style={{ marginTop: 6 }}
+                    >
+                      {scheduleEntered
+                        ? 'Enter a valid future date and time (e.g. 06/30/2026 and 2:30 PM).'
+                        : 'Enter both a date (MM/DD/YYYY) and time (e.g. 2:30 PM) in the future.'}
                     </Txt>
                   ) : null}
                 </>

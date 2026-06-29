@@ -140,17 +140,30 @@ function DarkField({
 // ---------------------------------------------------------------------------
 export function Earnings({ navigation }: any) {
   const { theme } = useTheme();
-  const { earnings, cashOut } = useStore();
+  const { earnings, cashOut, paymentsLive, connectStatus } = useStore();
   const payout = usePayoutAccount();
   const groups = groupByMonth(earnings);
   const [cashing, setCashing] = useState(false);
   const [cashedOut, setCashedOut] = useState<number | null>(null);
   const [cashError, setCashError] = useState('');
+  const [conn, setConn] = useState<{ onboarded: boolean; payoutsEnabled: boolean } | null>(null);
+
+  // Reflect the real payout-account connection state (mirrors StripeOnboarding):
+  // a pal is only payout-ready once a bank / Connect account is actually linked.
+  useEffect(() => {
+    if (!paymentsLive) return;
+    const load = () => { void connectStatus().then(setConn); };
+    load();
+    const unsub = navigation.addListener('focus', load);
+    return unsub;
+  }, [navigation, paymentsLive]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const connected = paymentsLive ? !!conn?.payoutsEnabled : payout.connected;
 
   const available = sumAmt(earnings.filter((e) => e.status === 'completed'));
 
   const onCashOut = async () => {
-    if (cashing || available <= 0) return;
+    if (cashing || available <= 0 || !connected) return;
     setCashing(true);
     setCashError('');
     try {
@@ -169,6 +182,8 @@ export function Earnings({ navigation }: any) {
     ? Math.max(...pendingItems.map((e) => e.date)) + 3 * DAY
     : null;
   const destLabel = bankLabel(payout.last4);
+  // Never name a bank we aren't actually paying out to.
+  const rowDest = connected ? destLabel : 'Awaiting payout setup';
 
   return (
     <SafeAreaView style={{ flex: 1, backgroundColor: theme.background }} edges={['top']}>
@@ -210,33 +225,53 @@ export function Earnings({ navigation }: any) {
             </View>
           </View>
 
-          {/* Instant cash-out of the available balance. */}
-          <TouchableOpacity
-            onPress={onCashOut}
-            disabled={cashing || available <= 0}
-            activeOpacity={0.85}
-            accessibilityRole="button"
-            accessibilityLabel={`Cash out ${money(available)}`}
-            accessibilityState={{ disabled: cashing || available <= 0 }}
-            style={[dark.cashBtn, { opacity: cashing || available <= 0 ? 0.5 : 1 }]}
-          >
-            <Ionicons name="cash-outline" size={18} color="#FFFFFF" />
-            <Txt variant="button" color="#FFFFFF" style={{ marginLeft: 8 }}>
-              {cashing ? 'Cashing out…' : available > 0 ? `Cash out ${money(available)}` : 'No balance to cash out'}
-            </Txt>
-          </TouchableOpacity>
-          {cashError ? (
-            <Txt variant="caption" color={theme.danger} style={{ marginTop: 8 }}>{cashError}</Txt>
-          ) : null}
+          {/* Instant cash-out — only once a payout account is connected. Until
+              then we show an honest setup CTA (no fake bank, no cash-out). */}
+          {connected ? (
+            <>
+              <TouchableOpacity
+                onPress={onCashOut}
+                disabled={cashing || available <= 0}
+                activeOpacity={0.85}
+                accessibilityRole="button"
+                accessibilityLabel={`Cash out ${money(available)}`}
+                accessibilityState={{ disabled: cashing || available <= 0 }}
+                style={[dark.cashBtn, { opacity: cashing || available <= 0 ? 0.5 : 1 }]}
+              >
+                <Ionicons name="cash-outline" size={18} color="#FFFFFF" />
+                <Txt variant="button" color="#FFFFFF" style={{ marginLeft: 8 }}>
+                  {cashing ? 'Cashing out…' : available > 0 ? `Cash out ${money(available)}` : 'No balance to cash out'}
+                </Txt>
+              </TouchableOpacity>
+              {cashError ? (
+                <Txt variant="caption" color={theme.danger} style={{ marginTop: 8 }}>{cashError}</Txt>
+              ) : null}
+            </>
+          ) : (
+            <TouchableOpacity
+              onPress={() => navigation.navigate('StripeOnboarding')}
+              activeOpacity={0.85}
+              accessibilityRole="button"
+              accessibilityLabel="Set up payouts to get paid"
+              style={dark.cashBtn}
+            >
+              <Ionicons name="card-outline" size={18} color="#FFFFFF" />
+              <Txt variant="button" color="#FFFFFF" style={{ marginLeft: 8 }}>
+                Set up payouts to get paid
+              </Txt>
+            </TouchableOpacity>
+          )}
 
           <View style={{ height: 1, backgroundColor: theme.divider, marginVertical: 16 }} />
 
           <View style={{ flexDirection: 'row', alignItems: 'center' }}>
             <Ionicons name="calendar-outline" size={16} color={theme.textSecondary} />
             <Txt variant="bodySm" color={theme.text} style={{ marginLeft: 8, flex: 1 }}>
-              {nextPayoutMs
-                ? `Next payout ${fmtDate(nextPayoutMs)} to ${destLabel}`
-                : 'No payouts scheduled'}
+              {!connected
+                ? 'Connect a bank account to receive your earnings.'
+                : nextPayoutMs
+                  ? `Next payout ${fmtDate(nextPayoutMs)} to ${destLabel}`
+                  : 'No payouts scheduled'}
             </Txt>
           </View>
           <Txt variant="caption" color={theme.textTertiary} style={{ marginTop: 6 }}>
@@ -261,7 +296,7 @@ export function Earnings({ navigation }: any) {
                 key={item.id}
                 style={[dark.earnRow, { borderBottomColor: theme.divider }]}
                 accessible
-                accessibilityLabel={`${fmtDate(item.date)}, ${money(item.amount)} to ${destLabel}`}
+                accessibilityLabel={`${fmtDate(item.date)}, ${money(item.amount)}${connected ? ` to ${destLabel}` : ', awaiting payout setup'}`}
               >
                 <BankBadge />
                 <View style={{ flex: 1, marginLeft: 16 }}>
@@ -269,7 +304,7 @@ export function Earnings({ navigation }: any) {
                     {fmtDate(item.date)}
                   </Txt>
                   <Txt variant="body" color={theme.textSecondary} style={{ fontSize: 16, marginTop: 2 }}>
-                    {destLabel}
+                    {rowDest}
                   </Txt>
                 </View>
                 <Txt variant="label" color={theme.text} style={{ fontSize: 19, marginRight: 10 }}>
@@ -338,8 +373,8 @@ export function StripeOnboarding({ navigation }: any) {
             accessible
             accessibilityLabel={`Payout account connected: ${bankLabel(payout.last4)}`}
           >
-            <Ionicons name="card-outline" size={24} color="#8A909B" style={{ width: 30, marginRight: 14 }} />
-            <Txt variant="body" color="#8A909B" style={{ flex: 1 }}>{paymentsLive ? 'Payouts active (Stripe)' : bankLabel(payout.last4)}</Txt>
+            <Ionicons name="card-outline" size={24} color={theme.textSecondary} style={{ width: 30, marginRight: 14 }} />
+            <Txt variant="body" color={theme.text} style={{ flex: 1 }}>{paymentsLive ? 'Payouts active (Stripe)' : bankLabel(payout.last4)}</Txt>
             <Ionicons name="checkmark-circle" size={20} color={theme.success} />
           </View>
         ) : (
@@ -350,9 +385,9 @@ export function StripeOnboarding({ navigation }: any) {
             accessibilityRole="button"
             accessibilityLabel="Set up payouts to get paid"
           >
-            <Ionicons name="card-outline" size={24} color="#8A909B" style={{ width: 30, marginRight: 14 }} />
-            <Txt variant="body" color="#8A909B" style={{ flex: 1 }}>{opening ? 'Opening…' : 'Set up payouts to get paid'}</Txt>
-            <Ionicons name="chevron-forward" size={22} color="#8A909B" />
+            <Ionicons name="card-outline" size={24} color={theme.textSecondary} style={{ width: 30, marginRight: 14 }} />
+            <Txt variant="body" color={theme.text} style={{ flex: 1 }}>{opening ? 'Opening…' : 'Set up payouts to get paid'}</Txt>
+            <Ionicons name="chevron-forward" size={22} color={theme.textTertiary} />
           </TouchableOpacity>
         )}
 
@@ -364,11 +399,11 @@ export function StripeOnboarding({ navigation }: any) {
           accessibilityRole="button"
           accessibilityLabel={connected ? 'Edit bank information' : 'Add bank information'}
         >
-          <Ionicons name="pencil" size={22} color="#8A909B" style={{ width: 30, marginRight: 14 }} />
-          <Txt variant="body" color="#8A909B" style={{ flex: 1 }}>
+          <Ionicons name="pencil" size={22} color={theme.textSecondary} style={{ width: 30, marginRight: 14 }} />
+          <Txt variant="body" color={theme.text} style={{ flex: 1 }}>
             {connected ? 'Edit Bank Information' : 'Add Bank Information'}
           </Txt>
-          <Ionicons name="chevron-forward" size={22} color="#8A909B" />
+          <Ionicons name="chevron-forward" size={22} color={theme.textTertiary} />
         </TouchableOpacity>
 
         {/* Earning History → Earnings */}
@@ -379,9 +414,9 @@ export function StripeOnboarding({ navigation }: any) {
           accessibilityRole="button"
           accessibilityLabel="Earning History"
         >
-          <Ionicons name="reader-outline" size={24} color="#525A66" style={{ width: 30, marginRight: 14 }} />
-          <Txt variant="h4" color="#525A66" style={{ flex: 1 }}>Earning History</Txt>
-          <Ionicons name="chevron-forward" size={24} color="#525A66" />
+          <Ionicons name="reader-outline" size={24} color={theme.textSecondary} style={{ width: 30, marginRight: 14 }} />
+          <Txt variant="h4" color={theme.text} style={{ flex: 1 }}>Earning History</Txt>
+          <Ionicons name="chevron-forward" size={24} color={theme.textTertiary} />
         </TouchableOpacity>
       </View>
     </Screen>
@@ -499,7 +534,10 @@ export function BankInfo({ navigation }: any) {
         buttonLabel="Done"
         onClose={() => {
           setSavedLast4(null);
-          navigation.navigate('Tabs');
+          // Return to the Account (StripeOnboarding) screen, which now reflects
+          // the connected payout account via the usePayoutAccount() subscription.
+          if (navigation.canGoBack()) navigation.goBack();
+          else navigation.navigate('StripeOnboarding');
         }}
       />
     </SafeAreaView>

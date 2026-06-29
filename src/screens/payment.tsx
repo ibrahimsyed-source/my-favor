@@ -175,6 +175,29 @@ export function AddCard({ navigation, route }: any) {
   const [country, setCountry] = useState(editCard ? '' : 'United States');
   const [saving, setSaving] = useState(false);
   const [added, setAdded] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  // Clear the validation error as soon as the user edits a validated field.
+  const edit = (setter: (t: string) => void) => (t: string) => {
+    setter(t);
+    if (error) setError(null);
+  };
+
+  // Luhn checksum — the same mod-10 test Stripe runs before accepting a PAN.
+  const luhnValid = (d: string) => {
+    let sum = 0;
+    let alt = false;
+    for (let i = d.length - 1; i >= 0; i--) {
+      let n = parseInt(d[i], 10);
+      if (alt) {
+        n *= 2;
+        if (n > 9) n -= 9;
+      }
+      sum += n;
+      alt = !alt;
+    }
+    return d.length > 0 && sum % 10 === 0;
+  };
 
   // Derive the brand from the card-number prefix (Stripe determines this from
   // the BIN range) instead of always recording Visa.
@@ -191,24 +214,45 @@ export function AddCard({ navigation, route }: any) {
 
   const handleSubmit = async () => {
     const digits = cardNumber.replace(/\D/g, '');
+    // On an edit the number is shown masked (we never stored the full PAN/CVC),
+    // so leaving it unchanged keeps the saved card's identity without re-entry.
+    const keepSaved = !!editCard && digits.length < 12;
+
     let last4: string;
     let brand: string;
-    if (digits.length >= 12) {
-      // A full (new) PAN was entered.
-      last4 = digits.slice(-4);
-      brand = brandFromDigits(digits);
-    } else if (editCard) {
-      // Masked/unchanged number — keep the saved card's identity.
+    if (editCard && digits.length < 12) {
       last4 = editCard.last4;
       brand = editCard.brand;
     } else {
-      last4 = digits.slice(-4) || '0000';
+      // A new PAN must be a plausible card number (length + Luhn), not garbage.
+      if (digits.length < 12 || digits.length > 19) return setError('Enter a valid card number.');
+      if (!luhnValid(digits)) return setError("That card number doesn't look right.");
+      last4 = digits.slice(-4);
       brand = brandFromDigits(digits);
     }
-    const [mm, yy] = expiration.split('/');
-    const expMonth = parseInt(mm, 10) || 1;
-    const yearNum = parseInt(yy ?? '', 10) || 0;
-    const expYear = yearNum >= 100 ? yearNum % 100 : yearNum;
+
+    // Expiration must be MM/YY (or MM/YYYY), a real month, and not in the past.
+    const [mmRaw, yyRaw] = expiration.split('/');
+    const mm = parseInt((mmRaw ?? '').trim(), 10);
+    const yy = parseInt((yyRaw ?? '').trim(), 10);
+    if (!mm || mm < 1 || mm > 12 || Number.isNaN(yy)) {
+      return setError('Enter the expiration as MM/YY.');
+    }
+    const fullYear = yy >= 100 ? yy : 2000 + yy;
+    const now = new Date();
+    if (fullYear < now.getFullYear() || (fullYear === now.getFullYear() && mm < now.getMonth() + 1)) {
+      return setError('That expiration date has already passed.');
+    }
+    const expMonth = mm;
+    const expYear = fullYear % 100;
+
+    // CVC is required whenever a (new) card number is entered; 3–4 digits.
+    if (!keepSaved) {
+      const cvcDigits = cvc.replace(/\D/g, '');
+      if (cvcDigits.length < 3 || cvcDigits.length > 4) return setError('Enter the 3 or 4 digit CVC.');
+    }
+
+    setError(null);
     setSaving(true);
     // The store has no in-place updateCard, so editing = replace: drop the old
     // record, then persist the edited one. Both use functional setState so they
@@ -255,16 +299,16 @@ export function AddCard({ navigation, route }: any) {
       <Field
         label="Card Number"
         value={cardNumber}
-        onChangeText={setCardNumber}
+        onChangeText={edit(setCardNumber)}
         keyboardType="number-pad"
       />
 
       <View style={styles.twoCol}>
         <View style={{ flex: 1 }}>
-          <Field label="Expiration" value={expiration} onChangeText={setExpiration} placeholder="MM/YY" />
+          <Field label="Expiration" value={expiration} onChangeText={edit(setExpiration)} placeholder="MM/YY" />
         </View>
         <View style={{ flex: 1 }}>
-          <Field label="CVC" value={cvc} onChangeText={setCvc} keyboardType="number-pad" maxLength={4} />
+          <Field label="CVC" value={cvc} onChangeText={edit(setCvc)} keyboardType="number-pad" maxLength={4} />
         </View>
       </View>
 
@@ -298,6 +342,16 @@ export function AddCard({ navigation, route }: any) {
         <Ionicons name="lock-closed" size={16} color={theme.textSecondary} />
         <Txt variant="caption" color={theme.textSecondary} style={{ marginLeft: 6 }}>Secured by Stripe</Txt>
       </View>
+
+      {error ? (
+        <View
+          accessibilityLiveRegion="polite"
+          style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'center', marginTop: tokens.spacing.base }}
+        >
+          <Ionicons name="alert-circle" size={18} color={theme.danger} style={{ marginRight: 6 }} />
+          <Txt variant="bodySm" color={theme.danger}>{error}</Txt>
+        </View>
+      ) : null}
 
       <Button title="SUBMIT" onPress={handleSubmit} loading={saving} style={{ marginTop: tokens.spacing.base, marginBottom: tokens.spacing.xl }} />
 
