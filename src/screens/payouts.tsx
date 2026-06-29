@@ -6,18 +6,15 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { Screen, Txt, Button, TopBar, InfoModal } from '../components';
-import { useTheme, tokens, darkTokens } from '../theme';
+import { useTheme, tokens, fonts } from '../theme';
 import { useStore } from '../store';
 import { Transaction } from '../types';
 
 // ---------------------------------------------------------------------------
-// Palette for the dark payout surfaces (Earnings + Bank Information). The
-// shared theme is a light theme, so these screens roll their own black canvas
-// (figma-ref/earnings.png + bank-info.png are pure black); every raised
-// surface/field/divider on top of it comes from darkTokens.
+// The Earnings + Bank Information surfaces now use the shared LIGHT theme via
+// useTheme(), matching the rest of the app (these screens previously rolled
+// their own black canvas with navy darkTokens surfaces/fields).
 // ---------------------------------------------------------------------------
-const BLACK = '#000000';
-const ERROR_RED = '#FF6B6B';
 const DAY = 86400000;
 
 const MONTHS = [
@@ -79,10 +76,11 @@ function usePayoutAccount(): PayoutAccount {
   return _payout;
 }
 
-// Dark top bar (white chevron + centered title) for the black screens.
+// Top bar (chevron + centered title) for the payout screens.
 function DarkTopBar({ title, onBack, right }: { title: string; onBack?: () => void; right?: React.ReactNode }) {
+  const { theme } = useTheme();
   return (
-    <View style={dark.topbar}>
+    <View style={[dark.topbar, { borderBottomColor: theme.border }]}>
       {onBack ? (
         <TouchableOpacity
           onPress={onBack}
@@ -90,12 +88,12 @@ function DarkTopBar({ title, onBack, right }: { title: string; onBack?: () => vo
           accessibilityRole="button"
           accessibilityLabel="Go back"
         >
-          <Ionicons name="chevron-back" size={26} color="#FFFFFF" />
+          <Ionicons name="chevron-back" size={26} color={theme.text} />
         </TouchableOpacity>
       ) : (
         <View style={{ width: 26 }} />
       )}
-      <Txt variant="h4" color="#FFFFFF">{title}</Txt>
+      <Txt variant="h4" color={theme.text}>{title}</Txt>
       <View style={{ width: 26, alignItems: 'flex-end' }}>{right}</View>
     </View>
   );
@@ -105,27 +103,29 @@ function DarkTopBar({ title, onBack, right }: { title: string; onBack?: () => vo
 // paid out to their connected bank account (Apple Pay is how the MEMBER pays in,
 // never how the PAL is paid).
 function BankBadge() {
+  const { theme } = useTheme();
   return (
-    <View style={dark.payBadge}>
-      <Ionicons name="business" size={15} color="#000000" />
+    <View style={[dark.payBadge, { backgroundColor: theme.surfaceAlt }]}>
+      <Ionicons name="business" size={15} color={theme.text} />
     </View>
   );
 }
 
-// Filled navy text field for the dark Bank Information form.
+// Filled text field for the Bank Information form.
 function DarkField({
   label, value, onChangeText, keyboardType,
 }: { label: string; value: string; onChangeText: (t: string) => void; keyboardType?: any }) {
+  const { theme } = useTheme();
   return (
     <View style={{ marginBottom: 18 }}>
-      <Txt variant="label" color="#FFFFFF" style={{ marginBottom: 8 }}>{label}</Txt>
-      <View style={dark.field}>
+      <Txt variant="label" color={theme.text} style={{ marginBottom: 8 }}>{label}</Txt>
+      <View style={[dark.field, { backgroundColor: theme.surfaceAlt, borderWidth: 1, borderColor: theme.border }]}>
         <TextInput
-          style={{ color: '#FFFFFF', fontSize: 18 }}
+          style={{ color: theme.text, fontSize: 18, fontFamily: fonts.bodyRegular }}
           value={value}
           onChangeText={onChangeText}
           keyboardType={keyboardType}
-          placeholderTextColor="#6B7280"
+          placeholderTextColor={theme.textTertiary}
           accessibilityLabel={label}
         />
       </View>
@@ -139,6 +139,7 @@ function DarkField({
 //    each row names the real destination bank instead of the member's Apple Pay.
 // ---------------------------------------------------------------------------
 export function Earnings({ navigation }: any) {
+  const { theme } = useTheme();
   const { earnings, cashOut } = useStore();
   const payout = usePayoutAccount();
   const groups = groupByMonth(earnings);
@@ -170,7 +171,7 @@ export function Earnings({ navigation }: any) {
   const destLabel = bankLabel(payout.last4);
 
   return (
-    <SafeAreaView style={{ flex: 1, backgroundColor: BLACK }} edges={['top']}>
+    <SafeAreaView style={{ flex: 1, backgroundColor: theme.background }} edges={['top']}>
       <DarkTopBar
         title="Earning History"
         onBack={navigation.canGoBack() ? navigation.goBack : undefined}
@@ -181,7 +182,7 @@ export function Earnings({ navigation }: any) {
             accessibilityRole="button"
             accessibilityLabel="Payout account settings"
           >
-            <Ionicons name="wallet-outline" size={23} color="#FFFFFF" />
+            <Ionicons name="wallet-outline" size={23} color={theme.text} />
           </TouchableOpacity>
         }
       />
@@ -191,21 +192,21 @@ export function Earnings({ navigation }: any) {
       >
         {/* Payout summary — answers "what's my balance and when do I get paid?" */}
         <View
-          style={dark.summary}
+          style={[dark.summary, tokens.shadow.card, { backgroundColor: theme.card, borderColor: theme.border }]}
           accessible
           accessibilityLabel={`Available balance ${money(available)}. Pending ${money(pending)}. Total earned ${money(total)}.`}
         >
-          <Txt variant="bodySm" color={darkTokens.textSubtle}>Available balance</Txt>
-          <Txt variant="h1" color="#FFFFFF" style={{ marginTop: 2 }}>{money(available)}</Txt>
+          <Txt variant="bodySm" color={theme.textSecondary}>Available balance</Txt>
+          <Txt variant="h1" color={theme.text} style={{ marginTop: 2 }}>{money(available)}</Txt>
 
           <View style={{ flexDirection: 'row', marginTop: 16 }}>
             <View style={{ flex: 1 }}>
-              <Txt variant="caption" color={darkTokens.textMuted}>Pending</Txt>
-              <Txt variant="h4" color="#FFFFFF" style={{ marginTop: 2 }}>{money(pending)}</Txt>
+              <Txt variant="caption" color={theme.textTertiary}>Pending</Txt>
+              <Txt variant="h4" color={theme.text} style={{ marginTop: 2 }}>{money(pending)}</Txt>
             </View>
             <View style={{ flex: 1 }}>
-              <Txt variant="caption" color={darkTokens.textMuted}>Total earned</Txt>
-              <Txt variant="h4" color="#FFFFFF" style={{ marginTop: 2 }}>{money(total)}</Txt>
+              <Txt variant="caption" color={theme.textTertiary}>Total earned</Txt>
+              <Txt variant="h4" color={theme.text} style={{ marginTop: 2 }}>{money(total)}</Txt>
             </View>
           </View>
 
@@ -225,20 +226,20 @@ export function Earnings({ navigation }: any) {
             </Txt>
           </TouchableOpacity>
           {cashError ? (
-            <Txt variant="caption" color={ERROR_RED} style={{ marginTop: 8 }}>{cashError}</Txt>
+            <Txt variant="caption" color={theme.danger} style={{ marginTop: 8 }}>{cashError}</Txt>
           ) : null}
 
-          <View style={{ height: 1, backgroundColor: darkTokens.border, marginVertical: 16 }} />
+          <View style={{ height: 1, backgroundColor: theme.divider, marginVertical: 16 }} />
 
           <View style={{ flexDirection: 'row', alignItems: 'center' }}>
-            <Ionicons name="calendar-outline" size={16} color={darkTokens.textSubtle} />
-            <Txt variant="bodySm" color="#FFFFFF" style={{ marginLeft: 8, flex: 1 }}>
+            <Ionicons name="calendar-outline" size={16} color={theme.textSecondary} />
+            <Txt variant="bodySm" color={theme.text} style={{ marginLeft: 8, flex: 1 }}>
               {nextPayoutMs
                 ? `Next payout ${fmtDate(nextPayoutMs)} to ${destLabel}`
                 : 'No payouts scheduled'}
             </Txt>
           </View>
-          <Txt variant="caption" color={darkTokens.textMuted} style={{ marginTop: 6 }}>
+          <Txt variant="caption" color={theme.textTertiary} style={{ marginTop: 6 }}>
             Payouts arrive 2-3 business days after a favor is completed.
           </Txt>
         </View>
@@ -253,28 +254,28 @@ export function Earnings({ navigation }: any) {
 
         {groups.map((g) => (
           <View key={g.key} style={{ marginTop: 28 }}>
-            <Txt variant="h3" color="#FFFFFF">{g.key}</Txt>
-            <View style={{ height: 1, backgroundColor: darkTokens.divider, marginTop: 16 }} />
+            <Txt variant="h3" color={theme.text}>{g.key}</Txt>
+            <View style={{ height: 1, backgroundColor: theme.divider, marginTop: 16 }} />
             {g.items.map((item) => (
               <View
                 key={item.id}
-                style={dark.earnRow}
+                style={[dark.earnRow, { borderBottomColor: theme.divider }]}
                 accessible
                 accessibilityLabel={`${fmtDate(item.date)}, ${money(item.amount)} to ${destLabel}`}
               >
                 <BankBadge />
                 <View style={{ flex: 1, marginLeft: 16 }}>
-                  <Txt variant="body" color="#FFFFFF" style={{ fontSize: 19, lineHeight: 24 }}>
+                  <Txt variant="body" color={theme.text} style={{ fontSize: 19, lineHeight: 24 }}>
                     {fmtDate(item.date)}
                   </Txt>
-                  <Txt variant="body" color={darkTokens.textSubtle} style={{ fontSize: 16, marginTop: 2 }}>
+                  <Txt variant="body" color={theme.textSecondary} style={{ fontSize: 16, marginTop: 2 }}>
                     {destLabel}
                   </Txt>
                 </View>
-                <Txt variant="label" color="#FFFFFF" style={{ fontSize: 19, marginRight: 10 }}>
+                <Txt variant="label" color={theme.text} style={{ fontSize: 19, marginRight: 10 }}>
                   {money(item.amount)}
                 </Txt>
-                <Ionicons name="chevron-forward" size={22} color="#FFFFFF" />
+                <Ionicons name="chevron-forward" size={22} color={theme.textTertiary} />
               </View>
             ))}
           </View>
@@ -394,6 +395,7 @@ export function StripeOnboarding({ navigation }: any) {
 //    and confirms it before returning — instead of silently navigating away.
 // ---------------------------------------------------------------------------
 export function BankInfo({ navigation }: any) {
+  const { theme } = useTheme();
   const { user } = useStore();
   const [accountName, setAccountName] = useState(user ? `${user.firstName} ${user.lastName}` : 'Anton Vanko');
   const [bankName, setBankName] = useState('Bank of America');
@@ -430,7 +432,7 @@ export function BankInfo({ navigation }: any) {
   };
 
   return (
-    <SafeAreaView style={{ flex: 1, backgroundColor: BLACK }} edges={['top', 'bottom']}>
+    <SafeAreaView style={{ flex: 1, backgroundColor: theme.background }} edges={['top', 'bottom']}>
       <DarkTopBar title="Bank Information" onBack={navigation.canGoBack() ? navigation.goBack : undefined} />
       <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
         <ScrollView
@@ -444,7 +446,7 @@ export function BankInfo({ navigation }: any) {
           <DarkField label="Account Number" value={accountNumber} onChangeText={edit(setAccountNumber)} />
           <DarkField label="Confirm Account Number" value={confirmAccount} onChangeText={edit(setConfirmAccount)} />
 
-          <Txt variant="label" color="#FFFFFF" style={{ marginBottom: 10 }}>Account Type</Txt>
+          <Txt variant="label" color={theme.text} style={{ marginBottom: 10 }}>Account Type</Txt>
           <View style={{ flexDirection: 'row', gap: 12 }}>
             {(['Savings', 'Checking'] as const).map((opt) => {
               const sel = accountType === opt;
@@ -464,13 +466,13 @@ export function BankInfo({ navigation }: any) {
                     alignItems: 'center',
                     justifyContent: 'center',
                     gap: 8,
-                    backgroundColor: sel ? '#FFFFFF' : darkTokens.field,
+                    backgroundColor: sel ? theme.cta : theme.surfaceAlt,
                     borderWidth: sel ? 0 : 1,
-                    borderColor: '#39415A',
+                    borderColor: theme.border,
                   }}
                 >
-                  {sel && <Ionicons name="checkmark-circle" size={18} color="#141414" />}
-                  <Txt variant="label" color={sel ? '#141414' : '#9AA1B2'}>{opt}</Txt>
+                  {sel && <Ionicons name="checkmark-circle" size={18} color="#FFFFFF" />}
+                  <Txt variant="label" color={sel ? '#FFFFFF' : theme.textSecondary}>{opt}</Txt>
                 </TouchableOpacity>
               );
             })}
@@ -482,11 +484,11 @@ export function BankInfo({ navigation }: any) {
               accessibilityLiveRegion="polite"
               style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 12 }}
             >
-              <Ionicons name="alert-circle" size={18} color={ERROR_RED} style={{ marginRight: 6 }} />
-              <Txt variant="bodySm" color={ERROR_RED} style={{ flex: 1 }}>{error}</Txt>
+              <Ionicons name="alert-circle" size={18} color={theme.danger} style={{ marginRight: 6 }} />
+              <Txt variant="bodySm" color={theme.danger} style={{ flex: 1 }}>{error}</Txt>
             </View>
           ) : null}
-          <Button title="Save" variant="white" onPress={onSave} />
+          <Button title="Save" variant="primary" onPress={onSave} />
         </View>
       </KeyboardAvoidingView>
 
@@ -512,14 +514,14 @@ const dark = StyleSheet.create({
     justifyContent: 'space-between',
     paddingHorizontal: 16,
     borderBottomWidth: StyleSheet.hairlineWidth,
-    borderBottomColor: '#1C1C1C',
+    borderBottomColor: '#ECEBED',
   },
   summary: {
     marginTop: 12,
-    backgroundColor: darkTokens.surface,
+    backgroundColor: '#FFFFFF',
     borderRadius: tokens.radius.lg,
     borderWidth: 1,
-    borderColor: darkTokens.border,
+    borderColor: '#ECEBED',
     padding: 20,
   },
   cashBtn: {
@@ -535,7 +537,7 @@ const dark = StyleSheet.create({
     width: 40,
     height: 26,
     borderRadius: 5,
-    backgroundColor: '#FFFFFF',
+    backgroundColor: '#F5F5F5',
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
@@ -545,10 +547,10 @@ const dark = StyleSheet.create({
     alignItems: 'center',
     paddingVertical: 18,
     borderBottomWidth: 1,
-    borderBottomColor: darkTokens.divider,
+    borderBottomColor: '#E5E5E5',
   },
   field: {
-    backgroundColor: darkTokens.field,
+    backgroundColor: '#F5F5F5',
     borderRadius: tokens.radius.md,
     paddingHorizontal: 16,
     minHeight: 56,

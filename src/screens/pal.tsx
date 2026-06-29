@@ -7,17 +7,20 @@ import { Ionicons } from '@expo/vector-icons';
 import { Txt, InfoModal, Avatar } from '../components';
 import { useStore } from '../store';
 import { computePayout, FAVOR_TIERS, Favor } from '../types';
-import { darkTokens, tokens } from '../theme';
+import { lightTheme, fonts, tokens } from '../theme';
 
-// Favor Pal (provider) active-favor flow. All screens sit on a dark map.
-// Dark surfaces come from darkTokens so they match the other navy screens.
-const DARK_BG = darkTokens.bg;
-const SHEET = darkTokens.surface;
-const SHEET_ALT = darkTokens.surfaceAlt;
-const RED = '#ED1C24';
-const STAR = '#FFBD00';
-const SUBTLE = darkTokens.textSubtle;
-const DIVIDER = darkTokens.divider;
+// Favor Pal (provider) active-favor flow. All screens sit on a light map with
+// white bottom sheets, so they match the rest of the app's light theme.
+const PAGE_BG = lightTheme.background;   // white screen background
+const SHEET = lightTheme.card;           // white bottom-sheet surface
+const SHEET_ALT = lightTheme.surfaceAlt; // raised field / pill / chip
+const RED = lightTheme.primary;          // brand red accent
+const STAR = lightTheme.star;            // rating amber
+const SUBTLE = lightTheme.textSecondary; // secondary text
+const DIVIDER = lightTheme.divider;      // hairline dividers
+const TEXT = lightTheme.text;            // primary text
+const MUTED = lightTheme.textTertiary;   // placeholder / tertiary text
+const BORDER = lightTheme.border;        // card / field borders
 
 const CHARACTERS = require('../../assets/img/onboarding/launch-people.png');
 
@@ -30,15 +33,15 @@ const TIER_IMG: Record<string, ReturnType<typeof require>> = {
 };
 const tierImage = (tier?: string) => TIER_IMG[tier ?? ''] ?? TIER_IMG.small;
 
-// ---- shared dark-map backdrop -------------------------------------------------
+// ---- shared light-map backdrop ------------------------------------------------
 function MapBackdrop() {
   return (
     <View style={StyleSheet.absoluteFill}>
-      <View style={[StyleSheet.absoluteFill, { backgroundColor: darkTokens.bgAlt }]} />
-      <View style={{ position: 'absolute', top: 90, left: 40, width: 3, height: 600, backgroundColor: '#2A3240', transform: [{ rotate: '8deg' }] }} />
-      <View style={{ position: 'absolute', top: 120, left: -20, right: 0, height: 8, backgroundColor: '#7A5A1E', opacity: 0.5 }} />
-      <View style={{ position: 'absolute', top: 240, left: 120, width: 3, height: 500, backgroundColor: '#2A3240' }} />
-      <View style={{ position: 'absolute', top: 260, left: 0, right: 30, height: 3, backgroundColor: '#2A3240' }} />
+      <View style={[StyleSheet.absoluteFill, { backgroundColor: '#E9EEF3' }]} />
+      <View style={{ position: 'absolute', top: 90, left: 40, width: 3, height: 600, backgroundColor: '#D2DAE2', transform: [{ rotate: '8deg' }] }} />
+      <View style={{ position: 'absolute', top: 120, left: -20, right: 0, height: 8, backgroundColor: '#DCE3EA', opacity: 0.8 }} />
+      <View style={{ position: 'absolute', top: 240, left: 120, width: 3, height: 500, backgroundColor: '#D2DAE2' }} />
+      <View style={{ position: 'absolute', top: 260, left: 0, right: 30, height: 3, backgroundColor: '#D2DAE2' }} />
     </View>
   );
 }
@@ -50,17 +53,13 @@ function MapTopBar({ navigation, banner }: any) {
       {banner ? (
         <View style={st.navBanner}>
           <Ionicons name="arrow-up" size={20} color="#fff" />
-          <Text style={{ color: '#fff', fontSize: 16, fontWeight: '600', marginLeft: 10 }}>{banner}</Text>
+          <Text style={{ color: '#fff', fontSize: 16, fontWeight: '600', marginLeft: 10, fontFamily: fonts.bodySemiBold }}>{banner}</Text>
         </View>
       ) : (
         <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
           <TouchableOpacity style={st.iconBtn} onPress={() => navigation.navigate('SideDrawer')}>
             <Ionicons name="menu" size={22} color="#141414" />
           </TouchableOpacity>
-          <View style={st.switchPill}>
-            <Text style={{ color: '#141414', fontWeight: '600', fontSize: 13 }}>Switch to request a favor</Text>
-          </View>
-          <View style={{ width: 40 }} />
         </View>
       )}
     </View>
@@ -74,7 +73,7 @@ function Handle() {
 // ===========================================================================
 // 0. BrowseFavors — a board of ALL open favor requests a pal can browse and
 // pick from (backed by the live /favors/incoming feed in store.incomingFavors).
-// Not in the original Figma; styled to match the pal-side dark surfaces.
+// Not in the original Figma; styled to match the app's light surfaces.
 // ===========================================================================
 const tierLabel = (f: Favor) =>
   (FAVOR_TIERS as Record<string, { label: string }>)[f.tier]?.label ?? 'Custom Favor';
@@ -213,17 +212,17 @@ export const BrowseFavors = ({ navigation }: any) => {
     : `${shown.length} of ${favors.length} requests`;
 
   return (
-    <View style={{ flex: 1, backgroundColor: DARK_BG, paddingTop: insets.top }}>
+    <View style={{ flex: 1, backgroundColor: PAGE_BG, paddingTop: insets.top }}>
       <View style={bw.header}>
         <TouchableOpacity onPress={() => navigation.goBack()} hitSlop={10} accessibilityRole="button" accessibilityLabel="Go back">
-          <Ionicons name="chevron-back" size={26} color="#fff" />
+          <Ionicons name="chevron-back" size={26} color={TEXT} />
         </TouchableOpacity>
         <View style={{ flex: 1, marginLeft: 8 }}>
           <Text style={bw.title}>Open Favors</Text>
           <Text style={bw.subtitle}>{subtitle}</Text>
         </View>
         <TouchableOpacity onPress={onRefresh} hitSlop={10} accessibilityRole="button" accessibilityLabel="Refresh">
-          <Ionicons name="refresh" size={22} color="#fff" />
+          <Ionicons name="refresh" size={22} color={TEXT} />
         </TouchableOpacity>
       </View>
 
@@ -243,7 +242,7 @@ export const BrowseFavors = ({ navigation }: any) => {
           <FavorCard favor={item} onPress={() => navigation.navigate('PalFavorDetail', { favorId: item.id })} />
         )}
         contentContainerStyle={{ padding: 16, paddingBottom: insets.bottom + 24, flexGrow: 1 }}
-        refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor="#FFFFFF" />}
+        refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={RED} />}
         ListEmptyComponent={
           <View style={bw.empty}>
             <Ionicons name="file-tray-outline" size={56} color={SUBTLE} />
@@ -260,34 +259,34 @@ export const BrowseFavors = ({ navigation }: any) => {
 
 const bw = StyleSheet.create({
   header: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: 16, paddingVertical: 14 },
-  title: { color: '#fff', fontSize: 20, fontWeight: '700' },
-  subtitle: { color: SUBTLE, fontSize: 13, marginTop: 2 },
+  title: { color: TEXT, fontSize: 20, fontWeight: '700', fontFamily: fonts.display },
+  subtitle: { color: SUBTLE, fontSize: 13, marginTop: 2, fontFamily: fonts.bodyRegular },
   chipRows: { paddingBottom: 4 },
   chipRow: { paddingHorizontal: 16, paddingVertical: 6, gap: 8, alignItems: 'center' },
   chipSep: { width: 1, height: 22, backgroundColor: DIVIDER, marginHorizontal: 4 },
   chip: { backgroundColor: SHEET_ALT, borderRadius: 999, paddingHorizontal: 14, paddingVertical: 7 },
   chipActive: { backgroundColor: RED },
-  chipText: { color: SUBTLE, fontSize: 13, fontWeight: '600' },
+  chipText: { color: SUBTLE, fontSize: 13, fontWeight: '600', fontFamily: fonts.bodySemiBold },
   chipTextActive: { color: '#fff' },
-  card: { backgroundColor: SHEET_ALT, borderRadius: 16, padding: 16, marginBottom: 12 },
+  card: { backgroundColor: SHEET, borderRadius: 16, padding: 16, marginBottom: 12, borderWidth: StyleSheet.hairlineWidth, borderColor: BORDER, ...tokens.shadow.card },
   cardTop: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
-  tierPill: { backgroundColor: 'rgba(237,28,36,0.15)', borderRadius: 999, paddingHorizontal: 10, paddingVertical: 4 },
-  tierPillText: { color: RED, fontSize: 12, fontWeight: '700' },
-  price: { color: '#fff', fontSize: 22, fontWeight: '800' },
-  desc: { color: '#fff', fontSize: 15, marginTop: 12, lineHeight: 21 },
+  tierPill: { backgroundColor: 'rgba(237,28,36,0.12)', borderRadius: 999, paddingHorizontal: 10, paddingVertical: 4 },
+  tierPillText: { color: RED, fontSize: 12, fontWeight: '700', fontFamily: fonts.bodyBold },
+  price: { color: TEXT, fontSize: 22, fontWeight: '800', fontFamily: fonts.display },
+  desc: { color: TEXT, fontSize: 15, marginTop: 12, lineHeight: 21, fontFamily: fonts.bodyRegular },
   metaRow: { flexDirection: 'row', alignItems: 'center', marginTop: 10, gap: 5 },
-  meta: { color: SUBTLE, fontSize: 13 },
-  dot: { color: SUBTLE, fontSize: 13, marginHorizontal: 2 },
+  meta: { color: SUBTLE, fontSize: 13, fontFamily: fonts.bodyRegular },
+  dot: { color: SUBTLE, fontSize: 13, marginHorizontal: 2, fontFamily: fonts.bodyRegular },
   schedRow: { flexDirection: 'row', alignItems: 'center', marginTop: 8, gap: 5 },
-  schedText: { color: RED, fontSize: 13, fontWeight: '600' },
+  schedText: { color: RED, fontSize: 13, fontWeight: '600', fontFamily: fonts.bodySemiBold },
   cardFooter: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginTop: 14, borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: DIVIDER, paddingTop: 14 },
-  earn: { color: SUBTLE, fontSize: 14 },
-  earnAmt: { color: '#fff', fontWeight: '700' },
+  earn: { color: SUBTLE, fontSize: 14, fontFamily: fonts.bodyRegular },
+  earnAmt: { color: TEXT, fontWeight: '700', fontFamily: fonts.bodyBold },
   viewBtn: { flexDirection: 'row', alignItems: 'center', gap: 2, backgroundColor: RED, borderRadius: 999, paddingLeft: 14, paddingRight: 10, paddingVertical: 8 },
-  viewText: { color: '#fff', fontWeight: '700', fontSize: 14 },
+  viewText: { color: '#fff', fontWeight: '700', fontSize: 14, fontFamily: fonts.bodyBold },
   empty: { flex: 1, alignItems: 'center', justifyContent: 'center', paddingTop: 80, paddingHorizontal: 32 },
-  emptyTitle: { color: '#fff', fontSize: 17, fontWeight: '700', marginTop: 16 },
-  emptySub: { color: SUBTLE, fontSize: 14, textAlign: 'center', marginTop: 8, lineHeight: 20 },
+  emptyTitle: { color: TEXT, fontSize: 17, fontWeight: '700', marginTop: 16, fontFamily: fonts.display },
+  emptySub: { color: SUBTLE, fontSize: 14, textAlign: 'center', marginTop: 8, lineHeight: 20, fontFamily: fonts.bodyRegular },
 });
 
 // ===========================================================================
@@ -317,14 +316,14 @@ export const PalFavorDetail = ({ navigation, route }: any) => {
 
   if (gone) {
     return (
-      <View style={{ flex: 1, backgroundColor: DARK_BG }}>
+      <View style={{ flex: 1, backgroundColor: PAGE_BG }}>
         <MapBackdrop />
         <MapTopBar navigation={navigation} />
         <View style={st.sheet}>
           <Handle />
           <View style={{ alignItems: 'center', paddingVertical: 24 }}>
             <Ionicons name="time-outline" size={48} color={SUBTLE} />
-            <Txt variant="h4" color="#fff" center style={{ marginTop: 14 }}>This favor was just taken</Txt>
+            <Txt variant="h4" color={TEXT} center style={{ marginTop: 14 }}>This favor was just taken</Txt>
             <Txt variant="body" color={SUBTLE} center style={{ marginTop: 8 }}>
               Another Favor Pal accepted it, or the member cancelled. Browse other open favors.
             </Txt>
@@ -338,26 +337,26 @@ export const PalFavorDetail = ({ navigation, route }: any) => {
   }
 
   return (
-    <View style={{ flex: 1, backgroundColor: DARK_BG }}>
+    <View style={{ flex: 1, backgroundColor: PAGE_BG }}>
       <MapBackdrop />
       <MapTopBar navigation={navigation} />
       <View style={st.sheet}>
         <Handle />
-        <Txt variant="h3" color="#fff" center style={{ marginVertical: 14 }}>{title}</Txt>
+        <Txt variant="h3" color={TEXT} center style={{ marginVertical: 14 }}>{title}</Txt>
         <View style={st.divider} />
         <View style={{ flexDirection: 'row', marginTop: 16 }}>
           <View style={[st.avatar, { backgroundColor: SHEET_ALT, alignItems: 'center', justifyContent: 'center' }]}>
-            <Ionicons name="cube" size={26} color="#fff" />
+            <Ionicons name="cube" size={26} color={TEXT} />
           </View>
           <View style={{ flex: 1, marginLeft: 14 }}>
-            <Text style={{ color: '#fff', fontWeight: '700', fontSize: 18 }}>New favor request</Text>
-            <Text style={{ color: SUBTLE, fontSize: 14, marginTop: 4 }} numberOfLines={expanded ? undefined : 2}>
+            <Text style={{ color: TEXT, fontWeight: '700', fontSize: 18, fontFamily: fonts.bodyBold }}>New favor request</Text>
+            <Text style={{ color: SUBTLE, fontSize: 14, marginTop: 4, fontFamily: fonts.bodyRegular }} numberOfLines={expanded ? undefined : 2}>
               {favor?.description || 'No details provided yet.'}
             </Text>
-            <Text style={{ color: SUBTLE, fontSize: 13, marginTop: 6 }}>{when}</Text>
-            <Text style={{ fontSize: 14, marginTop: 6 }}>
-              <Text style={{ color: '#fff', fontWeight: '700' }}>{`You earn $${payout.toFixed(2)}`}</Text>
-              <Text style={{ color: SUBTLE }}>{`   ·   ${area}`}</Text>
+            <Text style={{ color: SUBTLE, fontSize: 13, marginTop: 6, fontFamily: fonts.bodyRegular }}>{when}</Text>
+            <Text style={{ fontSize: 14, marginTop: 6, fontFamily: fonts.bodyRegular }}>
+              <Text style={{ color: TEXT, fontWeight: '700', fontFamily: fonts.bodyBold }}>{`You earn $${payout.toFixed(2)}`}</Text>
+              <Text style={{ color: SUBTLE, fontFamily: fonts.bodyRegular }}>{`   ·   ${area}`}</Text>
             </Text>
             <TouchableOpacity
               onPress={() => setExpanded((v) => !v)}
@@ -365,7 +364,7 @@ export const PalFavorDetail = ({ navigation, route }: any) => {
               accessibilityState={{ expanded }}
               accessibilityLabel={expanded ? 'View less favor detail' : 'View more favor detail'}
             >
-              <Text style={{ color: '#fff', fontWeight: '700', fontSize: 14, marginTop: 8 }}>
+              <Text style={{ color: RED, fontWeight: '700', fontSize: 14, marginTop: 8, fontFamily: fonts.bodyBold }}>
                 {expanded ? 'View Less' : 'View More'}
               </Text>
             </TouchableOpacity>
@@ -396,7 +395,7 @@ export const PalFavorDetail = ({ navigation, route }: any) => {
           accessibilityRole="button"
           accessibilityLabel="Decline this favor"
         >
-          <Text style={{ color: SUBTLE, fontWeight: '600' }}>decline this favor</Text>
+          <Text style={{ color: SUBTLE, fontWeight: '600', fontFamily: fonts.bodySemiBold }}>decline this favor</Text>
         </TouchableOpacity>
       </View>
     </View>
@@ -406,8 +405,8 @@ export const PalFavorDetail = ({ navigation, route }: any) => {
 function QuickRow({ label, value }: any) {
   return (
     <View style={{ marginTop: 12 }}>
-      <Text style={{ color: SUBTLE, fontSize: 12, letterSpacing: 0.5, textTransform: 'uppercase' }}>{label}</Text>
-      <Text style={{ color: '#fff', fontSize: 14, marginTop: 2 }}>{value}</Text>
+      <Text style={{ color: SUBTLE, fontSize: 12, letterSpacing: 0.5, textTransform: 'uppercase', fontFamily: fonts.bodySemiBold }}>{label}</Text>
+      <Text style={{ color: TEXT, fontSize: 14, marginTop: 2, fontFamily: fonts.bodyRegular }}>{value}</Text>
     </View>
   );
 }
@@ -432,23 +431,23 @@ export const Navigation = ({ navigation }: any) => {
   };
 
   return (
-    <View style={{ flex: 1, backgroundColor: DARK_BG }}>
+    <View style={{ flex: 1, backgroundColor: PAGE_BG }}>
       <MapBackdrop />
       <MapTopBar navigation={navigation} banner="Head to the favor location." />
       <View style={st.sheet}>
         <Handle />
-        <Txt variant="h6" color="#fff" center style={{ marginVertical: 12 }}>Favor Booked</Txt>
+        <Txt variant="h6" color={TEXT} center style={{ marginVertical: 12 }}>Favor Booked</Txt>
         <View style={st.divider} />
         <View style={{ flexDirection: 'row', alignItems: 'center', marginTop: 16 }}>
           <Avatar uri={undefined} size={56} name={memberName} />
           <View style={{ marginLeft: 14 }}>
-            <Text style={{ color: '#fff', fontWeight: '700', fontSize: 18 }}>{memberName}</Text>
-            <Text style={{ color: SUBTLE, fontSize: 14, marginTop: 2 }}>{tierName}</Text>
-            {distance ? <Text style={{ color: SUBTLE, fontSize: 13, marginTop: 2 }}>{distance}</Text> : null}
+            <Text style={{ color: TEXT, fontWeight: '700', fontSize: 18, fontFamily: fonts.bodyBold }}>{memberName}</Text>
+            <Text style={{ color: SUBTLE, fontSize: 14, marginTop: 2, fontFamily: fonts.bodyRegular }}>{tierName}</Text>
+            {distance ? <Text style={{ color: SUBTLE, fontSize: 13, marginTop: 2, fontFamily: fonts.bodyRegular }}>{distance}</Text> : null}
           </View>
         </View>
-        <Text style={{ color: '#fff', fontSize: 26, fontWeight: '800', textAlign: 'center', marginTop: 18 }}>{window}</Text>
-        <View style={st.windowPill}><Text style={{ color: '#fff', fontSize: 13 }}>Arrival Window</Text></View>
+        <Text style={{ color: TEXT, fontSize: 26, fontWeight: '800', textAlign: 'center', marginTop: 18, fontFamily: fonts.display }}>{window}</Text>
+        <View style={st.windowPill}><Text style={{ color: SUBTLE, fontSize: 13, fontFamily: fonts.bodyRegular }}>Arrival Window</Text></View>
 
         <ActionRow icon="call" label="Call About This Favor" onPress={() => setCallOpen(true)} />
         <ActionRow icon="mail" label="Message Favor Member" red onPress={openMessage} />
@@ -467,7 +466,7 @@ export const Navigation = ({ navigation }: any) => {
           accessibilityLabel="Cancel this favor"
           onPress={() => { s.cancelFavor(); navigation.navigate('Tabs'); }}
         >
-          <Text style={{ color: '#fff', fontWeight: '700', letterSpacing: 0.5 }}>CANCEL THIS FAVOR</Text>
+          <Text style={{ color: TEXT, fontWeight: '700', letterSpacing: 0.5, fontFamily: fonts.bodySemiBold }}>CANCEL THIS FAVOR</Text>
         </TouchableOpacity>
       </View>
       {/* Privacy: the call is relayed — the pal never sees the member's real number. */}
@@ -491,8 +490,8 @@ function ActionRow({ icon, label, red, onPress }: any) {
       accessibilityRole="button"
       accessibilityLabel={label}
     >
-      <Ionicons name={icon} size={20} color={red ? RED : '#fff'} />
-      <Text style={{ color: '#fff', fontSize: 15, marginLeft: 14, flex: 1 }}>{label}</Text>
+      <Ionicons name={icon} size={20} color={red ? RED : TEXT} />
+      <Text style={{ color: TEXT, fontSize: 15, marginLeft: 14, flex: 1, fontFamily: fonts.bodyRegular }}>{label}</Text>
       <Ionicons name="chevron-forward" size={18} color={SUBTLE} />
     </TouchableOpacity>
   );
@@ -518,19 +517,19 @@ export const PalFavorInProgress = ({ navigation }: any) => {
       ? new Date(fav.createdAt).toLocaleString([], { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })
       : '';
   return (
-    <View style={{ flex: 1, backgroundColor: DARK_BG }}>
+    <View style={{ flex: 1, backgroundColor: PAGE_BG }}>
       <MapBackdrop />
       <MapTopBar navigation={navigation} />
       <ScrollView style={st.scrollSheet} contentContainerStyle={{ paddingBottom: 24 }}>
         <Handle />
-        <Txt variant="h6" color="#fff" center style={{ marginVertical: 12 }}>You are currently doing a favor.</Txt>
+        <Txt variant="h6" color={TEXT} center style={{ marginVertical: 12 }}>You are currently doing a favor.</Txt>
         <View style={st.divider} />
         <View style={{ flexDirection: 'row', marginTop: 16 }}>
           <Avatar uri={undefined} size={56} name={memberName} />
           <View style={{ flex: 1, marginLeft: 14 }}>
-            <Text style={{ color: '#fff', fontWeight: '700', fontSize: 18 }}>{memberName}</Text>
-            <Text style={{ color: SUBTLE, fontSize: 14, marginTop: 4 }}>{description}</Text>
-            {when ? <Text style={{ color: SUBTLE, fontSize: 13, marginTop: 4 }}>{when}</Text> : null}
+            <Text style={{ color: TEXT, fontWeight: '700', fontSize: 18, fontFamily: fonts.bodyBold }}>{memberName}</Text>
+            <Text style={{ color: SUBTLE, fontSize: 14, marginTop: 4, fontFamily: fonts.bodyRegular }}>{description}</Text>
+            {when ? <Text style={{ color: SUBTLE, fontSize: 13, marginTop: 4, fontFamily: fonts.bodyRegular }}>{when}</Text> : null}
           </View>
         </View>
         <View style={[st.divider, { marginTop: 18 }]} />
@@ -563,8 +562,8 @@ export const PalFavorInProgress = ({ navigation }: any) => {
 function CostRow({ label, value, bold }: any) {
   return (
     <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginVertical: 2 }}>
-      <Text style={{ color: bold ? '#fff' : SUBTLE, fontSize: 14, fontWeight: bold ? '700' : '400' }}>{label}</Text>
-      <Text style={{ color: bold ? '#fff' : SUBTLE, fontSize: 14, fontWeight: bold ? '700' : '400' }}>{value}</Text>
+      <Text style={{ color: bold ? TEXT : SUBTLE, fontSize: 14, fontWeight: bold ? '700' : '400', fontFamily: bold ? fonts.bodyBold : fonts.bodyRegular }}>{label}</Text>
+      <Text style={{ color: bold ? TEXT : SUBTLE, fontSize: 14, fontWeight: bold ? '700' : '400', fontFamily: bold ? fonts.bodyBold : fonts.bodyRegular }}>{value}</Text>
     </View>
   );
 }
@@ -573,10 +572,10 @@ function Section({ icon, title, body }: any) {
   return (
     <View style={{ marginTop: 18 }}>
       <View style={{ flexDirection: 'row', alignItems: 'center' }}>
-        <Ionicons name={icon} size={18} color="#fff" />
-        <Text style={{ color: '#fff', fontWeight: '700', fontSize: 16, marginLeft: 8 }}>{title}</Text>
+        <Ionicons name={icon} size={18} color={TEXT} />
+        <Text style={{ color: TEXT, fontWeight: '700', fontSize: 16, marginLeft: 8, fontFamily: fonts.bodyBold }}>{title}</Text>
       </View>
-      <Text style={{ color: SUBTLE, fontSize: 14, marginTop: 6, marginLeft: 26 }}>{body}</Text>
+      <Text style={{ color: SUBTLE, fontSize: 14, marginTop: 6, marginLeft: 26, fontFamily: fonts.bodyRegular }}>{body}</Text>
     </View>
   );
 }
@@ -588,10 +587,10 @@ export const PalFavorSuccess = ({ navigation, route }: any) => {
   const payout = route?.params?.payout;
   const paid = typeof payout === 'number';
   return (
-    <SafeAreaView edges={['top', 'bottom']} style={{ flex: 1, backgroundColor: DARK_BG }}>
+    <SafeAreaView edges={['top', 'bottom']} style={{ flex: 1, backgroundColor: PAGE_BG }}>
       <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 24 }}>
         <Ionicons name="checkmark-circle-outline" size={120} color="#4CAF50" />
-        <Txt variant="h2" color="#fff" center style={{ marginTop: 24 }}>
+        <Txt variant="h2" color={TEXT} center style={{ marginTop: 24 }}>
           {paid ? `You just got paid $${payout.toFixed(2)}!` : 'You just got paid!'}
         </Txt>
         {paid && (
@@ -628,13 +627,13 @@ export const PalFavorComplete = ({ navigation }: any) => {
     navigation.navigate('Tabs');
   };
   return (
-    <SafeAreaView edges={['top', 'bottom']} style={{ flex: 1, backgroundColor: DARK_BG }}>
+    <SafeAreaView edges={['top', 'bottom']} style={{ flex: 1, backgroundColor: PAGE_BG }}>
       <ScrollView contentContainerStyle={{ paddingHorizontal: 24, paddingBottom: 24, flexGrow: 1 }}>
-        <Txt variant="h2" color="#fff" center style={{ marginTop: 24 }}>Thank You!</Txt>
+        <Txt variant="h2" color={TEXT} center style={{ marginTop: 24 }}>Thank You!</Txt>
         <Image source={CHARACTERS} style={{ width: '100%', height: 320, marginTop: 12 }} resizeMode="contain" />
         <View style={[st.divider, { marginTop: 8 }]} />
         <View style={{ flexDirection: 'row', alignItems: 'center', marginTop: 20 }}>
-          <Txt variant="h4" color="#fff" style={{ marginRight: 24 }}>Rating</Txt>
+          <Txt variant="h4" color={TEXT} style={{ marginRight: 24 }}>Rating</Txt>
           <View style={{ flexDirection: 'row', gap: 6 }}>
             {[1, 2, 3, 4, 5].map((i) => (
               <TouchableOpacity
@@ -650,16 +649,16 @@ export const PalFavorComplete = ({ navigation }: any) => {
           </View>
         </View>
         <View style={[st.divider, { marginTop: 20 }]} />
-        <Txt variant="body" color="#fff" style={{ marginTop: 20 }}>Tell us about your experience</Txt>
+        <Txt variant="body" color={TEXT} style={{ marginTop: 20 }}>Tell us about your experience</Txt>
         <View style={st.feedbackBox}>
           <TextInput
-            style={[tokens.typography.body, { color: '#fff', minHeight: 120, textAlignVertical: 'top' }]}
+            style={[tokens.typography.body, { color: TEXT, minHeight: 120, textAlignVertical: 'top' }]}
             multiline
             maxLength={700}
             value={feedback}
             onChangeText={setFeedback}
             placeholder="Write your feedback..."
-            placeholderTextColor="#6B7280"
+            placeholderTextColor={MUTED}
           />
         </View>
         <View style={{ flex: 1 }} />
@@ -679,19 +678,18 @@ export const PalFavorComplete = ({ navigation }: any) => {
 };
 
 const st = StyleSheet.create({
-  iconBtn: { width: 40, height: 40, borderRadius: 12, backgroundColor: '#fff', alignItems: 'center', justifyContent: 'center' },
-  switchPill: { backgroundColor: '#fff', borderRadius: 999, paddingHorizontal: 16, paddingVertical: 10, flexDirection: 'row', alignItems: 'center' },
-  navBanner: { backgroundColor: '#1C2331', borderRadius: 14, paddingHorizontal: 18, paddingVertical: 14, flexDirection: 'row', alignItems: 'center' },
-  sheet: { position: 'absolute', left: 0, right: 0, bottom: 0, backgroundColor: SHEET, borderTopLeftRadius: 24, borderTopRightRadius: 24, paddingHorizontal: 24, paddingTop: 12, paddingBottom: 36 },
-  scrollSheet: { position: 'absolute', left: 0, right: 0, bottom: 0, maxHeight: '78%', backgroundColor: SHEET, borderTopLeftRadius: 24, borderTopRightRadius: 24, paddingHorizontal: 24, paddingTop: 12 },
-  handle: { alignSelf: 'center', width: 44, height: 5, borderRadius: 3, backgroundColor: '#3A4250' },
+  iconBtn: { width: 40, height: 40, borderRadius: 12, backgroundColor: '#fff', alignItems: 'center', justifyContent: 'center', borderWidth: StyleSheet.hairlineWidth, borderColor: BORDER, ...tokens.shadow.card },
+  navBanner: { backgroundColor: lightTheme.cta, borderRadius: 14, paddingHorizontal: 18, paddingVertical: 14, flexDirection: 'row', alignItems: 'center' },
+  sheet: { position: 'absolute', left: 0, right: 0, bottom: 0, backgroundColor: SHEET, borderTopLeftRadius: 24, borderTopRightRadius: 24, paddingHorizontal: 24, paddingTop: 12, paddingBottom: 36, borderTopWidth: StyleSheet.hairlineWidth, borderColor: BORDER, shadowColor: '#000', shadowOffset: { width: 0, height: -3 }, shadowOpacity: 0.08, shadowRadius: 12, elevation: 16 },
+  scrollSheet: { position: 'absolute', left: 0, right: 0, bottom: 0, maxHeight: '78%', backgroundColor: SHEET, borderTopLeftRadius: 24, borderTopRightRadius: 24, paddingHorizontal: 24, paddingTop: 12, borderTopWidth: StyleSheet.hairlineWidth, borderColor: BORDER, shadowColor: '#000', shadowOffset: { width: 0, height: -3 }, shadowOpacity: 0.08, shadowRadius: 12, elevation: 16 },
+  handle: { alignSelf: 'center', width: 44, height: 5, borderRadius: 3, backgroundColor: DIVIDER },
   divider: { height: StyleSheet.hairlineWidth, backgroundColor: DIVIDER },
   avatar: { width: 56, height: 56, borderRadius: 28 },
   redBadge: { position: 'absolute', top: -4, right: -4, width: 22, height: 22, borderRadius: 11, backgroundColor: RED, alignItems: 'center', justifyContent: 'center', borderWidth: 2, borderColor: SHEET },
   windowPill: { alignSelf: 'center', backgroundColor: SHEET_ALT, borderRadius: 999, paddingHorizontal: 16, paddingVertical: 6, marginTop: 8 },
   actionRow: { flexDirection: 'row', alignItems: 'center', paddingVertical: 16, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: DIVIDER },
-  whiteBtn: { backgroundColor: '#fff', borderRadius: 14, height: 54, alignItems: 'center', justifyContent: 'center', marginTop: 22 },
-  whiteBtnTxt: { color: '#141414', fontWeight: '700', fontSize: 16, letterSpacing: 0.5 },
-  blackBtn: { backgroundColor: '#000', borderRadius: 14, height: 54, alignItems: 'center', justifyContent: 'center', marginTop: 12 },
-  feedbackBox: { backgroundColor: SHEET_ALT, borderRadius: 16, padding: 16, marginTop: 12 },
+  whiteBtn: { backgroundColor: lightTheme.cta, borderRadius: 14, height: 54, alignItems: 'center', justifyContent: 'center', marginTop: 22 },
+  whiteBtnTxt: { color: '#fff', fontWeight: '700', fontSize: 16, letterSpacing: 0.5, fontFamily: fonts.bodySemiBold },
+  blackBtn: { backgroundColor: lightTheme.secondaryBtn, borderRadius: 14, height: 54, alignItems: 'center', justifyContent: 'center', marginTop: 12 },
+  feedbackBox: { backgroundColor: SHEET_ALT, borderRadius: 16, padding: 16, marginTop: 12, borderWidth: StyleSheet.hairlineWidth, borderColor: BORDER },
 });

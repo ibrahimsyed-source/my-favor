@@ -13,11 +13,7 @@ import {
   computeFees, computePayout, FAVOR_TIERS, MEMBER_STATUS_STEPS,
 } from '../types';
 
-// Dark map-sheet palette (this module renders on a dark map regardless of theme).
-const MAP_BG = palette.darkBg; // #131820
-const SHEET_BG = palette.darkSurface; // #1C2331
-const SHEET_BORDER = palette.darkBorder; // #2C3647
-const SUBTEXT = '#9AA3B2';
+// Brand + on-accent constants reused across this screen.
 const WHITE = palette.white;
 const RED = palette.brand;
 
@@ -42,6 +38,7 @@ const formatFavorDate = (ms?: number) => {
 // back to the Figma literals when there is no live favor (prototype/demo).
 // ---------------------------------------------------------------------------
 export const FavorTracking = ({ navigation }: any) => {
+  const { theme } = useTheme();
   const s = useStore();
   const fav = s.activeFavor;
   const pal = s.activePal;
@@ -89,36 +86,30 @@ export const FavorTracking = ({ navigation }: any) => {
   const mapsKey = process.env.EXPO_PUBLIC_GOOGLE_MAPS_KEY;
 
   return (
-    <SafeAreaView style={{ flex: 1, backgroundColor: MAP_BG }} edges={['top', 'bottom']}>
+    <SafeAreaView style={{ flex: 1, backgroundColor: theme.background }} edges={['top', 'bottom']}>
       {mapsKey && fav?.location ? (
         <View style={{ position: 'absolute', top: 0, left: 0, right: 0, height: 440 }} pointerEvents="none">
           <StaticMap lat={fav.location.lat} lng={fav.location.lng} height={440} zoom={14} />
         </View>
       ) : null}
-      {/* Top nav banner over the (dark) map */}
+      {/* Top nav banner over the (light) map */}
       <View style={styles.navRow}>
         <TouchableOpacity
-          style={styles.menuBtn}
+          style={[styles.menuBtn, { backgroundColor: theme.card, borderColor: theme.border }]}
           activeOpacity={0.8}
           onPress={() => navigation.navigate('SideDrawer')}
           accessibilityRole="button"
           accessibilityLabel="Open menu"
         >
-          <Ionicons name="menu" size={22} color={WHITE} />
+          <Ionicons name="menu" size={22} color={theme.text} />
         </TouchableOpacity>
-        <View style={styles.switchPill}>
-          <Ionicons name="swap-horizontal" size={16} color="#141414" />
-          <Txt variant="bodySm" color="#141414" style={{ marginLeft: 6 }}>
-            Switch to request a favor
-          </Txt>
-        </View>
       </View>
 
-      {/* small peek of the dark map */}
+      {/* small peek of the light map */}
       <View style={{ height: 52 }} />
 
-      {/* Dark bottom sheet */}
-      <View style={styles.sheet}>
+      {/* Light bottom sheet */}
+      <View style={[styles.sheet, { backgroundColor: theme.card, borderTopWidth: StyleSheet.hairlineWidth, borderColor: theme.border }, tokens.shadow.card]}>
         <ScrollView
           showsVerticalScrollIndicator={false}
           contentContainerStyle={{ padding: tokens.spacing.lg, paddingBottom: tokens.spacing.xl }}
@@ -126,35 +117,35 @@ export const FavorTracking = ({ navigation }: any) => {
           <Ionicons
             name="chevron-down"
             size={22}
-            color={SUBTEXT}
+            color={theme.textSecondary}
             style={{ alignSelf: 'center', marginBottom: 6 }}
           />
-          <Txt variant="h3" center color={WHITE}>Favor Booked</Txt>
+          <Txt variant="h3" center color={theme.text}>Favor Booked</Txt>
 
-          <View style={styles.divider} />
+          <View style={[styles.divider, { backgroundColor: theme.divider }]} />
 
           {/* Pal / favor profile row */}
           <View style={styles.profileRow}>
             <View>
               <Avatar uri={palAvatar} size={56} />
-              <View style={styles.badge}>
+              <View style={[styles.badge, { borderColor: theme.card }]}>
                 <Ionicons name="add" size={12} color={WHITE} />
               </View>
             </View>
             <View style={{ flex: 1, marginLeft: 14 }}>
-              <Txt variant="label" color={WHITE}>{palName}</Txt>
+              <Txt variant="label" color={theme.text}>{palName}</Txt>
               {pal ? (
                 <View style={styles.ratingRow} accessibilityLabel={`Pal rated ${pal.rating.toFixed(1)} out of 5`}>
                   <StarRating value={pal.rating} size={12} />
-                  <Txt variant="caption" color={SUBTEXT} style={{ marginLeft: 6 }}>
+                  <Txt variant="caption" color={theme.textSecondary} style={{ marginLeft: 6 }}>
                     {pal.rating.toFixed(1)}
                   </Txt>
                 </View>
               ) : null}
-              <Txt variant="caption" color={SUBTEXT} numberOfLines={2} style={{ marginTop: 2 }}>
+              <Txt variant="caption" color={theme.textSecondary} numberOfLines={2} style={{ marginTop: 2 }}>
                 {description}
               </Txt>
-              <Txt variant="caption" color={SUBTEXT} style={{ marginTop: 2 }}>
+              <Txt variant="caption" color={theme.textSecondary} style={{ marginTop: 2 }}>
                 {dateLabel}
               </Txt>
               <TouchableOpacity activeOpacity={0.7}>
@@ -164,7 +155,7 @@ export const FavorTracking = ({ navigation }: any) => {
           </View>
 
           {/* Arrival window */}
-          <Txt variant="h2" center color={WHITE} style={{ marginTop: tokens.spacing.lg }}>
+          <Txt variant="h2" center color={theme.text} style={{ marginTop: tokens.spacing.lg }}>
             {etaWindow}
           </Txt>
 
@@ -180,14 +171,14 @@ export const FavorTracking = ({ navigation }: any) => {
               return (
                 <React.Fragment key={step.status}>
                   {i > 0 && (
-                    <View style={[styles.timelineBar, { backgroundColor: i <= currentStep ? RED : SHEET_BORDER }]} />
+                    <View style={[styles.timelineBar, { backgroundColor: i <= currentStep ? RED : theme.border }]} />
                   )}
                   <View
                     style={[
                       styles.timelineDot,
                       {
-                        backgroundColor: done ? RED : SHEET_BG,
-                        borderColor: isCurrent ? WHITE : done ? RED : SHEET_BORDER,
+                        backgroundColor: done ? RED : theme.surfaceAlt,
+                        borderColor: isCurrent ? theme.text : done ? RED : theme.border,
                       },
                     ]}
                   />
@@ -195,53 +186,53 @@ export const FavorTracking = ({ navigation }: any) => {
               );
             })}
           </View>
-          <Txt variant="caption" center color={SUBTEXT} style={{ marginTop: 6 }}>
+          <Txt variant="caption" center color={theme.textSecondary} style={{ marginTop: 6 }}>
             {statusLabel}
           </Txt>
 
           <TouchableOpacity
-            style={styles.cancelPill}
+            style={[styles.cancelPill, { borderColor: theme.border }]}
             activeOpacity={0.8}
             onPress={onCancel}
             accessibilityRole="button"
             accessibilityLabel="Cancel favor"
           >
-            <Txt variant="button" color={WHITE}>CANCEL FAVOR</Txt>
+            <Txt variant="button" color={theme.text}>CANCEL FAVOR</Txt>
           </TouchableOpacity>
 
-          <View style={styles.divider} />
+          <View style={[styles.divider, { backgroundColor: theme.divider }]} />
 
           {/* Favor / total-paid row */}
           <View style={styles.favorRow}>
-            <View style={styles.favorIcon}>
+            <View style={[styles.favorIcon, { backgroundColor: theme.surfaceAlt }]}>
               <Ionicons name="cube" size={20} color={RED} />
             </View>
             <View style={{ flex: 1, marginLeft: 14 }}>
-              <Txt variant="label" color={WHITE}>{tierLabel}</Txt>
-              <Txt variant="caption" color={SUBTEXT} style={{ marginTop: 2 }}>Total paid</Txt>
+              <Txt variant="label" color={theme.text}>{tierLabel}</Txt>
+              <Txt variant="caption" color={theme.textSecondary} style={{ marginTop: 2 }}>Total paid</Txt>
             </View>
-            <Txt variant="label" color={WHITE}>${totalPaid.toFixed(2)}</Txt>
+            <Txt variant="label" color={theme.text}>${totalPaid.toFixed(2)}</Txt>
           </View>
           {/* Transparency: what the member paid vs what the Pal actually receives */}
-          <Txt variant="caption" color={SUBTEXT} style={{ marginTop: 6, marginLeft: 58 }}>
+          <Txt variant="caption" color={theme.textSecondary} style={{ marginTop: 6, marginLeft: 58 }}>
             Pal receives ${payout.toFixed(2)} · Service fee ${fees.serviceFee.toFixed(2)}
           </Txt>
 
           {/* Description */}
           <View style={styles.metaLabel}>
             <Ionicons name="document-text-outline" size={16} color={RED} />
-            <Txt variant="caption" color={SUBTEXT} style={{ marginLeft: 8 }}>Description</Txt>
+            <Txt variant="caption" color={theme.textSecondary} style={{ marginLeft: 8 }}>Description</Txt>
           </View>
-          <Txt variant="bodySm" color={WHITE} style={{ marginTop: 4, marginLeft: 24 }}>
+          <Txt variant="bodySm" color={theme.text} style={{ marginTop: 4, marginLeft: 24 }}>
             {description}
           </Txt>
 
           {/* Address */}
           <View style={[styles.metaLabel, { marginTop: tokens.spacing.base }]}>
             <Ionicons name="location-outline" size={16} color={RED} />
-            <Txt variant="caption" color={SUBTEXT} style={{ marginLeft: 8 }}>Address</Txt>
+            <Txt variant="caption" color={theme.textSecondary} style={{ marginLeft: 8 }}>Address</Txt>
           </View>
-          <Txt variant="bodySm" color={WHITE} style={{ marginTop: 4, marginLeft: 24 }}>
+          <Txt variant="bodySm" color={theme.text} style={{ marginTop: 4, marginLeft: 24 }}>
             {address}
           </Txt>
 
@@ -257,14 +248,14 @@ export const FavorTracking = ({ navigation }: any) => {
             {isCompleted ? (
               <Button
                 title="RATE YOUR PAL"
-                variant="white"
+                variant="secondary"
                 style={{ flex: 1 }}
                 onPress={() => navigation.navigate('OrderComplete')}
               />
             ) : (
               <Button
                 title="MESSAGE PAL"
-                variant="white"
+                variant="secondary"
                 style={{ flex: 1 }}
                 onPress={() => navigation.navigate('Tabs', { screen: 'Messages' })}
               />
@@ -273,7 +264,7 @@ export const FavorTracking = ({ navigation }: any) => {
         </ScrollView>
 
         {/* Bottom tab bar (visual, matches reference) — now wired */}
-        <View style={styles.tabBar}>
+        <View style={[styles.tabBar, { borderTopColor: theme.divider }]}>
           <TouchableOpacity
             style={styles.tabItem}
             activeOpacity={0.7}
@@ -281,8 +272,8 @@ export const FavorTracking = ({ navigation }: any) => {
             accessibilityRole="button"
             accessibilityLabel="Share favor status and invite a friend"
           >
-            <Ionicons name="share-social-outline" size={22} color={SUBTEXT} />
-            <Txt variant="tab" color={SUBTEXT} style={{ marginTop: 4 }}>SHARE</Txt>
+            <Ionicons name="share-social-outline" size={22} color={theme.textSecondary} />
+            <Txt variant="tab" color={theme.textSecondary} style={{ marginTop: 4 }}>SHARE</Txt>
           </TouchableOpacity>
           <TouchableOpacity
             style={styles.tabItem}
@@ -303,8 +294,8 @@ export const FavorTracking = ({ navigation }: any) => {
             accessibilityRole="button"
             accessibilityLabel="Activity history"
           >
-            <Ionicons name="time-outline" size={22} color={SUBTEXT} />
-            <Txt variant="tab" color={SUBTEXT} style={{ marginTop: 4 }}>ACTIVITY</Txt>
+            <Ionicons name="time-outline" size={22} color={theme.textSecondary} />
+            <Txt variant="tab" color={theme.textSecondary} style={{ marginTop: 4 }}>ACTIVITY</Txt>
           </TouchableOpacity>
         </View>
       </View>
@@ -471,32 +462,18 @@ const styles = StyleSheet.create({
     width: 44,
     height: 44,
     borderRadius: tokens.radius.md,
-    backgroundColor: SHEET_BG,
     borderWidth: 1,
-    borderColor: SHEET_BORDER,
     alignItems: 'center',
     justifyContent: 'center',
-  },
-  switchPill: {
-    flex: 1,
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    height: 44,
-    borderRadius: tokens.radius.pill,
-    backgroundColor: WHITE,
-    paddingHorizontal: tokens.spacing.base,
   },
   sheet: {
     flex: 1,
-    backgroundColor: SHEET_BG,
     borderTopLeftRadius: 28,
     borderTopRightRadius: 28,
     overflow: 'hidden',
   },
   divider: {
     height: StyleSheet.hairlineWidth,
-    backgroundColor: SHEET_BORDER,
     marginVertical: tokens.spacing.base,
   },
   profileRow: { flexDirection: 'row', alignItems: 'center' },
@@ -511,7 +488,6 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
     borderWidth: 2,
-    borderColor: SHEET_BG,
   },
   timeline: {
     flexDirection: 'row',
@@ -537,14 +513,12 @@ const styles = StyleSheet.create({
     paddingVertical: tokens.spacing.sm,
     borderRadius: tokens.radius.pill,
     borderWidth: 1,
-    borderColor: 'rgba(255,255,255,0.35)',
   },
   favorRow: { flexDirection: 'row', alignItems: 'center' },
   favorIcon: {
     width: 44,
     height: 44,
     borderRadius: tokens.radius.md,
-    backgroundColor: WHITE,
     alignItems: 'center',
     justifyContent: 'center',
   },
@@ -553,7 +527,6 @@ const styles = StyleSheet.create({
   tabBar: {
     flexDirection: 'row',
     borderTopWidth: StyleSheet.hairlineWidth,
-    borderTopColor: SHEET_BORDER,
     paddingTop: tokens.spacing.sm,
     paddingBottom: tokens.spacing.xs,
   },

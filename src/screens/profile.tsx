@@ -7,41 +7,36 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import * as ImagePicker from 'expo-image-picker';
 import { Screen, Txt, Button, Row, TopBar, InfoModal, ConfirmModal } from '../components';
-import { useTheme } from '../theme';
+import { useTheme, fonts } from '../theme';
 import { useStore } from '../store';
-import { roleSwitchLabel } from '../types';
 
 // ---------------------------------------------------------------------------
-// Module palette — Profile / EditProfile are dark, Settings light, drawer navy.
+// Module palette — all screens follow the app's light theme; only the brand
+// red accent and the rating-star amber are kept as fixed literals.
 // ---------------------------------------------------------------------------
-const DARK_BG = '#0C0C0C';
-const FIELD_BG = '#1C2331';
-const NAVY = '#1C2331';
 const RED = '#ED1C24';
 const STAR = '#FFBD00';
-const SUBTLE = '#9BA1A6';
-const PLACEHOLDER = '#6B7280';
-const DARK_DIVIDER = '#262626';
 
 // ---------------------------------------------------------------------------
 // Shared dark-surface building blocks
 // ---------------------------------------------------------------------------
 function DarkHeader({ title, onBack, rightIcon, onRight }: any) {
+  const { theme } = useTheme();
   return (
-    <View style={st.darkHeader}>
+    <View style={[st.darkHeader, { backgroundColor: theme.background, borderBottomColor: theme.border }]}>
       {/* Root tab screens (Profile) pass no onBack, so no back chevron renders. */}
       <View style={{ width: 40 }}>
         {onBack ? (
           <TouchableOpacity onPress={onBack} hitSlop={10} accessibilityRole="button" accessibilityLabel="Go back">
-            <Ionicons name="chevron-back" size={26} color="#fff" />
+            <Ionicons name="chevron-back" size={26} color={theme.text} />
           </TouchableOpacity>
         ) : null}
       </View>
-      <Txt variant="h6" color="#fff">{title}</Txt>
+      <Txt variant="h6" color={theme.text}>{title}</Txt>
       <View style={{ width: 40, alignItems: 'flex-end' }}>
         {rightIcon ? (
           <TouchableOpacity onPress={onRight} hitSlop={10} accessibilityRole="button" accessibilityLabel="Edit profile">
-            <Ionicons name={rightIcon} size={22} color="#fff" />
+            <Ionicons name={rightIcon} size={22} color={theme.text} />
           </TouchableOpacity>
         ) : null}
       </View>
@@ -53,17 +48,18 @@ function DarkField({
   label, value, onChangeText, placeholder, secureTextEntry, keyboardType,
   multiline, maxLength, autoCapitalize,
 }: any) {
+  const { theme } = useTheme();
   const [hide, setHide] = useState(!!secureTextEntry);
   return (
     <View style={{ flex: 1 }}>
-      {label ? <Text style={st.darkLabel}>{label}</Text> : null}
-      <View style={[st.darkInput, multiline && { height: 120, alignItems: 'flex-start' }]}>
+      {label ? <Txt variant="label" style={{ marginBottom: 8 }}>{label}</Txt> : null}
+      <View style={[st.darkInput, { backgroundColor: theme.inputBg }, multiline && { height: 120, alignItems: 'flex-start' }]}>
         <TextInput
-          style={{ flex: 1, color: '#fff', fontSize: 16, paddingVertical: multiline ? 10 : 0 }}
+          style={{ flex: 1, color: theme.text, fontSize: 16, paddingVertical: multiline ? 10 : 0 }}
           value={value}
           onChangeText={onChangeText}
           placeholder={placeholder}
-          placeholderTextColor={PLACEHOLDER}
+          placeholderTextColor={theme.textTertiary}
           secureTextEntry={hide}
           keyboardType={keyboardType}
           multiline={multiline}
@@ -73,7 +69,7 @@ function DarkField({
         />
         {secureTextEntry ? (
           <TouchableOpacity onPress={() => setHide((h) => !h)} hitSlop={8}>
-            <Ionicons name={hide ? 'eye-off' : 'eye'} size={20} color={PLACEHOLDER} />
+            <Ionicons name={hide ? 'eye-off' : 'eye'} size={20} color={theme.textTertiary} />
           </TouchableOpacity>
         ) : null}
       </View>
@@ -82,22 +78,23 @@ function DarkField({
 }
 
 function PhoneField({ value, onChangeText }: any) {
+  const { theme } = useTheme();
   return (
     <View>
-      <Text style={st.darkLabel}>Phone Number</Text>
-      <View style={st.darkInput} accessibilityLabel="Country code, United States, plus 1">
+      <Txt variant="label" style={{ marginBottom: 8 }}>Phone Number</Txt>
+      <View style={[st.darkInput, { backgroundColor: theme.inputBg }]} accessibilityLabel="Country code, United States, plus 1">
         {/* Plain text rather than the regional-indicator flag emoji, which degrades
             to bare letters on Windows/web and to tofu boxes on some Android builds. */}
-        <Text style={{ color: '#fff', fontSize: 13, fontWeight: '700' }}>US</Text>
-        <Text style={{ color: '#fff', fontSize: 16, marginLeft: 8, marginRight: 4 }}>+1</Text>
-        <Ionicons name="chevron-down" size={16} color={SUBTLE} />
-        <View style={{ width: 1, height: 24, backgroundColor: '#33384A', marginHorizontal: 12 }} />
+        <Txt color={theme.text} style={{ fontSize: 13, fontFamily: fonts.bodyBold }}>US</Txt>
+        <Txt color={theme.text} style={{ fontSize: 16, marginLeft: 8, marginRight: 4 }}>+1</Txt>
+        <Ionicons name="chevron-down" size={16} color={theme.textSecondary} />
+        <View style={{ width: 1, height: 24, backgroundColor: theme.divider, marginHorizontal: 12 }} />
         <TextInput
-          style={{ flex: 1, color: '#fff', fontSize: 16 }}
+          style={{ flex: 1, color: theme.text, fontSize: 16 }}
           value={value}
           onChangeText={onChangeText}
           placeholder="8000 - 000 - 000"
-          placeholderTextColor={PLACEHOLDER}
+          placeholderTextColor={theme.textTertiary}
           keyboardType="phone-pad"
         />
       </View>
@@ -109,17 +106,15 @@ function PhoneField({ value, onChangeText }: any) {
 // 1. Profile — dark self-profile (figma 100:13030)
 // ===========================================================================
 export const Profile = ({ navigation }: any) => {
+  const { theme } = useTheme();
   const s = useStore();
   const user = s.user;
   if (!user) return null;
 
   const isPal = user.role === 'pal';
-  // One shared helper so the Profile toggle copy can never disagree with Home.
-  const switchLabel = roleSwitchLabel(user.role);
-  const toggleRole = () => s.setRole(isPal ? 'member' : 'pal');
 
   return (
-    <SafeAreaView edges={['top']} style={{ flex: 1, backgroundColor: DARK_BG }}>
+    <SafeAreaView edges={['top']} style={{ flex: 1, backgroundColor: theme.background }}>
       {/* Profile is a root tab, not a pushed screen, so no back chevron. */}
       <DarkHeader
         title="Profile"
@@ -128,34 +123,20 @@ export const Profile = ({ navigation }: any) => {
       />
       <ScrollView contentContainerStyle={{ paddingHorizontal: 20, paddingBottom: 32 }}>
         {/* Avatar + identity */}
-        <Image source={{ uri: user.avatar }} style={st.profileAvatar} />
-        <Txt variant="h3" color="#fff" center style={{ marginTop: 16 }}>{user.firstName}</Txt>
+        <Image source={{ uri: user.avatar }} style={[st.profileAvatar, { backgroundColor: theme.surfaceAlt }]} />
+        <Txt variant="h3" color={theme.text} center style={{ marginTop: 16 }}>{user.firstName}</Txt>
         <TouchableOpacity onPress={() => navigation.navigate('SetStatus')} style={st.setStatus} activeOpacity={0.7}>
           <View style={st.statusDot} />
-          <Text style={{ color: RED, fontSize: 15, fontWeight: '700' }}>Set Status</Text>
+          <Txt color={RED} style={{ fontSize: 15, fontFamily: fonts.bodyBold }}>Set Status</Txt>
         </TouchableOpacity>
 
         {/* Bio */}
-        <Txt variant="body" color={SUBTLE} center style={{ marginTop: 18, paddingHorizontal: 4 }}>
+        <Txt variant="body" color={theme.textSecondary} center style={{ marginTop: 18, paddingHorizontal: 4 }}>
           {user.bio}
         </Txt>
 
-        {/* Role switch pill */}
-        <View style={st.switchPill}>
-          <Text style={{ color: '#141414', fontSize: 15, fontWeight: '600' }}>{switchLabel}</Text>
-          <Switch
-            value={isPal}
-            onValueChange={toggleRole}
-            trackColor={{ false: '#D1D5DB', true: RED }}
-            thumbColor="#fff"
-            accessibilityRole="switch"
-            accessibilityLabel={switchLabel}
-            accessibilityState={{ checked: isPal }}
-          />
-        </View>
-
         {/* Stats */}
-        <View style={st.statsRow}>
+        <View style={[st.statsRow, { borderColor: theme.divider }]}>
           <Stat value={String(user.totalFavors)} label="Total Favors" />
           <Stat value={user.rating.toFixed(1)} label="Rating" star />
           <Stat value={String(user.yearsActive)} label="Years" />
@@ -169,7 +150,7 @@ export const Profile = ({ navigation }: any) => {
 
         {/* Account hub — the SideDrawer only opens from Home, so the Profile tab is
             the only reliable path to these account controls. */}
-        <Text style={st.hubLabel}>Account</Text>
+        <Txt variant="caption" color={theme.textTertiary} style={{ marginTop: 24, marginBottom: 2, letterSpacing: 0.8, textTransform: 'uppercase' }}>Account</Txt>
         <NavRow icon="card" label="Payment Methods" onPress={() => navigation.navigate('Payment')} />
         {isPal && (
           <NavRow icon="wallet" label="Payouts & Bank" onPress={() => navigation.navigate('StripeOnboarding')} />
@@ -183,43 +164,46 @@ export const Profile = ({ navigation }: any) => {
 };
 
 function NavRow({ icon, label, onPress, danger }: any) {
-  const tint = danger ? RED : '#fff';
+  const { theme } = useTheme();
+  const tint = danger ? RED : theme.text;
   return (
     <TouchableOpacity
       onPress={onPress}
       activeOpacity={0.7}
-      style={st.infoRow}
+      style={[st.infoRow, { borderBottomColor: theme.divider }]}
       accessibilityRole="button"
       accessibilityLabel={label}
     >
       <Ionicons name={icon} size={22} color={tint} style={{ width: 32 }} />
-      <Text style={{ color: tint, fontWeight: '700', fontSize: 16, flex: 1 }}>{label}</Text>
-      {danger ? null : <Ionicons name="chevron-forward" size={18} color={PLACEHOLDER} />}
+      <Txt variant="label" color={tint} style={{ flex: 1 }}>{label}</Txt>
+      {danger ? null : <Ionicons name="chevron-forward" size={18} color={theme.textTertiary} />}
     </TouchableOpacity>
   );
 }
 
 function Stat({ value, label, star }: any) {
+  const { theme } = useTheme();
   return (
     <View style={{ flex: 1, alignItems: 'center' }}>
-      <Text style={{ color: '#fff', fontSize: 34, fontWeight: '800' }}>{value}</Text>
+      <Txt color={theme.text} style={{ fontSize: 34, fontFamily: fonts.display }}>{value}</Txt>
       <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4, marginTop: 2 }}>
         {star ? <Ionicons name="star" size={14} color={STAR} /> : null}
-        <Text style={{ color: SUBTLE, fontSize: 14 }}>{label}</Text>
+        <Txt color={theme.textSecondary} style={{ fontSize: 14 }}>{label}</Txt>
       </View>
     </View>
   );
 }
 
 function InfoRow({ icon, title, subtitle, onPress }: any) {
+  const { theme } = useTheme();
   return (
-    <TouchableOpacity onPress={onPress} activeOpacity={0.7} style={st.infoRow}>
-      <Ionicons name={icon} size={22} color="#fff" style={{ width: 32 }} />
+    <TouchableOpacity onPress={onPress} activeOpacity={0.7} style={[st.infoRow, { borderBottomColor: theme.divider }]}>
+      <Ionicons name={icon} size={22} color={theme.text} style={{ width: 32 }} />
       <View style={{ flex: 1 }}>
-        <Text style={{ color: '#fff', fontWeight: '700', fontSize: 16 }}>{title}</Text>
-        <Text style={{ color: '#8C8C8C', fontSize: 14, marginTop: 2 }} numberOfLines={1}>{subtitle}</Text>
+        <Txt variant="label" color={theme.text}>{title}</Txt>
+        <Txt variant="bodySm" color={theme.textSecondary} numberOfLines={1} style={{ marginTop: 2 }}>{subtitle}</Txt>
       </View>
-      <Ionicons name="chevron-forward" size={18} color={PLACEHOLDER} />
+      <Ionicons name="chevron-forward" size={18} color={theme.textTertiary} />
     </TouchableOpacity>
   );
 }
@@ -228,6 +212,7 @@ function InfoRow({ icon, title, subtitle, onPress }: any) {
 // 2. EditProfile — dark form (figma 97:4909)
 // ===========================================================================
 export const EditProfile = ({ navigation }: any) => {
+  const { theme } = useTheme();
   const s = useStore();
   const u = s.user;
   const [firstName, setFirstName] = useState(u?.firstName ?? '');
@@ -295,14 +280,14 @@ export const EditProfile = ({ navigation }: any) => {
   };
 
   return (
-    <SafeAreaView edges={['top']} style={{ flex: 1, backgroundColor: DARK_BG }}>
+    <SafeAreaView edges={['top']} style={{ flex: 1, backgroundColor: theme.background }}>
       <DarkHeader title="Edit Profile" onBack={() => navigation.goBack()} />
       <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
         <ScrollView contentContainerStyle={{ padding: 20, paddingBottom: 40 }} keyboardShouldPersistTaps="handled">
           {/* Avatar with red edit badge */}
           <View style={{ alignSelf: 'center', marginBottom: 24 }}>
-            <Image source={avatar ? { uri: avatar } : undefined} style={st.editAvatar} />
-            <TouchableOpacity onPress={pickImage} style={st.editBadge} activeOpacity={0.85}>
+            <Image source={avatar ? { uri: avatar } : undefined} style={[st.editAvatar, { backgroundColor: theme.surfaceAlt }]} />
+            <TouchableOpacity onPress={pickImage} style={[st.editBadge, { borderColor: theme.background }]} activeOpacity={0.85}>
               <Ionicons name="pencil" size={15} color="#fff" />
             </TouchableOpacity>
           </View>
@@ -345,7 +330,7 @@ export const EditProfile = ({ navigation }: any) => {
             <DarkField label="New Password" value={newPw} onChangeText={setNewPw} secureTextEntry />
           </View>
 
-          <Button title="SAVE" variant="white" onPress={onSave} style={{ marginTop: 16 }} />
+          <Button title="SAVE" variant="primary" onPress={onSave} style={{ marginTop: 16 }} />
         </ScrollView>
       </KeyboardAvoidingView>
       <InfoModal
@@ -507,6 +492,7 @@ export const Help = ({ navigation }: any) => {
 // 5. SideDrawer — navy left panel over the map (figma 181:10620)
 // ===========================================================================
 export const SideDrawer = ({ navigation }: any) => {
+  const { theme } = useTheme();
   const s = useStore();
   const u = s.user;
   const close = () => navigation.goBack();
@@ -517,30 +503,30 @@ export const SideDrawer = ({ navigation }: any) => {
 
   return (
     <View style={{ flex: 1, flexDirection: 'row' }}>
-      <SafeAreaView edges={['top', 'bottom']} style={st.drawer}>
+      <SafeAreaView edges={['top', 'bottom']} style={[st.drawer, { backgroundColor: theme.card, borderRightColor: theme.border }]}>
         <View style={{ flex: 1, paddingHorizontal: 20, paddingTop: 12 }}>
           {/* Identity */}
           <View style={{ alignItems: 'center', marginTop: 8 }}>
             <View style={{ width: 86, height: 86 }}>
               <Image source={{ uri: u?.avatar }} style={{ width: 86, height: 86, borderRadius: 43 }} />
-              <TouchableOpacity onPress={() => go('EditProfile')} style={st.drawerBadge} activeOpacity={0.85}>
+              <TouchableOpacity onPress={() => go('EditProfile')} style={[st.drawerBadge, { borderColor: theme.card }]} activeOpacity={0.85}>
                 <Ionicons name="pencil" size={13} color="#fff" />
               </TouchableOpacity>
             </View>
-            <Txt variant="h4" color="#fff" style={{ marginTop: 12 }}>{u?.firstName ?? 'Anton'}</Txt>
+            <Txt variant="h4" color={theme.text} style={{ marginTop: 12 }}>{u?.firstName ?? 'Anton'}</Txt>
             <TouchableOpacity onPress={() => go('Tabs', { screen: 'Profile' })}>
-              <Text style={{ color: SUBTLE, fontSize: 14, marginTop: 4 }}>View Profile</Text>
+              <Txt color={theme.textSecondary} style={{ fontSize: 14, marginTop: 4 }}>View Profile</Txt>
             </TouchableOpacity>
             <TouchableOpacity
               onPress={() => go('SetStatus')}
               style={{ flexDirection: 'row', alignItems: 'center', gap: 8, marginTop: 10 }}
             >
               <View style={st.statusDot} />
-              <Text style={{ color: RED, fontSize: 14, fontWeight: '700' }}>Set Status</Text>
+              <Txt color={RED} style={{ fontSize: 14, fontFamily: fonts.bodyBold }}>Set Status</Txt>
             </TouchableOpacity>
           </View>
 
-          <View style={st.drawerDivider} />
+          <View style={[st.drawerDivider, { backgroundColor: theme.divider }]} />
 
           {/* Menu */}
           <DrawerRow icon="time-outline" label="Favor History" onPress={() => go('Tabs', { screen: 'History' })} />
@@ -569,10 +555,11 @@ export const SideDrawer = ({ navigation }: any) => {
 };
 
 function DrawerRow({ icon, label, onPress }: any) {
+  const { theme } = useTheme();
   return (
     <TouchableOpacity onPress={onPress} activeOpacity={0.7} style={{ flexDirection: 'row', alignItems: 'center', gap: 16, paddingVertical: 16 }}>
-      <Ionicons name={icon} size={22} color="#fff" />
-      <Text style={{ color: '#fff', fontSize: 16 }}>{label}</Text>
+      <Ionicons name={icon} size={22} color={theme.text} />
+      <Txt color={theme.text} style={{ fontSize: 16 }}>{label}</Txt>
     </TouchableOpacity>
   );
 }
@@ -627,43 +614,33 @@ export const SetStatus = ({ navigation }: any) => {
 const st = StyleSheet.create({
   darkHeader: {
     height: 52, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
-    paddingHorizontal: 16, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: '#23262B',
+    paddingHorizontal: 16, borderBottomWidth: StyleSheet.hairlineWidth,
   },
-  darkLabel: { color: '#fff', fontSize: 14, fontWeight: '600', marginBottom: 8 },
   darkInput: {
-    backgroundColor: FIELD_BG, borderRadius: 10, paddingHorizontal: 14, minHeight: 52,
+    borderRadius: 10, paddingHorizontal: 14, minHeight: 52,
     flexDirection: 'row', alignItems: 'center',
   },
   fieldWrap: { marginBottom: 16 },
   fieldRow: { flexDirection: 'row', gap: 12, marginBottom: 16 },
 
   // Profile
-  profileAvatar: { width: 140, height: 140, borderRadius: 70, alignSelf: 'center', marginTop: 16, backgroundColor: '#222' },
+  profileAvatar: { width: 140, height: 140, borderRadius: 70, alignSelf: 'center', marginTop: 16 },
   setStatus: { flexDirection: 'row', alignItems: 'center', gap: 8, alignSelf: 'center', marginTop: 12 },
   statusDot: { width: 8, height: 8, borderRadius: 4, backgroundColor: RED },
-  switchPill: {
-    backgroundColor: '#fff', borderRadius: 999, paddingVertical: 8, paddingHorizontal: 18,
-    flexDirection: 'row', alignItems: 'center', gap: 14, alignSelf: 'center', marginTop: 24,
-    shadowColor: '#000', shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.25, shadowRadius: 8, elevation: 4,
-  },
   statsRow: {
     flexDirection: 'row', alignItems: 'center', paddingVertical: 20, marginTop: 24, marginBottom: 4,
-    borderTopWidth: StyleSheet.hairlineWidth, borderBottomWidth: StyleSheet.hairlineWidth, borderColor: DARK_DIVIDER,
+    borderTopWidth: StyleSheet.hairlineWidth, borderBottomWidth: StyleSheet.hairlineWidth,
   },
   infoRow: {
     flexDirection: 'row', alignItems: 'center', gap: 14, paddingVertical: 18,
-    borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: DARK_DIVIDER,
-  },
-  hubLabel: {
-    color: SUBTLE, fontSize: 13, fontWeight: '700', letterSpacing: 0.8,
-    textTransform: 'uppercase', marginTop: 24, marginBottom: 2,
+    borderBottomWidth: StyleSheet.hairlineWidth,
   },
 
   // EditProfile avatar
-  editAvatar: { width: 96, height: 96, borderRadius: 48, backgroundColor: '#222' },
+  editAvatar: { width: 96, height: 96, borderRadius: 48 },
   editBadge: {
     position: 'absolute', right: -2, bottom: -2, width: 30, height: 30, borderRadius: 15,
-    backgroundColor: RED, alignItems: 'center', justifyContent: 'center', borderWidth: 2, borderColor: DARK_BG,
+    backgroundColor: RED, alignItems: 'center', justifyContent: 'center', borderWidth: 2,
   },
 
   // Settings
@@ -673,12 +650,15 @@ const st = StyleSheet.create({
   helpBox: { borderWidth: 1, borderRadius: 12, padding: 16, height: 340 },
 
   // SideDrawer
-  drawer: { width: '78%', backgroundColor: NAVY },
+  drawer: {
+    width: '78%', borderRightWidth: StyleSheet.hairlineWidth,
+    shadowColor: '#000', shadowOffset: { width: 2, height: 0 }, shadowOpacity: 0.12, shadowRadius: 8, elevation: 8,
+  },
   drawerBadge: {
     position: 'absolute', right: -2, bottom: -2, width: 28, height: 28, borderRadius: 14,
-    backgroundColor: RED, alignItems: 'center', justifyContent: 'center', borderWidth: 2, borderColor: NAVY,
+    backgroundColor: RED, alignItems: 'center', justifyContent: 'center', borderWidth: 2,
   },
-  drawerDivider: { height: StyleSheet.hairlineWidth, backgroundColor: '#2E3647', marginVertical: 22 },
+  drawerDivider: { height: StyleSheet.hairlineWidth, marginVertical: 22 },
   backdrop: { flex: 1, backgroundColor: 'rgba(0,0,0,0.45)' },
 
   // SetStatus modal
