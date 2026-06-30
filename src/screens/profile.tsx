@@ -151,6 +151,7 @@ export const Profile = ({ navigation }: any) => {
         {/* Account hub — the SideDrawer only opens from Home, so the Profile tab is
             the only reliable path to these account controls. */}
         <Txt variant="caption" color={theme.textTertiary} style={{ marginTop: 24, marginBottom: 2, letterSpacing: 0.8, textTransform: 'uppercase' }}>Account</Txt>
+        <NavRow icon="time" label="Favor History" onPress={() => navigation.navigate('History')} />
         <NavRow icon="card" label="Payment Methods" onPress={() => navigation.navigate('Payment')} />
         {isPal && (
           <NavRow icon="wallet" label="Payouts & Bank" onPress={() => navigation.navigate('StripeOnboarding')} />
@@ -539,7 +540,7 @@ export const SideDrawer = ({ navigation }: any) => {
           <View style={[st.drawerDivider, { backgroundColor: theme.divider }]} />
 
           {/* Menu */}
-          <DrawerRow icon="time-outline" label="Favor History" onPress={() => go('Tabs', { screen: 'History' })} />
+          <DrawerRow icon="time-outline" label="Favor History" onPress={() => go('History')} />
           <DrawerRow icon="help-circle-outline" label="Help" onPress={() => go('Help')} />
           <DrawerRow icon="settings-outline" label="Settings" onPress={() => go('Settings')} />
           {u?.role === 'pal' && (

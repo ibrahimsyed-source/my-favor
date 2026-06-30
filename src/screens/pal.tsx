@@ -233,10 +233,12 @@ export const BrowseFavors = ({ navigation }: any) => {
   return (
     <View style={{ flex: 1, backgroundColor: PAGE_BG, paddingTop: insets.top }}>
       <View style={bw.header}>
-        <TouchableOpacity onPress={() => navigation.goBack()} hitSlop={10} accessibilityRole="button" accessibilityLabel="Go back">
-          <Ionicons name="chevron-back" size={26} color={TEXT} />
-        </TouchableOpacity>
-        <View style={{ flex: 1, marginLeft: 8 }}>
+        {navigation.canGoBack() ? (
+          <TouchableOpacity onPress={() => navigation.goBack()} hitSlop={10} accessibilityRole="button" accessibilityLabel="Go back">
+            <Ionicons name="chevron-back" size={26} color={TEXT} />
+          </TouchableOpacity>
+        ) : null}
+        <View style={{ flex: 1, marginLeft: navigation.canGoBack() ? 8 : 0 }}>
           <Text style={bw.title}>Open Favors</Text>
           <Text style={bw.subtitle}>{subtitle}</Text>
         </View>

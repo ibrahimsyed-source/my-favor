@@ -28,7 +28,7 @@ const Tab = createBottomTabNavigator<TabParamList>();
 const TAB_ICON: Record<keyof TabParamList, keyof typeof Ionicons.glyphMap> = {
   Home: 'home',
   Messages: 'chatbubble',
-  History: 'time',
+  Browse: 'search',
   Earnings: 'cash',
   Profile: 'person',
 };
@@ -49,7 +49,8 @@ function Tabs() {
     >
       <Tab.Screen name="Home" component={Dash.Home} />
       <Tab.Screen name="Messages" component={Msg.Messages} />
-      <Tab.Screen name="History" component={Hist.History} />
+      {/* Browse the board of open favors to do (everyone can fulfill favors). */}
+      <Tab.Screen name="Browse" component={Pal.BrowseFavors} options={{ tabBarLabel: 'Browse' }} />
       {/* Pals get a dedicated Earnings tab; members don't. */}
       {isPal && <Tab.Screen name="Earnings" component={Payouts.Earnings} />}
       <Tab.Screen name="Profile" component={Prof.Profile} />
@@ -120,6 +121,7 @@ export default function RootNavigator() {
           <Stack.Screen name="Help" component={Prof.Help} />
           <Stack.Screen name="Payment" component={Pay.Payment} />
           <Stack.Screen name="AddCard" component={Pay.AddCard} />
+          <Stack.Screen name="History" component={Hist.History} />
           <Stack.Screen name="FavorHistoryDetail" component={Hist.FavorHistoryDetail} />
           <Stack.Screen name="Notifications" component={Notif.Notifications} />
           <Stack.Screen name="Vetting" component={Onb.Vetting} />

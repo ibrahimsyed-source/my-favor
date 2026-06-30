@@ -48,6 +48,7 @@ export type RootStackParamList = {
   SetStatus: undefined;
   Payment: undefined;
   AddCard: undefined;
+  History: undefined; // favor history — opened from the side menu
   FavorHistory: undefined;
   FavorHistoryDetail: { favorId: string };
   Help: undefined;
@@ -58,7 +59,7 @@ export type RootStackParamList = {
 export type TabParamList = {
   Home: undefined;
   Messages: undefined;
-  History: undefined;
+  Browse: undefined; // board of open favors to do (replaces History in the tab bar)
   Earnings: undefined; // pal-only tab
   Profile: undefined;
 };
