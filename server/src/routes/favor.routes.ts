@@ -3,7 +3,7 @@ import { z } from 'zod';
 import { prisma } from '../db';
 import { validate } from '../lib/validate';
 import { asyncHandler, badRequest, notFound, forbidden, conflict } from '../lib/errors';
-import { authenticate, requireRole } from '../middleware/authenticate';
+import { authenticate } from '../middleware/authenticate';
 import { publicFavor, publicFavorOpen } from '../lib/serialize';
 import { computeFees, computePayout, computeCancellation, FAVOR_TIERS } from '../lib/money';
 import { stripeEnabled, chargeFavor, chargeToPal } from '../lib/stripe';
@@ -102,7 +102,6 @@ const createSchema = z.object({
 });
 favorRouter.post(
   '/',
-  requireRole('member'),
   validate({ body: createSchema }),
   asyncHandler(async (req, res) => {
     const input = req.body as z.infer<typeof createSchema>;
@@ -173,7 +172,6 @@ favorRouter.get(
 // from anyone they're blocked with).
 favorRouter.get(
   '/incoming',
-  requireRole('pal'),
   asyncHandler(async (req, res) => {
     const me = req.user!.id;
     const blocks = await prisma.block.findMany({
@@ -210,7 +208,6 @@ favorRouter.get(
 // can't both win the same favor (race-safe via a conditional updateMany).
 favorRouter.post(
   '/:id/accept',
-  requireRole('pal'),
   validate({ params: idParam }),
   asyncHandler(async (req, res) => {
     const me = req.user!.id;
@@ -235,7 +232,6 @@ favorRouter.post(
 // POST /api/favors/:id/decline — a pal skips a favor (informational only).
 favorRouter.post(
   '/:id/decline',
-  requireRole('pal'),
   validate({ params: idParam }),
   asyncHandler(async (req, res) => {
     res.json({ ok: true });
@@ -245,7 +241,6 @@ favorRouter.post(
 // POST /api/favors/:id/assign — a member books a specific pal.
 favorRouter.post(
   '/:id/assign',
-  requireRole('member'),
   validate({ params: idParam, body: z.object({ palId: z.string().uuid() }) }),
   asyncHandler(async (req, res) => {
     const me = req.user!.id;
@@ -314,7 +309,6 @@ favorRouter.post(
 // the payout and writes both ledgers (member payment + pal earning).
 favorRouter.post(
   '/:id/finish',
-  requireRole('pal'),
   validate({ params: idParam }),
   asyncHandler(async (req, res) => {
     const me = req.user!.id;
@@ -362,7 +356,6 @@ favorRouter.post(
 // POST /api/favors/:id/rate-member — the pal rates the member after completion.
 favorRouter.post(
   '/:id/rate-member',
-  requireRole('pal'),
   validate({ params: idParam, body: z.object({ rating: z.number().int().min(1).max(5), feedback: z.string().max(1000).default('') }) }),
   asyncHandler(async (req, res) => {
     const me = req.user!.id;
@@ -384,7 +377,6 @@ favorRouter.post(
 // POST /api/favors/:id/cancel — the member cancels; cancellation fee per policy.
 favorRouter.post(
   '/:id/cancel',
-  requireRole('member'),
   validate({ params: idParam }),
   asyncHandler(async (req, res) => {
     const me = req.user!.id;
@@ -435,7 +427,6 @@ favorRouter.post(
 // POST /api/favors/:id/rate — the member rates a completed favor (+ optional tip).
 favorRouter.post(
   '/:id/rate',
-  requireRole('member'),
   validate({
     params: idParam,
     body: z.object({ rating: z.number().int().min(1).max(5), feedback: z.string().max(1000).default(''), tip: z.number().min(0).max(1000).optional() }),

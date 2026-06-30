@@ -154,7 +154,10 @@ export function Home({ navigation }: any) {
 
   const resumeActive = () => {
     if (!active) return;
-    if (isPal) {
+    // Route by the user's role ON THIS favor (a member can also accept and
+    // fulfill someone else's favor), not by their global account role.
+    const iAmPal = active.palId === s.user?.id;
+    if (iAmPal) {
       const dest =
         active.status === 'arrived' || active.status === 'in_progress'
           ? 'PalFavorInProgress'
@@ -235,8 +238,9 @@ export function Home({ navigation }: any) {
           </TouchableOpacity>
         ) : null}
 
-        {/* Browse the full board of open favors (not just the top one). */}
-        {isPal && !active && s.incomingFavors.length > 0 ? (
+        {/* Browse the full board of open favors to do — available to everyone,
+            since any account can both request and fulfill favors. */}
+        {!active && s.incomingFavors.length > 0 ? (
           <TouchableOpacity
             activeOpacity={0.9}
             onPress={() => navigation.navigate('BrowseFavors')}
@@ -342,18 +346,10 @@ const styles = StyleSheet.create({
     backgroundColor: BRAND, borderWidth: 1.5, borderColor: '#FFFFFF',
   },
   pill: {
-    flexDirection: 'row', alignItems: 'center', gap: 10,
+    alignItems: 'center', justifyContent: 'center',
     backgroundColor: '#FFFFFF', borderRadius: tokens.radius.pill,
-    paddingLeft: 18, paddingRight: 6, height: 42,
+    paddingHorizontal: 22, height: 42,
     shadowColor: '#000', shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.18, shadowRadius: 6, elevation: 4,
-  },
-  switchTrack: {
-    width: 34, height: 20, borderRadius: 10, backgroundColor: '#E3E3E3',
-    justifyContent: 'center', paddingHorizontal: 2,
-  },
-  switchKnob: {
-    width: 16, height: 16, borderRadius: 8, backgroundColor: '#FFFFFF',
-    shadowColor: '#000', shadowOffset: { width: 0, height: 1 }, shadowOpacity: 0.2, shadowRadius: 2, elevation: 2,
   },
   bar: {
     height: 64, borderRadius: 18, backgroundColor: BAR_BG,

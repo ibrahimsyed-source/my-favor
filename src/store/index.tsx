@@ -164,12 +164,14 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
   }, []);
 
   const loadAll = useCallback(async (u: User) => {
-    const isPal = u.role === 'pal';
+    // Every account can both request and fulfill favors, so the open-favors
+    // board is loaded for everyone (the API excludes the caller's own favors).
+    void u;
     const [favors, active, cardList, txns, earn, thr, notes, palList, blocked, incoming, payCfg] =
       await Promise.allSettled([
         getFavorsApi(), getActiveFavorApi(), getCardsApi(), getTransactionsApi(), getEarningsApi(),
         getThreadsApi(), getNotificationsApi(), getPalsApi(), getBlockedApi(),
-        isPal ? getIncomingApi() : Promise.resolve({ favors: [] as Favor[] }),
+        getIncomingApi(),
         getPaymentsConfigApi(),
       ]);
 
@@ -398,7 +400,7 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
 
   // Re-fetch the open-favors feed (pull-to-refresh / focus on the browse list).
   const refreshIncoming = useCallback(async () => {
-    if (user?.role !== 'pal') return;
+    if (!user) return;
     try {
       const { favors } = await getIncomingApi();
       setIncomingFavors(favors);
@@ -407,10 +409,10 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     }
   }, [user]);
 
-  // Pals: keep the open-favors feed fresh app-wide so the Home card + browse
-  // board reflect new requests without a manual refresh.
+  // Keep the open-favors feed fresh app-wide (any signed-in user can browse and
+  // accept favors to do) so the Home card + browse board reflect new requests.
   useEffect(() => {
-    if (user?.role !== 'pal') return;
+    if (!user) return;
     const id = setInterval(() => { void refreshIncoming(); }, 20000);
     return () => clearInterval(id);
   }, [user, refreshIncoming]);

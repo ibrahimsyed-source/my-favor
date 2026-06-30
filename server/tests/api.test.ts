@@ -1,3 +1,4 @@
+import './_setup'; // must be first: sets NODE_ENV=test before app/config loads
 import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import crypto from 'node:crypto';
@@ -148,10 +149,30 @@ test('authorization: non-participant cannot read a favor', async () => {
   assert.equal(peek.status, 403, 'stranger is forbidden from another user’s favor');
 });
 
-test('role gate: a member cannot use a pal-only endpoint', async () => {
-  const member = await makeUser('member');
-  const res = await api('/api/favors/incoming', { token: member.token });
-  assert.equal(res.status, 403);
+test('any account can browse and fulfill others\' favors, but not their own', async () => {
+  const alice = await makeUser('member');
+  const bob = await makeUser('member'); // a "member" can now also fulfill favors
+
+  const create = await api('/api/favors', {
+    method: 'POST',
+    token: alice.token,
+    body: { tier: 'tiny', description: 'Browse-and-do test', location: { lat: 30, lng: -97, address: 'X' } },
+  });
+  assert.equal(create.status, 201);
+  const favorId = create.json.favor.id;
+
+  // Any account can browse open favors (no role gate anymore).
+  const incoming = await api('/api/favors/incoming', { token: bob.token });
+  assert.equal(incoming.status, 200);
+  assert.ok(incoming.json.favors.some((f: any) => f.id === favorId), 'bob sees the open favor');
+
+  // Ownership still holds: you cannot accept your own favor.
+  const ownAccept = await api(`/api/favors/${favorId}/accept`, { method: 'POST', token: alice.token });
+  assert.equal(ownAccept.status, 403);
+
+  // But anyone else can accept and fulfill it.
+  const bobAccept = await api(`/api/favors/${favorId}/accept`, { method: 'POST', token: bob.token });
+  assert.equal(bobAccept.status, 200);
 });
 
 test('input validation: malformed id is rejected', async () => {

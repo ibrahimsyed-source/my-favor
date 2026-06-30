@@ -62,31 +62,35 @@ async function main() {
     });
   }
 
-  // A few OPEN (unassigned) requests so a pal's "Browse Favors" board has
-  // content to show. Posted by the member, so pals jordan/sam see them.
-  const openCount = await prisma.favor.count({ where: { status: 'requested' } });
-  if (openCount === 0) {
-    const fees = (base: number) => ({
-      serviceFee: Math.round(base * 0.029 * 100) / 100,
-      transactionFee: 0.3,
-      total: Math.round((base + base * 0.029 + 0.3) * 100) / 100,
+  // OPEN (unassigned) requests so the "Browse Favors" board has content for
+  // everyone. Since any account can browse and fulfill favors (but never their
+  // own), we post from MULTIPLE accounts — alex sees jordan's & sam's, and they
+  // see alex's. Idempotent by description, so re-running adds any new ones.
+  const fees = (base: number) => ({
+    serviceFee: Math.round(base * 0.029 * 100) / 100,
+    transactionFee: 0.3,
+    total: Math.round((base + base * 0.029 + 0.3) * 100) / 100,
+  });
+  const open = [
+    { by: pal1.id, tier: 'tiny', price: 25, description: 'Walk my dog around the block before noon', address: '600 Congress Ave, Austin, TX', lat: 30.270, lng: -97.742 },
+    { by: pal2.id, tier: 'small', price: 45, description: 'Pick up a prescription from the pharmacy', address: '1500 S Congress Ave, Austin, TX', lat: 30.249, lng: -97.751 },
+    { by: pal1.id, tier: 'big', price: 90, description: 'Assemble a bookshelf — tools provided', address: '900 E 5th St, Austin, TX', lat: 30.262, lng: -97.730 },
+    { by: member.id, tier: 'tiny', price: 20, description: 'Drop off a package at the UPS store', address: '200 E 6th St, Austin, TX', lat: 30.267, lng: -97.741 },
+    { by: member.id, tier: 'small', price: 50, description: 'Pick up my dry cleaning before 5pm', address: '1100 S Lamar Blvd, Austin, TX', lat: 30.255, lng: -97.763 },
+    { by: member.id, tier: 'big', price: 100, description: 'Help me move a couch to my new apartment downstairs', address: '500 W 2nd St, Austin, TX', lat: 30.265, lng: -97.749 },
+  ];
+  for (const o of open) {
+    const exists = await prisma.favor.findFirst({ where: { description: o.description, status: 'requested' } });
+    if (exists) continue;
+    const f = fees(o.price);
+    await prisma.favor.create({
+      data: {
+        memberId: o.by, tier: o.tier, price: o.price, description: o.description, images: '[]',
+        locationLat: o.lat, locationLng: o.lng, locationAddress: o.address, status: 'requested',
+        serviceFee: f.serviceFee, transactionFee: f.transactionFee, total: f.total,
+        events: { create: { status: 'requested' } },
+      },
     });
-    const open = [
-      { tier: 'tiny', price: 20, description: 'Drop off a package at the UPS store', address: '200 E 6th St, Austin, TX', lat: 30.267, lng: -97.741 },
-      { tier: 'small', price: 50, description: 'Pick up my dry cleaning before 5pm', address: '1100 S Lamar Blvd, Austin, TX', lat: 30.255, lng: -97.763 },
-      { tier: 'big', price: 100, description: 'Help me move a couch to my new apartment downstairs', address: '500 W 2nd St, Austin, TX', lat: 30.265, lng: -97.749 },
-    ];
-    for (const o of open) {
-      const f = fees(o.price);
-      await prisma.favor.create({
-        data: {
-          memberId: member.id, tier: o.tier, price: o.price, description: o.description, images: '[]',
-          locationLat: o.lat, locationLng: o.lng, locationAddress: o.address, status: 'requested',
-          serviceFee: f.serviceFee, transactionFee: f.transactionFee, total: f.total,
-          events: { create: { status: 'requested' } },
-        },
-      });
-    }
   }
 
   // eslint-disable-next-line no-console
