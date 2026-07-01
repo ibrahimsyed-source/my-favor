@@ -5,7 +5,6 @@ import { Ionicons } from '@expo/vector-icons';
 import { MapPlaceholder, Txt, Avatar } from '../components';
 import { useTheme, tokens, darkTokens } from '../theme';
 import { useStore } from '../store';
-import { UserStatus } from '../types';
 
 const logo = require('../../assets/img/logo.png');
 const WIN_H = Dimensions.get('window').height;
@@ -13,13 +12,6 @@ const WIN_H = Dimensions.get('window').height;
 const BRAND = '#ED1C24';
 const MAP_BG = '#222B36';
 const BAR_BG = '#141A24';
-
-// Availability presentation, driven by user.status (never hardcoded "online").
-const STATUS_UI: Record<UserStatus, { label: string; color: string }> = {
-  online: { label: "YOU'RE ONLINE", color: '#2ECC71' },
-  invisible: { label: "YOU'RE INVISIBLE", color: '#9BA1A6' },
-  offline: { label: "YOU'RE OFFLINE", color: '#B6BBC4' },
-};
 
 // ---------------------------------------------------------------------------
 // Dark map backdrop — stylized stand-in roads/park/water over the placeholder.
@@ -141,15 +133,9 @@ export function Home({ navigation }: any) {
   const insets = useSafeAreaInsets();
   const s = useStore();
 
-  const role = s.user?.role ?? 'member';
-  const isPal = role === 'pal';
-  const status = s.user?.status ?? 'offline';
-  const statusUi = STATUS_UI[status];
+  // One universal Home for every account: everyone can request a favor (here)
+  // and fulfill favors (the Browse tab). No role-specific view.
   const active = s.activeFavor;
-  const incoming = s.incomingFavors[0];
-  // Only a genuinely-online pal is offered fresh work; while mid-favor or
-  // offline/invisible we never surface an incoming request.
-  const showIncoming = !active && status === 'online' && !!incoming;
   const unread = s.notifications.filter((n) => !n.read).length;
 
   const resumeActive = () => {
@@ -196,9 +182,9 @@ export function Home({ navigation }: any) {
           <Ionicons name="menu" size={24} color="#1A1A1A" />
         </TouchableOpacity>
 
-        {/* App title (role is set at signup — no in-app switching) */}
+        {/* App title — identical for everyone */}
         <View style={styles.pill}>
-          <Txt variant="label" color="#1A1A1A">{isPal ? 'Favor Pal' : 'My Favor'}</Txt>
+          <Txt variant="label" color="#1A1A1A">My Favor</Txt>
         </View>
 
         {/* notifications bell -> Notifications */}
@@ -231,81 +217,36 @@ export function Home({ navigation }: any) {
             <View style={{ flex: 1 }}>
               <Txt variant="caption" color={theme.textSecondary}>Resume active favor</Txt>
               <Txt variant="label" numberOfLines={1}>
-                {active.description || (isPal ? 'Favor in progress' : 'Track your favor')}
+                {active.description || (active.palId === s.user?.id ? 'Favor in progress' : 'Track your favor')}
               </Txt>
             </View>
             <Ionicons name="chevron-forward" size={18} color={theme.textTertiary} />
           </TouchableOpacity>
         ) : null}
 
-        {isPal ? (
-          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 12 }}>
-            <TouchableOpacity
-              activeOpacity={0.85}
-              onPress={() => navigation.navigate('Home')}
-              accessibilityRole="button"
-              accessibilityLabel="Home"
-              style={styles.homeBtn}
-            >
-              <Ionicons name="home" size={22} color="#FFFFFF" />
-            </TouchableOpacity>
-            {showIncoming ? (
-              <TouchableOpacity
-                activeOpacity={0.9}
-                onPress={() => navigation.navigate('PalFavorDetail', { favorId: incoming.id })}
-                accessibilityRole="button"
-                accessibilityLabel={`New favor request: ${incoming.description}, $${incoming.price}`}
-                style={styles.palCard}
-              >
-                <View style={styles.palIcon}>
-                  <Ionicons name="cube" size={20} color="#FFFFFF" />
-                </View>
-                <View style={{ flex: 1 }}>
-                  <Txt variant="caption" color={theme.textSecondary}>New favor request</Txt>
-                  <Txt variant="label" numberOfLines={1}>{incoming.description}</Txt>
-                </View>
-                <View style={{ alignItems: 'flex-end' }}>
-                  <Txt variant="label" color={BRAND}>${incoming.price}</Txt>
-                  <Ionicons name="chevron-forward" size={18} color={theme.textTertiary} />
-                </View>
-              </TouchableOpacity>
-            ) : (
-              <TouchableOpacity
-                activeOpacity={0.85}
-                onPress={() => navigation.navigate('SetStatus')}
-                accessibilityRole="button"
-                accessibilityLabel={`Availability: ${status}`}
-                accessibilityHint="Change your availability status"
-                style={[styles.bar, { flex: 1, flexDirection: 'row', gap: 10 }]}
-              >
-                <View style={[styles.statusDot, { backgroundColor: statusUi.color }]} />
-                <Txt variant="button" color="#FFFFFF">{statusUi.label}</Txt>
-              </TouchableOpacity>
-            )}
-          </View>
-        ) : (
-          <View style={[styles.bar, { flexDirection: 'row', alignItems: 'center', paddingLeft: 8, paddingRight: 18 }]}>
-            <TouchableOpacity
-              activeOpacity={0.85}
-              onPress={() => navigation.navigate('Home')}
-              accessibilityRole="button"
-              accessibilityLabel="Home"
-              style={styles.homeBtn}
-            >
-              <Ionicons name="home" size={22} color="#FFFFFF" />
-            </TouchableOpacity>
-            <TouchableOpacity
-              activeOpacity={0.85}
-              onPress={() => navigation.navigate('SelectFavor')}
-              accessibilityRole="button"
-              accessibilityLabel="Request a favor"
-              style={{ flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 10 }}
-            >
-              <Image source={logo} style={{ width: 22, height: 22, borderRadius: 5 }} resizeMode="contain" />
-              <Txt variant="button" color="#FFFFFF" style={{ letterSpacing: 0.5 }}>REQUEST A FAVOR</Txt>
-            </TouchableOpacity>
-          </View>
-        )}
+        {/* Identical for every account: Home + Request a Favor. Fulfilling favors
+            lives in the Browse tab; availability is set from the side menu. */}
+        <View style={[styles.bar, { flexDirection: 'row', alignItems: 'center', paddingLeft: 8, paddingRight: 18 }]}>
+          <TouchableOpacity
+            activeOpacity={0.85}
+            onPress={() => navigation.navigate('Browse')}
+            accessibilityRole="button"
+            accessibilityLabel="Browse favors to do"
+            style={styles.homeBtn}
+          >
+            <Ionicons name="search" size={22} color="#FFFFFF" />
+          </TouchableOpacity>
+          <TouchableOpacity
+            activeOpacity={0.85}
+            onPress={() => navigation.navigate('SelectFavor')}
+            accessibilityRole="button"
+            accessibilityLabel="Request a favor"
+            style={{ flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 10 }}
+          >
+            <Image source={logo} style={{ width: 22, height: 22, borderRadius: 5 }} resizeMode="contain" />
+            <Txt variant="button" color="#FFFFFF" style={{ letterSpacing: 0.5 }}>REQUEST A FAVOR</Txt>
+          </TouchableOpacity>
+        </View>
       </View>
     </View>
   );
