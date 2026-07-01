@@ -63,31 +63,10 @@ export function SignupLogin({ navigation }: any) {
   );
 }
 
-// 3. Welcome — role chooser, now the FIRST step of sign-up (reached from SIGNUP).
-//    Picking a role records it and carries it into the signup form so it sticks.
+// 3. Welcome — intro before sign-up. One universal account: every member can
+//    both request favors and earn by doing them, so there's no role to choose.
 export function Welcome({ navigation }: any) {
   const { theme } = useTheme();
-  const s = useStore();
-
-  const pick = (role: 'member' | 'pal') => {
-    s.setRole(role);
-    // Pals must clear the identity + background Vetting gate before they can earn,
-    // so route pal sign-ups to the Vetting screen when this navigator exposes it.
-    // Vetting currently lives in the post-auth stack, so at sign-up time it isn't
-    // reachable yet and we fall back to the normal signup form (account creation
-    // must never break). DEFERRED (cross-file / backend, out of this screen):
-    // register/redirect Vetting into the post-auth pal flow so new pals land on it
-    // after OTP, and add a persisted server-side `palVerified` flag that gates the
-    // favor accept/assign + "go online" routes so the check can't be bypassed.
-    if (role === 'pal') {
-      const routeNames: string[] = navigation.getState?.()?.routeNames ?? [];
-      if (routeNames.includes('Vetting')) {
-        navigation.navigate('Vetting');
-        return;
-      }
-    }
-    navigation.navigate('Signup', { role });
-  };
 
   return (
     <Screen padded={false}>
@@ -115,23 +94,15 @@ export function Welcome({ navigation }: any) {
             <Text style={{ color: theme.text, fontFamily: fonts.bodyBold }}>$$</Text> doing favors for others.
           </Txt>
           <Txt variant="body" color={theme.textSecondary} center style={{ marginTop: 16 }}>
-            How would you like to start?
+            One account does it all — request favors and help your neighbors.
           </Txt>
         </View>
-        <View style={{ flexDirection: 'row', gap: 12, marginBottom: 24 }}>
-          <Button
-            title="ASK A FAVOR"
-            variant="primary"
-            onPress={() => pick('member')}
-            style={{ flex: 1, paddingHorizontal: 8 }}
-          />
-          <Button
-            title="BE A FAVOR PAL"
-            variant="secondary"
-            onPress={() => pick('pal')}
-            style={{ flex: 1, paddingHorizontal: 8 }}
-          />
-        </View>
+        <Button
+          title="GET STARTED"
+          variant="primary"
+          onPress={() => navigation.navigate('Signup')}
+          style={{ marginBottom: 24 }}
+        />
       </View>
     </Screen>
   );
