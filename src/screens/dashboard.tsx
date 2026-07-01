@@ -1,17 +1,24 @@
 import React from 'react';
-import { View, Image, TouchableOpacity, StyleSheet, Dimensions } from 'react-native';
+import { View, Image, TouchableOpacity, StyleSheet, Dimensions, ScrollView } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
-import { MapPlaceholder, Txt, Avatar, StaticMap } from '../components';
-import { useTheme, tokens, darkTokens } from '../theme';
+import { MapPlaceholder, Txt, Avatar, Button, StaticMap } from '../components';
+import { useTheme, tokens } from '../theme';
 import { useStore } from '../store';
+import { FAVOR_TIERS } from '../types';
 
-const logo = require('../../assets/img/logo.png');
 const WIN_H = Dimensions.get('window').height;
+
+// Tier illustrations (shared with the request flow).
+const TIER_IMAGES: Record<'tiny' | 'small' | 'big' | 'huge', any> = {
+  tiny: require('../../assets/img/request/tier-tiny.png'),
+  small: require('../../assets/img/request/tier-small.png'),
+  big: require('../../assets/img/request/tier-big.png'),
+  huge: require('../../assets/img/request/tier-huge.png'),
+};
 
 const BRAND = '#ED1C24';
 const MAP_BG = '#E7ECF1';        // light "map paper" — matches the light theme + Figma
-const BAR_BG = '#141A24';
 const STREET = '#FFFFFF';        // side streets
 const STREET_MAIN = '#F4E8C6';   // warm arterial roads
 const LABEL = '#8A929C';
@@ -19,6 +26,11 @@ const LABEL = '#8A929C';
 // Default map center (no live GPS yet; seed favors are around Austin, TX). When a
 // Google Maps key is configured the real StaticMap renders here instead.
 const HOME_CENTER = { lat: 30.2672, lng: -97.7431 };
+// Scattered positions for the nearby-pal markers on the home map.
+const PAL_POS = [
+  { top: '16%', left: '18%' }, { top: '28%', left: '68%' },
+  { top: '60%', left: '22%' }, { top: '70%', left: '66%' },
+];
 
 // ---------------------------------------------------------------------------
 // Light street-map backdrop — a realistic stand-in matching the Figma dashboard
@@ -127,8 +139,42 @@ function RadiusPin({ avatar, name }: { avatar?: string; name?: string }) {
   );
 }
 
+// Compact favor-size tile (row of four on the Home request card).
+function TierTile({ tier, onPress }: { tier: 'tiny' | 'small' | 'big' | 'huge'; onPress: () => void }) {
+  const { theme } = useTheme();
+  const t = FAVOR_TIERS[tier];
+  return (
+    <TouchableOpacity onPress={onPress} activeOpacity={0.85} style={[styles.tierTile, { backgroundColor: theme.card, borderColor: theme.border }]}>
+      <Image source={TIER_IMAGES[tier]} style={{ width: 42, height: 42 }} resizeMode="contain" />
+      <Txt variant="caption" style={{ marginTop: 6, fontFamily: tokens.typography.label.fontFamily }} numberOfLines={1}>
+        {t.label.replace(' Favor', '')}
+      </Txt>
+      <Txt variant="caption" color={theme.textSecondary}>${t.price}</Txt>
+    </TouchableOpacity>
+  );
+}
+
+// Red avatar map marker (a nearby Favor Pal).
+function PalMarker({ uri, top, left }: { uri?: string; top: string; left: string }) {
+  return (
+    <View style={{ position: 'absolute', top: top as any, left: left as any, alignItems: 'center' }}>
+      <View
+        style={{
+          width: 36, height: 36, borderRadius: 18, backgroundColor: BRAND,
+          borderWidth: 2, borderColor: '#FFFFFF', alignItems: 'center', justifyContent: 'center',
+          ...tokens.shadow.card,
+        }}
+      >
+        <Avatar uri={uri} size={30} />
+      </View>
+      <View style={{ width: 0, height: 0, marginTop: -1, borderLeftWidth: 5, borderRightWidth: 5, borderTopWidth: 7, borderLeftColor: 'transparent', borderRightColor: 'transparent', borderTopColor: BRAND }} />
+    </View>
+  );
+}
+
 // ===========================================================================
-// Home — full-bleed map dashboard (role-aware).
+// Home — request-a-favor dashboard: favor-size picker + location + live map.
+// Matches the Figma mockup; one universal view for every account.
 // ===========================================================================
 export function Home({ navigation }: any) {
   const { theme } = useTheme();
@@ -157,70 +203,43 @@ export function Home({ navigation }: any) {
     }
   };
 
+  const pals = s.pals;
+  const homeAddress = s.user?.homeAddress || '2099 Woodvine Rd, Lorman';
+  const tierKeys: Array<'tiny' | 'small' | 'big' | 'huge'> = ['tiny', 'small', 'big', 'huge'];
+  const pickTier = (tier: 'tiny' | 'small' | 'big' | 'huge') => {
+    s.setDraft({ tier, price: FAVOR_TIERS[tier].price });
+    navigation.navigate('FavorDescription');
+  };
+  const negotiate = () => {
+    s.setDraft({ tier: 'negotiate' });
+    navigation.navigate('Negotiate');
+  };
+
   return (
-    <View style={{ flex: 1, backgroundColor: MAP_BG }}>
-      {/* MAP (full bleed, under the status bar) */}
-      <View style={StyleSheet.absoluteFill}>
-        <MapPlaceholder height={WIN_H} label="">
-          {mapsKey ? (
-            <StaticMap lat={HOME_CENTER.lat} lng={HOME_CENTER.lng} height={WIN_H} zoom={14} />
-          ) : (
-            <LightMap />
-          )}
-          <RadiusPin avatar={s.user?.avatar} name={s.user?.firstName} />
-        </MapPlaceholder>
-      </View>
-
-      {/* TOP CONTROLS */}
-      <View
-        style={{
-          position: 'absolute', top: insets.top + 10, left: 0, right: 0,
-          flexDirection: 'row', alignItems: 'center', justifyContent: 'center', paddingHorizontal: 16,
-        }}
-      >
-        {/* hamburger -> SideDrawer */}
-        <TouchableOpacity
-          activeOpacity={0.85}
-          onPress={() => navigation.navigate('SideDrawer')}
-          accessibilityRole="button"
-          accessibilityLabel="Open menu"
-          style={[styles.iconBtn, { left: 16 }]}
-        >
-          <Ionicons name="menu" size={24} color="#1A1A1A" />
+    <View style={{ flex: 1, backgroundColor: theme.background, paddingTop: insets.top }}>
+      {/* Header */}
+      <View style={styles.header}>
+        <TouchableOpacity onPress={() => navigation.navigate('SideDrawer')} style={styles.headerBtn} accessibilityRole="button" accessibilityLabel="Open menu">
+          <Ionicons name="menu" size={24} color={theme.text} />
         </TouchableOpacity>
-
-        {/* App title — identical for everyone */}
-        <View style={styles.pill}>
-          <Txt variant="label" color="#1A1A1A">My Favor</Txt>
-        </View>
-
-        {/* notifications bell -> Notifications */}
-        <TouchableOpacity
-          activeOpacity={0.85}
-          onPress={() => navigation.navigate('Notifications')}
-          accessibilityRole="button"
-          accessibilityLabel={unread > 0 ? `Notifications, ${unread} unread` : 'Notifications'}
-          style={[styles.iconBtn, { right: 16 }]}
-        >
-          <Ionicons name="notifications-outline" size={22} color="#1A1A1A" />
+        <Txt variant="h6">My Favor</Txt>
+        <TouchableOpacity onPress={() => navigation.navigate('Notifications')} style={styles.headerBtn} accessibilityRole="button" accessibilityLabel={unread > 0 ? `Notifications, ${unread} unread` : 'Notifications'}>
+          <Ionicons name="notifications-outline" size={22} color={theme.text} />
           {unread > 0 && <View style={styles.bellDot} />}
         </TouchableOpacity>
       </View>
 
-      {/* BOTTOM BAR */}
-      <View style={{ position: 'absolute', left: 16, right: 16, bottom: insets.bottom || 16, gap: 12 }}>
-        {/* Resume-active-favor card: returns the user into their live favor. */}
+      <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={{ paddingBottom: 24 }}>
+        {/* Resume the live favor, if any */}
         {active ? (
           <TouchableOpacity
-            activeOpacity={0.9}
             onPress={resumeActive}
+            activeOpacity={0.9}
+            style={[styles.resumeCard, { backgroundColor: theme.card, borderColor: theme.border }]}
             accessibilityRole="button"
             accessibilityLabel="Resume active favor"
-            style={styles.palCard}
           >
-            <View style={styles.palIcon}>
-              <Ionicons name="navigate" size={20} color="#FFFFFF" />
-            </View>
+            <View style={styles.resumeIcon}><Ionicons name="navigate" size={18} color="#fff" /></View>
             <View style={{ flex: 1 }}>
               <Txt variant="caption" color={theme.textSecondary}>Resume active favor</Txt>
               <Txt variant="label" numberOfLines={1}>
@@ -231,74 +250,77 @@ export function Home({ navigation }: any) {
           </TouchableOpacity>
         ) : null}
 
-        {/* Identical for every account: Home + Request a Favor. Fulfilling favors
-            lives in the Browse tab; availability is set from the side menu. */}
-        <View style={[styles.bar, { flexDirection: 'row', alignItems: 'center', paddingLeft: 8, paddingRight: 18 }]}>
+        {/* Favor-size picker */}
+        <View style={{ paddingHorizontal: 20, paddingTop: 4 }}>
+          <Txt variant="h3">How big is the favor?</Txt>
+          <Txt variant="body" color={theme.textSecondary} style={{ marginTop: 6 }}>
+            Choose the cost of favor based on the amount of effort required.
+          </Txt>
+          <View style={{ flexDirection: 'row', gap: 10, marginTop: 16 }}>
+            {tierKeys.map((k) => <TierTile key={k} tier={k} onPress={() => pickTier(k)} />)}
+          </View>
+          <Button title="Negotiate your favor" variant="primary" uppercase={false} onPress={negotiate} style={{ marginTop: 16 }} />
+        </View>
+
+        {/* Location */}
+        <View style={{ paddingHorizontal: 20, marginTop: 22 }}>
+          <Txt variant="label">Location of your favor</Txt>
           <TouchableOpacity
-            activeOpacity={0.85}
-            onPress={() => navigation.navigate('Browse')}
-            accessibilityRole="button"
-            accessibilityLabel="Browse favors to do"
-            style={styles.homeBtn}
+            onPress={() => navigation.navigate('EditProfile')}
+            activeOpacity={0.8}
+            style={[styles.locationRow, { backgroundColor: theme.surfaceAlt }]}
           >
-            <Ionicons name="search" size={22} color="#FFFFFF" />
-          </TouchableOpacity>
-          <TouchableOpacity
-            activeOpacity={0.85}
-            onPress={() => navigation.navigate('SelectFavor')}
-            accessibilityRole="button"
-            accessibilityLabel="Request a favor"
-            style={{ flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 10 }}
-          >
-            <Image source={logo} style={{ width: 22, height: 22, borderRadius: 5 }} resizeMode="contain" />
-            <Txt variant="button" color="#FFFFFF" style={{ letterSpacing: 0.5 }}>REQUEST A FAVOR</Txt>
+            <Ionicons name="location" size={20} color={theme.primary} />
+            <View style={{ flex: 1, marginLeft: 10 }}>
+              <Txt variant="bodySm" numberOfLines={1}>{homeAddress}</Txt>
+              <Txt variant="caption" color={theme.textSecondary}>Your default area · tap to change</Txt>
+            </View>
+            <Ionicons name="chevron-forward" size={18} color={theme.textTertiary} />
           </TouchableOpacity>
         </View>
-      </View>
+
+        {/* Live map with nearby Favor Pals */}
+        <View style={{ height: 320, marginTop: 18, marginHorizontal: 20, borderRadius: 18, overflow: 'hidden' }}>
+          <MapPlaceholder height={320} label="">
+            {mapsKey ? (
+              <StaticMap lat={HOME_CENTER.lat} lng={HOME_CENTER.lng} height={320} zoom={14} />
+            ) : (
+              <LightMap />
+            )}
+            {pals.slice(0, 4).map((p, i) => (
+              <PalMarker key={p.id} uri={p.avatar} top={PAL_POS[i].top} left={PAL_POS[i].left} />
+            ))}
+            <RadiusPin avatar={s.user?.avatar} name={s.user?.firstName} />
+          </MapPlaceholder>
+        </View>
+      </ScrollView>
     </View>
   );
 }
 
 const styles = StyleSheet.create({
-  iconBtn: {
-    position: 'absolute',
-    width: 46, height: 46, borderRadius: 14, backgroundColor: '#FFFFFF',
-    alignItems: 'center', justifyContent: 'center',
-    shadowColor: '#000', shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.18, shadowRadius: 6, elevation: 4,
+  header: {
+    flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
+    paddingHorizontal: 18, paddingTop: 4, paddingBottom: 10,
+  },
+  headerBtn: { width: 40, height: 40, alignItems: 'center', justifyContent: 'center' },
+  resumeCard: {
+    flexDirection: 'row', alignItems: 'center', marginHorizontal: 20, marginBottom: 12,
+    padding: 12, borderRadius: 14, borderWidth: StyleSheet.hairlineWidth, ...tokens.shadow.card,
+  },
+  resumeIcon: {
+    width: 34, height: 34, borderRadius: 17, backgroundColor: BRAND,
+    alignItems: 'center', justifyContent: 'center', marginRight: 12,
+  },
+  tierTile: {
+    flex: 1, alignItems: 'center', paddingVertical: 12, paddingHorizontal: 2,
+    borderRadius: 14, borderWidth: StyleSheet.hairlineWidth,
+  },
+  locationRow: {
+    flexDirection: 'row', alignItems: 'center', marginTop: 8, padding: 14, borderRadius: 14,
   },
   bellDot: {
-    position: 'absolute', top: 10, right: 11, width: 9, height: 9, borderRadius: 5,
+    position: 'absolute', top: 6, right: 6, width: 9, height: 9, borderRadius: 5,
     backgroundColor: BRAND, borderWidth: 1.5, borderColor: '#FFFFFF',
-  },
-  pill: {
-    alignItems: 'center', justifyContent: 'center',
-    backgroundColor: '#FFFFFF', borderRadius: tokens.radius.pill,
-    paddingHorizontal: 22, height: 42,
-    shadowColor: '#000', shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.18, shadowRadius: 6, elevation: 4,
-  },
-  bar: {
-    height: 64, borderRadius: 18, backgroundColor: BAR_BG,
-    alignItems: 'center', justifyContent: 'center',
-    // #000 shadow is invisible on the dark map; a hairline top-light edge is
-    // what actually reads as elevation here.
-    borderWidth: 1, borderColor: 'rgba(255,255,255,0.07)',
-    shadowColor: '#000', shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.3, shadowRadius: 10, elevation: 6,
-  },
-  statusDot: {
-    width: 10, height: 10, borderRadius: 5,
-  },
-  homeBtn: {
-    width: 48, height: 48, borderRadius: 14, backgroundColor: BRAND,
-    alignItems: 'center', justifyContent: 'center',
-  },
-  palCard: {
-    flex: 1, flexDirection: 'row', alignItems: 'center', gap: 12,
-    backgroundColor: '#FFFFFF', borderRadius: 18, paddingHorizontal: 12, height: 64,
-    borderWidth: 1, borderColor: darkTokens.border,
-    shadowColor: '#000', shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.2, shadowRadius: 10, elevation: 6,
-  },
-  palIcon: {
-    width: 40, height: 40, borderRadius: 20, backgroundColor: BRAND,
-    alignItems: 'center', justifyContent: 'center',
   },
 });
