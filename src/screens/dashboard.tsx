@@ -2,7 +2,7 @@ import React from 'react';
 import { View, Image, TouchableOpacity, StyleSheet, Dimensions } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
-import { MapPlaceholder, Txt, Avatar } from '../components';
+import { MapPlaceholder, Txt, Avatar, StaticMap } from '../components';
 import { useTheme, tokens, darkTokens } from '../theme';
 import { useStore } from '../store';
 
@@ -10,75 +10,77 @@ const logo = require('../../assets/img/logo.png');
 const WIN_H = Dimensions.get('window').height;
 
 const BRAND = '#ED1C24';
-const MAP_BG = '#222B36';
+const MAP_BG = '#E7ECF1';        // light "map paper" — matches the light theme + Figma
 const BAR_BG = '#141A24';
+const STREET = '#FFFFFF';        // side streets
+const STREET_MAIN = '#F4E8C6';   // warm arterial roads
+const LABEL = '#8A929C';
+
+// Default map center (no live GPS yet; seed favors are around Austin, TX). When a
+// Google Maps key is configured the real StaticMap renders here instead.
+const HOME_CENTER = { lat: 30.2672, lng: -97.7431 };
 
 // ---------------------------------------------------------------------------
-// Dark map backdrop — stylized stand-in roads/park/water over the placeholder.
+// Light street-map backdrop — a realistic stand-in matching the Figma dashboard
+// (streets, labels, park, water, POIs, numbered favor markers).
 // ---------------------------------------------------------------------------
-function DarkMap() {
+function LightMap() {
   return (
     <View style={[StyleSheet.absoluteFill, { backgroundColor: MAP_BG }]}>
-      {/* water — top-right wedge */}
-      <View
-        style={{
-          position: 'absolute', top: -60, right: -50, width: 220, height: 260,
-          backgroundColor: '#28333E', borderRadius: 40, transform: [{ rotate: '20deg' }],
-        }}
-      />
-      {/* water — bottom-right */}
-      <View
-        style={{
-          position: 'absolute', bottom: -40, right: -40, width: 180, height: 200,
-          backgroundColor: '#28333E', borderRadius: 36, transform: [{ rotate: '-12deg' }],
-        }}
-      />
+      {/* water — right edge */}
+      <View style={{ position: 'absolute', top: -40, right: -80, width: 210, height: WIN_H * 1.2, backgroundColor: '#C3DAEC', borderRadius: 70, transform: [{ rotate: '12deg' }] }} />
       {/* park block */}
-      <View
-        style={{
-          position: 'absolute', top: '22%', right: 28, width: 92, height: 66,
-          backgroundColor: '#2C3A2E', borderRadius: 10,
-        }}
-      />
-      {/* vertical roads */}
-      {[0.18, 0.46, 0.72].map((x) => (
-        <View
-          key={`v${x}`}
-          style={{
-            position: 'absolute', top: 0, bottom: 0, left: `${x * 100}%`, width: 3,
-            backgroundColor: 'rgba(255,255,255,0.07)',
-          }}
-        />
+      <View style={{ position: 'absolute', top: '25%', right: 42, width: 96, height: 72, backgroundColor: '#CBE4BE', borderRadius: 10 }} />
+      {/* side-street grid */}
+      {[0.14, 0.32, 0.5, 0.68, 0.86].map((x) => (
+        <View key={`v${x}`} style={{ position: 'absolute', top: 0, bottom: 0, left: `${x * 100}%`, width: 4, backgroundColor: STREET }} />
       ))}
-      {/* horizontal roads */}
-      {[0.2, 0.42, 0.64, 0.84].map((y) => (
-        <View
-          key={`h${y}`}
-          style={{
-            position: 'absolute', left: 0, right: 0, top: `${y * 100}%`, height: 3,
-            backgroundColor: 'rgba(255,255,255,0.07)',
-          }}
-        />
+      {[0.12, 0.28, 0.44, 0.6, 0.76, 0.92].map((y) => (
+        <View key={`h${y}`} style={{ position: 'absolute', left: 0, right: 0, top: `${y * 100}%`, height: 4, backgroundColor: STREET }} />
       ))}
-      {/* amber highway diagonal */}
-      <View
-        style={{
-          position: 'absolute', top: -40, left: '60%', width: 7, height: WIN_H * 1.4,
-          backgroundColor: 'rgba(199,142,76,0.45)', transform: [{ rotate: '16deg' }],
-        }}
-      />
-      {/* a couple of muted POI markers */}
-      <Poi top="34%" left="30%" />
-      <Poi top="58%" left="66%" />
-      <Poi top="74%" left="22%" />
+      {/* main arterials (wider, warm) */}
+      <View style={{ position: 'absolute', top: 0, bottom: 0, left: '24%', width: 8, backgroundColor: STREET_MAIN }} />
+      <View style={{ position: 'absolute', left: 0, right: 0, top: '44%', height: 8, backgroundColor: STREET_MAIN }} />
+      {/* diagonal highway */}
+      <View style={{ position: 'absolute', top: -60, left: '58%', width: 9, height: WIN_H * 1.5, backgroundColor: STREET_MAIN, transform: [{ rotate: '18deg' }] }} />
+      {/* street-name labels */}
+      <Txt variant="caption" color={LABEL} style={{ position: 'absolute', top: '42.5%', left: '5%', fontSize: 9 }}>W 5th St</Txt>
+      <Txt variant="caption" color={LABEL} style={{ position: 'absolute', top: '13%', left: '52%', fontSize: 9 }}>N Dixie Hwy</Txt>
+      <Txt variant="caption" color={LABEL} style={{ position: 'absolute', top: '74.5%', left: '30%', fontSize: 9 }}>Datura St</Txt>
+      {/* POIs with labels */}
+      <Poi top="30%" left="29%" label="Rocco's Tacos" />
+      <Poi top="58%" left="63%" label="The Ben" />
+      <Poi top="72%" left="18%" label="E.R. Bradley's" />
+      <Poi top="20%" left="60%" />
+      {/* numbered favor / pal markers */}
+      <NumPin top="18%" left="12%" n={5} />
+      <NumPin top="52%" left="16%" n={4} />
+      <NumPin top="38%" left="82%" n={2} />
+      <NumPin top="82%" left="72%" n={1} />
     </View>
   );
 }
 
-function Poi({ top, left }: { top: string; left: string }) {
+function Poi({ top, left, label }: { top: string; left: string; label?: string }) {
   return (
-    <View style={{ position: 'absolute', top: top as any, left: left as any }}>
-      <Ionicons name="location" size={16} color="rgba(255,189,0,0.65)" />
+    <View style={{ position: 'absolute', top: top as any, left: left as any, flexDirection: 'row', alignItems: 'center' }}>
+      <Ionicons name="location" size={16} color="#F0A020" />
+      {label ? <Txt variant="caption" color="#79818B" style={{ marginLeft: 3, fontSize: 9 }}>{label}</Txt> : null}
+    </View>
+  );
+}
+
+function NumPin({ top, left, n }: { top: string; left: string; n: number }) {
+  return (
+    <View
+      style={{
+        position: 'absolute', top: top as any, left: left as any,
+        width: 22, height: 22, borderRadius: 11, backgroundColor: '#FFFFFF',
+        borderWidth: 1.5, borderColor: BRAND, alignItems: 'center', justifyContent: 'center',
+        ...tokens.shadow.card,
+      }}
+    >
+      <Txt variant="caption" color={BRAND} style={{ fontSize: 11, fontFamily: tokens.typography.label.fontFamily }}>{n}</Txt>
     </View>
   );
 }
@@ -137,6 +139,7 @@ export function Home({ navigation }: any) {
   // and fulfill favors (the Browse tab). No role-specific view.
   const active = s.activeFavor;
   const unread = s.notifications.filter((n) => !n.read).length;
+  const mapsKey = process.env.EXPO_PUBLIC_GOOGLE_MAPS_KEY;
 
   const resumeActive = () => {
     if (!active) return;
@@ -159,7 +162,11 @@ export function Home({ navigation }: any) {
       {/* MAP (full bleed, under the status bar) */}
       <View style={StyleSheet.absoluteFill}>
         <MapPlaceholder height={WIN_H} label="">
-          <DarkMap />
+          {mapsKey ? (
+            <StaticMap lat={HOME_CENTER.lat} lng={HOME_CENTER.lng} height={WIN_H} zoom={14} />
+          ) : (
+            <LightMap />
+          )}
           <RadiusPin avatar={s.user?.avatar} name={s.user?.firstName} />
         </MapPlaceholder>
       </View>
