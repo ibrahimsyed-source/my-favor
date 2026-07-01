@@ -8,21 +8,28 @@ import { Txt, InfoModal, Avatar } from '../components';
 import { useStore } from '../store';
 import { getIncomingApi } from '../api/endpoints';
 import { computePayout, FAVOR_TIERS, Favor } from '../types';
-import { lightTheme, fonts, tokens } from '../theme';
+import { fonts, tokens } from '../theme';
 
-// Favor Pal (provider) active-favor flow. All screens sit on a light map with
-// white bottom sheets, so they match the rest of the app's light theme.
-const PAGE_BG = lightTheme.background;   // white screen background
-const SHEET = lightTheme.card;           // white bottom-sheet surface
-const SHEET_ALT = lightTheme.surfaceAlt; // raised field / pill / chip
-const RED = lightTheme.primary;          // brand red accent
-const STAR = lightTheme.star;            // rating amber
-const SUBTLE = lightTheme.textSecondary; // secondary text
-const DIVIDER = lightTheme.divider;      // hairline dividers
-const TEXT = lightTheme.text;            // primary text
-const MUTED = lightTheme.textTertiary;   // placeholder / tertiary text
-const BORDER = lightTheme.border;        // card / field borders
-const SUCCESS = lightTheme.success;      // success/checkmark green (#02CB00)
+// Favor Pal (provider) active-favor flow — "User App v.2" DARK design.
+// These screens are intentionally dark navy sheets over a dark map (the app's
+// shared useTheme() is LIGHT and only drives the auth/onboarding screens), so
+// we pin a fixed dark palette here instead of reading the light theme.
+const PAGE_BG = '#0C0C0C';                 // content screen background (near-black)
+const MAP_BG = '#0C0C0C';                  // dark map backdrop base
+const SHEET = '#171922';                   // bottom-sheet / card surface (dark navy)
+const SHEET_ALT = '#1C2331';               // raised field / pill / chip
+const FIELD = '#1B222C';                   // feedback input / dark field
+const RED = '#ED1C24';                     // brand red accent
+const STAR = '#FFBD00';                    // rating amber
+const TEXT = '#FFFFFF';                    // primary text
+const SUBTLE = 'rgba(255,255,255,0.6)';    // secondary text
+const MUTED = 'rgba(255,255,255,0.4)';     // tertiary / placeholder text
+const DIVIDER = 'rgba(255,255,255,0.10)';  // hairline dividers
+const BORDER = 'rgba(255,255,255,0.10)';   // card / field borders
+const SUCCESS = '#02CB00';                 // success checkmark green
+const CTA_BG = '#FFFFFF';                  // primary CTA button bg (white-on-dark)
+const CTA_TEXT = '#141414';                // primary CTA button text (dark)
+const DARK_BTN = '#1C2331';                // secondary / destructive dark pill
 
 const CHARACTERS = require('../../assets/img/onboarding/launch-people.png');
 
@@ -35,15 +42,15 @@ const TIER_IMG: Record<string, ReturnType<typeof require>> = {
 };
 const tierImage = (tier?: string) => TIER_IMG[tier ?? ''] ?? TIER_IMG.small;
 
-// ---- shared light-map backdrop ------------------------------------------------
+// ---- shared dark-map backdrop -------------------------------------------------
 function MapBackdrop() {
   return (
     <View style={StyleSheet.absoluteFill}>
-      <View style={[StyleSheet.absoluteFill, { backgroundColor: '#E9EEF3' }]} />
-      <View style={{ position: 'absolute', top: 90, left: 40, width: 3, height: 600, backgroundColor: '#D2DAE2', transform: [{ rotate: '8deg' }] }} />
-      <View style={{ position: 'absolute', top: 120, left: -20, right: 0, height: 8, backgroundColor: '#DCE3EA', opacity: 0.8 }} />
-      <View style={{ position: 'absolute', top: 240, left: 120, width: 3, height: 500, backgroundColor: '#D2DAE2' }} />
-      <View style={{ position: 'absolute', top: 260, left: 0, right: 30, height: 3, backgroundColor: '#D2DAE2' }} />
+      <View style={[StyleSheet.absoluteFill, { backgroundColor: MAP_BG }]} />
+      <View style={{ position: 'absolute', top: 90, left: 40, width: 3, height: 600, backgroundColor: '#1A1D26', transform: [{ rotate: '8deg' }] }} />
+      <View style={{ position: 'absolute', top: 120, left: -20, right: 0, height: 8, backgroundColor: '#23262F', opacity: 0.7 }} />
+      <View style={{ position: 'absolute', top: 240, left: 120, width: 3, height: 500, backgroundColor: '#1A1D26' }} />
+      <View style={{ position: 'absolute', top: 260, left: 0, right: 30, height: 3, backgroundColor: '#1A1D26' }} />
     </View>
   );
 }
@@ -83,7 +90,7 @@ function Handle() {
 // ===========================================================================
 // 0. BrowseFavors — a board of ALL open favor requests a pal can browse and
 // pick from (backed by the live /favors/incoming feed in store.incomingFavors).
-// Not in the original Figma; styled to match the app's light surfaces.
+// Not in the original Figma; styled to match the v.2 dark surfaces.
 // ===========================================================================
 const tierLabel = (f: Favor) =>
   (FAVOR_TIERS as Record<string, { label: string }>)[f.tier]?.label ?? 'Custom Favor';
@@ -301,17 +308,17 @@ const bw = StyleSheet.create({
   chipActive: { backgroundColor: RED },
   chipText: { color: SUBTLE, fontSize: 13, fontWeight: '600', fontFamily: fonts.bodySemiBold },
   chipTextActive: { color: '#fff' },
-  card: { backgroundColor: SHEET, borderRadius: 16, padding: 16, marginBottom: 12, borderWidth: StyleSheet.hairlineWidth, borderColor: BORDER, ...tokens.shadow.card },
+  card: { backgroundColor: SHEET, borderRadius: 16, padding: 16, marginBottom: 12, borderWidth: StyleSheet.hairlineWidth, borderColor: BORDER },
   cardTop: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
-  tierPill: { backgroundColor: 'rgba(237,28,36,0.12)', borderRadius: 999, paddingHorizontal: 10, paddingVertical: 4 },
-  tierPillText: { color: RED, fontSize: 12, fontWeight: '700', fontFamily: fonts.bodyBold },
+  tierPill: { backgroundColor: 'rgba(237,28,36,0.18)', borderRadius: 999, paddingHorizontal: 10, paddingVertical: 4 },
+  tierPillText: { color: '#FF6B70', fontSize: 12, fontWeight: '700', fontFamily: fonts.bodyBold },
   price: { color: TEXT, fontSize: 22, fontWeight: '800', fontFamily: fonts.display },
   desc: { color: TEXT, fontSize: 15, marginTop: 12, lineHeight: 21, fontFamily: fonts.bodyRegular },
   metaRow: { flexDirection: 'row', alignItems: 'center', marginTop: 10, gap: 5 },
   meta: { color: SUBTLE, fontSize: 13, fontFamily: fonts.bodyRegular },
   dot: { color: SUBTLE, fontSize: 13, marginHorizontal: 2, fontFamily: fonts.bodyRegular },
   schedRow: { flexDirection: 'row', alignItems: 'center', marginTop: 8, gap: 5 },
-  schedText: { color: RED, fontSize: 13, fontWeight: '600', fontFamily: fonts.bodySemiBold },
+  schedText: { color: '#FF6B70', fontSize: 13, fontWeight: '600', fontFamily: fonts.bodySemiBold },
   cardFooter: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginTop: 14, borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: DIVIDER, paddingTop: 14 },
   earn: { color: SUBTLE, fontSize: 14, fontFamily: fonts.bodyRegular },
   earnAmt: { color: TEXT, fontWeight: '700', fontFamily: fonts.bodyBold },
@@ -325,7 +332,7 @@ const bw = StyleSheet.create({
 });
 
 // ===========================================================================
-// 1. PalFavorDetail — incoming favor quick view (figma 97:5700)
+// 1. PalFavorDetail — incoming favor quick view (pal-quickview-v2)
 // ===========================================================================
 export const PalFavorDetail = ({ navigation, route }: any) => {
   const s = useStore();
@@ -410,7 +417,7 @@ export const PalFavorDetail = ({ navigation, route }: any) => {
               accessibilityState={{ expanded }}
               accessibilityLabel={expanded ? 'View less favor detail' : 'View more favor detail'}
             >
-              <Text style={{ color: RED, fontWeight: '700', fontSize: 14, marginTop: 8, fontFamily: fonts.bodyBold }}>
+              <Text style={{ color: TEXT, fontWeight: '700', fontSize: 14, marginTop: 8, fontFamily: fonts.bodyBold }}>
                 {expanded ? 'View Less' : 'View More'}
               </Text>
             </TouchableOpacity>
@@ -466,7 +473,7 @@ function QuickRow({ label, value }: any) {
 }
 
 // ===========================================================================
-// 2. Navigation — accepted favor w/ directions banner (figma 181:10690)
+// 2. Navigation — accepted favor w/ directions banner (favor-arrived-v2)
 // ===========================================================================
 export const Navigation = ({ navigation }: any) => {
   const s = useStore();
@@ -515,12 +522,12 @@ export const Navigation = ({ navigation }: any) => {
           <Text style={st.whiteBtnTxt}>I AM HERE</Text>
         </TouchableOpacity>
         <TouchableOpacity
-          style={st.blackBtn}
+          style={st.darkBtn}
           accessibilityRole="button"
           accessibilityLabel="Cancel this favor"
           onPress={() => { void s.abandonFavor(); navigation.reset({ index: 0, routes: [{ name: 'Tabs' }] }); }}
         >
-          <Text style={{ color: TEXT, fontWeight: '700', letterSpacing: 0.5, fontFamily: fonts.bodySemiBold }}>CANCEL THIS FAVOR</Text>
+          <Text style={st.darkBtnTxt}>CANCEL THIS FAVOR</Text>
         </TouchableOpacity>
       </View>
       {/* Privacy: the call is relayed — the pal never sees the member's real number. */}
@@ -552,7 +559,7 @@ function ActionRow({ icon, label, red, onPress }: any) {
 }
 
 // ===========================================================================
-// 3. PalFavorInProgress — doing the favor (figma 523:17839)
+// 3. PalFavorInProgress — doing the favor (favor-inprogress-v2)
 // ===========================================================================
 export const PalFavorInProgress = ({ navigation }: any) => {
   const s = useStore();
@@ -588,7 +595,9 @@ export const PalFavorInProgress = ({ navigation }: any) => {
         </View>
         <View style={[st.divider, { marginTop: 18 }]} />
         <View style={{ flexDirection: 'row', alignItems: 'center', marginTop: 16 }}>
-          <Image source={tierImage(fav?.tier)} style={{ width: 44, height: 44, marginRight: 12 }} resizeMode="contain" />
+          <View style={st.tierThumb}>
+            <Image source={tierImage(fav?.tier)} style={{ width: 48, height: 48 }} resizeMode="contain" />
+          </View>
           <View style={{ flex: 1 }}>
             <CostRow label={tierName} value={`$${base.toFixed(2)}`} bold />
             <CostRow label="Platform commission (20%)" value={`-$${commission.toFixed(2)}`} />
@@ -641,7 +650,7 @@ function Section({ icon, title, body }: any) {
 }
 
 // ===========================================================================
-// 4. PalFavorSuccess — "You just got paid!" confirmation (figma pal-success)
+// 4. PalFavorSuccess — "You just got paid!" confirmation (favor-complete-v2)
 // ===========================================================================
 export const PalFavorSuccess = ({ navigation, route }: any) => {
   const payout = route?.params?.payout;
@@ -670,12 +679,12 @@ export const PalFavorSuccess = ({ navigation, route }: any) => {
         </TouchableOpacity>
         {/* Feedback is optional — a neutral exit so the pal is never trapped. */}
         <TouchableOpacity
-          style={st.blackBtn}
+          style={st.darkBtn}
           accessibilityRole="button"
           accessibilityLabel="Done"
           onPress={() => navigation.reset({ index: 0, routes: [{ name: 'Tabs' }] })}
         >
-          <Text style={{ color: TEXT, fontWeight: '700', letterSpacing: 0.5, fontFamily: fonts.bodySemiBold }}>DONE</Text>
+          <Text style={st.darkBtnTxt}>DONE</Text>
         </TouchableOpacity>
       </View>
     </SafeAreaView>
@@ -683,7 +692,7 @@ export const PalFavorSuccess = ({ navigation, route }: any) => {
 };
 
 // ===========================================================================
-// 5. PalFavorComplete — Thank You / feedback (figma 97:6337 / 97:6307)
+// 5. PalFavorComplete — Thank You / feedback (favor-feedback-v2)
 // ===========================================================================
 export const PalFavorComplete = ({ navigation }: any) => {
   const s = useStore();
@@ -757,18 +766,20 @@ export const PalFavorComplete = ({ navigation }: any) => {
 };
 
 const st = StyleSheet.create({
-  iconBtn: { width: 40, height: 40, borderRadius: 12, backgroundColor: '#fff', alignItems: 'center', justifyContent: 'center', borderWidth: StyleSheet.hairlineWidth, borderColor: BORDER, ...tokens.shadow.card },
-  navBanner: { backgroundColor: lightTheme.cta, borderRadius: 14, paddingHorizontal: 18, paddingVertical: 14, flexDirection: 'row', alignItems: 'center' },
-  sheet: { position: 'absolute', left: 0, right: 0, bottom: 0, backgroundColor: SHEET, borderTopLeftRadius: 24, borderTopRightRadius: 24, paddingHorizontal: 24, paddingTop: 12, paddingBottom: 36, borderTopWidth: StyleSheet.hairlineWidth, borderColor: BORDER, shadowColor: '#000', shadowOffset: { width: 0, height: -3 }, shadowOpacity: 0.08, shadowRadius: 12, elevation: 16 },
-  scrollSheet: { position: 'absolute', left: 0, right: 0, bottom: 0, maxHeight: '78%', backgroundColor: SHEET, borderTopLeftRadius: 24, borderTopRightRadius: 24, paddingHorizontal: 24, paddingTop: 12, borderTopWidth: StyleSheet.hairlineWidth, borderColor: BORDER, shadowColor: '#000', shadowOffset: { width: 0, height: -3 }, shadowOpacity: 0.08, shadowRadius: 12, elevation: 16 },
-  handle: { alignSelf: 'center', width: 44, height: 5, borderRadius: 3, backgroundColor: DIVIDER },
+  iconBtn: { width: 40, height: 40, borderRadius: 12, backgroundColor: SHEET_ALT, alignItems: 'center', justifyContent: 'center', borderWidth: StyleSheet.hairlineWidth, borderColor: BORDER },
+  navBanner: { backgroundColor: SHEET, borderRadius: 14, paddingHorizontal: 18, paddingVertical: 14, flexDirection: 'row', alignItems: 'center', borderWidth: StyleSheet.hairlineWidth, borderColor: BORDER },
+  sheet: { position: 'absolute', left: 0, right: 0, bottom: 0, backgroundColor: SHEET, borderTopLeftRadius: 24, borderTopRightRadius: 24, paddingHorizontal: 24, paddingTop: 12, paddingBottom: 36, borderTopWidth: StyleSheet.hairlineWidth, borderColor: BORDER, shadowColor: '#000', shadowOffset: { width: 0, height: -3 }, shadowOpacity: 0.4, shadowRadius: 12, elevation: 16 },
+  scrollSheet: { position: 'absolute', left: 0, right: 0, bottom: 0, maxHeight: '78%', backgroundColor: SHEET, borderTopLeftRadius: 24, borderTopRightRadius: 24, paddingHorizontal: 24, paddingTop: 12, borderTopWidth: StyleSheet.hairlineWidth, borderColor: BORDER, shadowColor: '#000', shadowOffset: { width: 0, height: -3 }, shadowOpacity: 0.4, shadowRadius: 12, elevation: 16 },
+  handle: { alignSelf: 'center', width: 44, height: 5, borderRadius: 3, backgroundColor: 'rgba(255,255,255,0.25)' },
   divider: { height: StyleSheet.hairlineWidth, backgroundColor: DIVIDER },
   avatar: { width: 56, height: 56, borderRadius: 28 },
   redBadge: { position: 'absolute', top: -4, right: -4, width: 22, height: 22, borderRadius: 11, backgroundColor: RED, alignItems: 'center', justifyContent: 'center', borderWidth: 2, borderColor: SHEET },
+  tierThumb: { width: 64, height: 64, borderRadius: 14, backgroundColor: '#FFFFFF', alignItems: 'center', justifyContent: 'center', marginRight: 14 },
   windowPill: { alignSelf: 'center', backgroundColor: SHEET_ALT, borderRadius: 999, paddingHorizontal: 16, paddingVertical: 6, marginTop: 8 },
   actionRow: { flexDirection: 'row', alignItems: 'center', paddingVertical: 16, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: DIVIDER },
-  whiteBtn: { backgroundColor: lightTheme.cta, borderRadius: 14, height: 54, alignItems: 'center', justifyContent: 'center', marginTop: 22 },
-  whiteBtnTxt: { color: '#fff', fontWeight: '700', fontSize: 16, letterSpacing: 0.5, fontFamily: fonts.bodySemiBold },
-  blackBtn: { backgroundColor: lightTheme.secondaryBtn, borderRadius: 14, height: 54, alignItems: 'center', justifyContent: 'center', marginTop: 12 },
-  feedbackBox: { backgroundColor: SHEET_ALT, borderRadius: 16, padding: 16, marginTop: 12, borderWidth: StyleSheet.hairlineWidth, borderColor: BORDER },
+  whiteBtn: { backgroundColor: CTA_BG, borderRadius: 14, height: 54, alignItems: 'center', justifyContent: 'center', marginTop: 22 },
+  whiteBtnTxt: { color: CTA_TEXT, fontWeight: '700', fontSize: 16, letterSpacing: 0.5, fontFamily: fonts.bodySemiBold },
+  darkBtn: { backgroundColor: DARK_BTN, borderRadius: 14, height: 54, alignItems: 'center', justifyContent: 'center', marginTop: 12, borderWidth: StyleSheet.hairlineWidth, borderColor: BORDER },
+  darkBtnTxt: { color: TEXT, fontWeight: '700', fontSize: 16, letterSpacing: 0.5, fontFamily: fonts.bodySemiBold },
+  feedbackBox: { backgroundColor: FIELD, borderRadius: 16, padding: 16, marginTop: 12, borderWidth: StyleSheet.hairlineWidth, borderColor: BORDER },
 });

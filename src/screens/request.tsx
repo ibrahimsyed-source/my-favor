@@ -1,18 +1,33 @@
 import React, { useState, useRef, useCallback } from 'react';
 import {
-  View, Image, TextInput, TouchableOpacity, StyleSheet, ScrollView, Dimensions,
+  View, Image, TextInput, TouchableOpacity, StyleSheet, ScrollView,
+  KeyboardAvoidingView, Platform,
 } from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import Slider from '@react-native-community/slider';
 import * as ImagePicker from 'expo-image-picker';
-import {
-  Screen, TopBar, Txt, Button, Field, Card, Avatar, MapPlaceholder,
-} from '../components';
-import { useTheme, tokens } from '../theme';
+import { Txt, Button, Avatar } from '../components';
+import { tokens } from '../theme';
 import { useStore } from '../store';
 import { FAVOR_TIERS, FavorTier } from '../types';
 
-const SCREEN_H = Dimensions.get('window').height;
+// ---------------------------------------------------------------------------
+// User App v.2 — DARK palette. These request-flow screens are intentionally
+// dark (Favor Blast v.2). The shared useTheme() is LIGHT and only drives the
+// auth screens, so we never read it for backgrounds/text here — colours,
+// spacing and layout are matched to the v.2 reference via these local consts.
+// ---------------------------------------------------------------------------
+const SCREEN_BG = '#0C0C0C';           // content-screen background
+const MAP_BG = '#11161F';              // dark map backdrop (ConfirmAddress)
+const SHEET = '#171922';               // cards / bottom sheet
+const RAISED = '#1C2331';              // raised fields / pills
+const TXT = '#FFFFFF';                 // primary text
+const TXT_2 = 'rgba(255,255,255,0.6)'; // secondary text
+const TXT_3 = 'rgba(255,255,255,0.4)'; // tertiary / placeholder
+const BORDER = 'rgba(255,255,255,0.10)';
+const BRAND = '#ED1C24';               // brand red (pins / accents)
+const THUMB_BG = '#EDEDED';            // light tile behind the tier illustrations
 
 // Custom tier illustrations exported from Figma (node 100:12594).
 const TIER_IMAGES: Record<'tiny' | 'small' | 'big' | 'huge', any> = {
@@ -32,14 +47,34 @@ const TIER_EXAMPLES: Record<'tiny' | 'small' | 'big' | 'huge', string> = {
 };
 
 // ---------------------------------------------------------------------------
-// Shared bits
+// Shared dark chrome (replaces the light Screen / TopBar so these screens read
+// dark without touching the shared light-theme components).
 // ---------------------------------------------------------------------------
-const Footer: React.FC<{ children: React.ReactNode }> = ({ children }) => {
-  const { theme } = useTheme();
-  return (
-    <View style={[styles.footer, { borderTopColor: theme.border }]}>{children}</View>
-  );
-};
+const DarkScreen: React.FC<{ children: React.ReactNode }> = ({ children }) => (
+  <SafeAreaView style={{ flex: 1, backgroundColor: SCREEN_BG }} edges={['top']}>
+    <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
+      {children}
+    </KeyboardAvoidingView>
+  </SafeAreaView>
+);
+
+const DarkTopBar: React.FC<{ title?: string; onBack?: () => void }> = ({ title, onBack }) => (
+  <View style={styles.topbar}>
+    {onBack ? (
+      <TouchableOpacity onPress={onBack} hitSlop={12} accessibilityRole="button" accessibilityLabel="Go back">
+        <Ionicons name="arrow-back" size={26} color={TXT} />
+      </TouchableOpacity>
+    ) : (
+      <View style={{ width: 26 }} />
+    )}
+    <Txt variant="h6" color={TXT}>{title}</Txt>
+    <View style={{ width: 26 }} />
+  </View>
+);
+
+const Footer: React.FC<{ children: React.ReactNode }> = ({ children }) => (
+  <View style={styles.footer}>{children}</View>
+);
 
 // ---------------------------------------------------------------------------
 // 1. SelectFavor — "How big is the favor?"
@@ -51,54 +86,42 @@ const TierCard: React.FC<{
   example?: string;
   selected: boolean;
   onPress: () => void;
-}> = ({ image, title, price, example, selected, onPress }) => {
-  const { theme } = useTheme();
-  return (
-    <Card
-      onPress={onPress}
-      style={{
-        flexDirection: 'row',
-        alignItems: 'center',
-        padding: 14,
-        marginBottom: tokens.spacing.base,
-        borderWidth: selected ? 2 : StyleSheet.hairlineWidth,
-        borderColor: selected ? theme.cta : theme.border,
-      }}
-    >
-      <View style={styles.thumb}>
-        {image ? (
-          <Image source={image} style={{ width: 60, height: 60 }} resizeMode="contain" />
-        ) : (
-          <Txt variant="h2" color={theme.text}>$</Txt>
-        )}
-      </View>
-      <View style={{ flex: 1, marginLeft: 14 }}>
-        <Txt variant="h6">{title}</Txt>
-        <Txt variant="caption" color={theme.textSecondary} style={{ marginTop: 4 }}>
-          {price}
+}> = ({ image, title, price, example, selected, onPress }) => (
+  <TouchableOpacity
+    activeOpacity={0.9}
+    onPress={onPress}
+    style={[
+      styles.tierCard,
+      { borderWidth: selected ? 2 : 1, borderColor: selected ? BRAND : BORDER },
+    ]}
+  >
+    <View style={styles.thumb}>
+      {image ? (
+        <Image source={image} style={{ width: 60, height: 60 }} resizeMode="contain" />
+      ) : (
+        <Txt variant="h2" color="#141414">$</Txt>
+      )}
+    </View>
+    <View style={{ flex: 1, marginLeft: 14 }}>
+      <Txt variant="h6" color={TXT}>{title}</Txt>
+      <Txt variant="caption" color={TXT_2} style={{ marginTop: 4 }}>
+        {price}
+      </Txt>
+      {example ? (
+        <Txt variant="caption" color={TXT_3} style={{ marginTop: 2 }}>
+          {example}
         </Txt>
-        {example ? (
-          <Txt variant="caption" color={theme.textTertiary} style={{ marginTop: 2 }}>
-            {example}
-          </Txt>
-        ) : null}
-      </View>
-      <View
-        style={[
-          styles.selectPill,
-          { backgroundColor: selected ? theme.primary : theme.cta },
-        ]}
-      >
-        <Txt variant="caption" color="#FFFFFF" style={{ fontSize: 11, letterSpacing: 0.5 }}>
-          {selected ? 'SELECTED' : 'SELECT'}
-        </Txt>
-      </View>
-    </Card>
-  );
-};
+      ) : null}
+    </View>
+    <View style={[styles.selectPill, { backgroundColor: selected ? BRAND : RAISED }]}>
+      <Txt variant="caption" color={selected ? '#FFFFFF' : TXT_2} style={{ fontSize: 11, letterSpacing: 0.5 }}>
+        {selected ? 'SELECTED' : 'SELECT'}
+      </Txt>
+    </View>
+  </TouchableOpacity>
+);
 
 export function SelectFavor({ navigation }: any) {
-  const { theme } = useTheme();
   const s = useStore();
   const [selected, setSelected] = useState<FavorTier | null>(null);
 
@@ -119,22 +142,22 @@ export function SelectFavor({ navigation }: any) {
   };
 
   return (
-    <Screen padded={false}>
-      <TopBar
+    <DarkScreen>
+      <DarkTopBar
         title="Select Favor"
         onBack={navigation.canGoBack() ? navigation.goBack : undefined}
       />
       <ScrollView contentContainerStyle={{ padding: tokens.spacing.lg }} keyboardShouldPersistTaps="handled">
-        <Txt variant="h3">How big is the favor?</Txt>
-        <Txt variant="body" color={theme.text} style={{ marginTop: 8, marginBottom: tokens.spacing.base }}>
+        <Txt variant="h3" color={TXT}>How big is the favor?</Txt>
+        <Txt variant="body" color={TXT_2} style={{ marginTop: 8, marginBottom: tokens.spacing.base }}>
           Choose the cost of favor based on the amount of effort required.
         </Txt>
 
         <View
           style={{ flexDirection: 'row', alignItems: 'center', marginBottom: tokens.spacing.xl }}
         >
-          <Ionicons name="information-circle-outline" size={16} color={theme.textSecondary} />
-          <Txt variant="caption" color={theme.textSecondary} style={{ flex: 1, marginLeft: 6 }}>
+          <Ionicons name="information-circle-outline" size={16} color={TXT_2} />
+          <Txt variant="caption" color={TXT_2} style={{ flex: 1, marginLeft: 6 }}>
             We'll match you with a nearby Favor Pal after checkout — you can switch to another Pal if you'd like.
           </Txt>
         </View>
@@ -160,9 +183,9 @@ export function SelectFavor({ navigation }: any) {
       </ScrollView>
 
       <Footer>
-        <Button title="NEXT" disabled={!canNext} onPress={onNext} />
+        <Button title="NEXT" variant="white" disabled={!canNext} onPress={onNext} />
       </Footer>
-    </Screen>
+    </DarkScreen>
   );
 }
 
@@ -185,17 +208,20 @@ const DescriptionField = React.memo(function DescriptionField({
   onChangeText: (t: string) => void;
   maxLength?: number;
 }) {
-  const { theme } = useTheme();
   return (
     <>
-      <Field
+      <TextInput
         value={value}
         onChangeText={onChangeText}
         placeholder={DESC_PLACEHOLDER}
+        placeholderTextColor={TXT_3}
         multiline
         maxLength={maxLength}
+        textAlignVertical="top"
+        style={[tokens.typography.body, styles.descInput]}
+        accessibilityLabel="Favor description"
       />
-      <Txt variant="bodySm" color={theme.textSecondary} style={{ textAlign: 'right', marginTop: -8 }}>
+      <Txt variant="bodySm" color={TXT_2} style={{ textAlign: 'right', marginTop: 6 }}>
         {maxLength - value.length} characters left.
       </Txt>
     </>
@@ -203,7 +229,6 @@ const DescriptionField = React.memo(function DescriptionField({
 });
 
 export function FavorDescription({ navigation }: any) {
-  const { theme } = useTheme();
   const s = useStore();
   const [desc, setDesc] = useState(s.draftFavor?.description ?? '');
   // Rehydrate a previously-picked photo from the draft so back-navigation through
@@ -235,20 +260,20 @@ export function FavorDescription({ navigation }: any) {
   };
 
   return (
-    <Screen padded={false}>
-      <TopBar
+    <DarkScreen>
+      <DarkTopBar
         title="Favor Description"
         onBack={navigation.canGoBack() ? navigation.goBack : undefined}
       />
       <ScrollView contentContainerStyle={{ flexGrow: 1, padding: tokens.spacing.lg }} keyboardShouldPersistTaps="handled">
-        <Txt variant="h3" style={{ marginTop: 8 }}>What is the favor?</Txt>
-        <Txt variant="body" color={theme.text} style={{ marginTop: tokens.spacing.base, marginBottom: tokens.spacing.base }}>
+        <Txt variant="h3" color={TXT} style={{ marginTop: 8 }}>What is the favor?</Txt>
+        <Txt variant="body" color={TXT_2} style={{ marginTop: tokens.spacing.base, marginBottom: tokens.spacing.base }}>
           Describe the favor you need.
         </Txt>
 
         <DescriptionField value={desc} onChangeText={setDesc} />
 
-        <TouchableOpacity activeOpacity={0.8} onPress={pickImage} style={[styles.addTile, { backgroundColor: theme.inputBg, borderColor: theme.border }]}>
+        <TouchableOpacity activeOpacity={0.8} onPress={pickImage} style={styles.addTile}>
           {image && !imgError ? (
             <Image
               source={{ uri: image }}
@@ -258,17 +283,17 @@ export function FavorDescription({ navigation }: any) {
             />
           ) : (
             <>
-              <Ionicons name="camera" size={26} color={theme.textTertiary} />
-              <Txt variant="caption" color={theme.textSecondary} style={{ marginTop: 6 }}>Add Image</Txt>
+              <Ionicons name="camera" size={26} color={TXT_3} />
+              <Txt variant="caption" color={TXT_2} style={{ marginTop: 6 }}>Add Image</Txt>
             </>
           )}
         </TouchableOpacity>
       </ScrollView>
 
       <Footer>
-        <Button title="NEXT" disabled={!canNext} onPress={onNext} />
+        <Button title="NEXT" variant="white" disabled={!canNext} onPress={onNext} />
       </Footer>
-    </Screen>
+    </DarkScreen>
   );
 }
 
@@ -289,7 +314,6 @@ const PriceSlider = React.memo(function PriceSlider({
 }: {
   onChange: (hours: number, price: number) => void;
 }) {
-  const { theme } = useTheme();
   const [hours, setHours] = useState(2);
   const [trackW, setTrackW] = useState(0);
 
@@ -317,9 +341,9 @@ const PriceSlider = React.memo(function PriceSlider({
           step={1}
           value={hours}
           onValueChange={handleValue}
-          minimumTrackTintColor={theme.cta}
-          maximumTrackTintColor={theme.divider}
-          thumbTintColor={theme.cta}
+          minimumTrackTintColor={BRAND}
+          maximumTrackTintColor="rgba(255,255,255,0.18)"
+          thumbTintColor={BRAND}
           accessibilityRole="adjustable"
           accessibilityLabel="Favor duration"
           accessibilityValue={{ text: `${rounded} hours, $${price}` }}
@@ -332,22 +356,22 @@ const PriceSlider = React.memo(function PriceSlider({
             width: BUBBLE,
             height: BUBBLE,
             borderRadius: BUBBLE / 2,
-            backgroundColor: theme.cta,
+            backgroundColor: BRAND,
             alignItems: 'center',
             justifyContent: 'center',
           }}
         >
-          <Txt variant="caption" color={theme.ctaText} style={{ fontSize: 12 }}>${price}</Txt>
+          <Txt variant="caption" color="#FFFFFF" style={{ fontSize: 12 }}>${price}</Txt>
         </View>
       </View>
 
       <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginTop: tokens.spacing.sm }}>
-        <Txt variant="h6">{MIN_HOURS}hr</Txt>
-        <Txt variant="h6">{rounded}hrs</Txt>
-        <Txt variant="h6">{MAX_HOURS}hrs</Txt>
+        <Txt variant="h6" color={TXT}>{MIN_HOURS}hr</Txt>
+        <Txt variant="h6" color={TXT}>{rounded}hrs</Txt>
+        <Txt variant="h6" color={TXT}>{MAX_HOURS}hrs</Txt>
       </View>
 
-      <Txt variant="body" color={theme.textSecondary} center style={{ marginTop: tokens.spacing.base }}>
+      <Txt variant="body" color={TXT_2} center style={{ marginTop: tokens.spacing.base }}>
         {rounded}hrs x ${HOURLY_RATE} = ${price}
       </Txt>
     </>
@@ -355,7 +379,6 @@ const PriceSlider = React.memo(function PriceSlider({
 });
 
 export function Negotiate({ navigation }: any) {
-  const { theme } = useTheme();
   const s = useStore();
   const [desc, setDesc] = useState(s.draftFavor?.description ?? '');
   // Hold the slider's committed price in a ref so drags don't re-render this screen.
@@ -377,29 +400,29 @@ export function Negotiate({ navigation }: any) {
   };
 
   return (
-    <Screen padded={false}>
-      <TopBar
+    <DarkScreen>
+      <DarkTopBar
         title="Negotiate Your Favor"
         onBack={navigation.canGoBack() ? navigation.goBack : undefined}
       />
       <ScrollView contentContainerStyle={{ flexGrow: 1, padding: tokens.spacing.lg }} keyboardShouldPersistTaps="handled">
-        <Txt variant="h3" style={{ marginTop: 8 }}>What is the favor?</Txt>
-        <Txt variant="body" color={theme.text} style={{ marginTop: tokens.spacing.base }}>
+        <Txt variant="h3" color={TXT} style={{ marginTop: 8 }}>What is the favor?</Txt>
+        <Txt variant="body" color={TXT_2} style={{ marginTop: tokens.spacing.base }}>
           Use the slider below to calculate your favor price based on the time you need
         </Txt>
 
         <PriceSlider onChange={handlePrice} />
 
-        <Txt variant="body" color={theme.text} style={{ marginTop: tokens.spacing.xxl, marginBottom: tokens.spacing.base }}>
+        <Txt variant="body" color={TXT_2} style={{ marginTop: tokens.spacing.xxl, marginBottom: tokens.spacing.base }}>
           Describe the favor you need.
         </Txt>
         <DescriptionField value={desc} onChangeText={setDesc} />
       </ScrollView>
 
       <Footer>
-        <Button title="NEXT" disabled={!canNext} onPress={onNext} />
+        <Button title="NEXT" variant="white" disabled={!canNext} onPress={onNext} />
       </Footer>
-    </Screen>
+    </DarkScreen>
   );
 }
 
@@ -412,11 +435,26 @@ const MapMarker: React.FC<{ uri?: string }> = ({ uri }) => (
   </View>
 );
 
+// Lightweight dark "map paper" backdrop (v.2): navy fill, faint street grid, a
+// couple of arterials and a translucent red search radius — a web-safe stand-in
+// for a real dark map (purely decorative; no logic depends on it).
+const DarkMapBg: React.FC = () => (
+  <View style={[StyleSheet.absoluteFill, { backgroundColor: MAP_BG }]}>
+    {[0.16, 0.34, 0.52, 0.7, 0.88].map((x) => (
+      <View key={`v${x}`} style={{ position: 'absolute', top: 0, bottom: 0, left: `${x * 100}%`, width: 2, backgroundColor: 'rgba(255,255,255,0.05)' }} />
+    ))}
+    {[0.12, 0.3, 0.48, 0.66, 0.84].map((y) => (
+      <View key={`h${y}`} style={{ position: 'absolute', left: 0, right: 0, top: `${y * 100}%`, height: 2, backgroundColor: 'rgba(255,255,255,0.05)' }} />
+    ))}
+    <View style={{ position: 'absolute', top: 0, bottom: 0, left: '30%', width: 5, backgroundColor: 'rgba(212,160,90,0.32)' }} />
+    <View style={{ position: 'absolute', left: 0, right: 0, top: '46%', height: 5, backgroundColor: 'rgba(212,160,90,0.32)' }} />
+  </View>
+);
+
 // Honest "When?" options that actually set draft.scheduledFor (requestFavor reads
 // it). The clock icon now describes timing instead of the old mislabeled "Where to?".
 
 export function ConfirmAddress({ navigation }: any) {
-  const { theme } = useTheme();
   const s = useStore();
   // Editable — default from the member's saved home address, fall back to the seed.
   const [address, setAddress] = useState(
@@ -487,24 +525,26 @@ export function ConfirmAddress({ navigation }: any) {
   };
 
   return (
-    <Screen padded={false}>
-      <View style={{ flex: 1 }}>
-        <MapPlaceholder height={SCREEN_H} label="">
-          <View style={StyleSheet.absoluteFill} pointerEvents="none">
-            <View style={{ position: 'absolute', top: '42%', left: '44%' }}>
-              <Ionicons name="location" size={42} color={theme.primary} />
-            </View>
-            <View style={{ position: 'absolute', top: '54%', left: '18%' }}>
-              <MapMarker uri={pals[0]?.avatar} />
-            </View>
-            <View style={{ position: 'absolute', top: '60%', left: '64%' }}>
-              <MapMarker uri={pals[1]?.avatar} />
-            </View>
-            <View style={{ position: 'absolute', top: '70%', left: '40%' }}>
-              <MapMarker uri={pals[2]?.avatar} />
-            </View>
+    <DarkScreen>
+      <View style={{ flex: 1, backgroundColor: MAP_BG }}>
+        <DarkMapBg />
+
+        <View style={StyleSheet.absoluteFill} pointerEvents="none">
+          {/* translucent red search radius around the favor pin */}
+          <View style={styles.radius} />
+          <View style={{ position: 'absolute', top: '42%', left: '44%' }}>
+            <Ionicons name="location" size={42} color={BRAND} />
           </View>
-        </MapPlaceholder>
+          <View style={{ position: 'absolute', top: '54%', left: '18%' }}>
+            <MapMarker uri={pals[0]?.avatar} />
+          </View>
+          <View style={{ position: 'absolute', top: '60%', left: '64%' }}>
+            <MapMarker uri={pals[1]?.avatar} />
+          </View>
+          <View style={{ position: 'absolute', top: '70%', left: '40%' }}>
+            <MapMarker uri={pals[2]?.avatar} />
+          </View>
+        </View>
 
         {/* Scrollable so the schedule inputs + Confirm button stay reachable when
             the keyboard is up (the card floats at top:16, so padding-based KAV
@@ -516,27 +556,27 @@ export function ConfirmAddress({ navigation }: any) {
           keyboardShouldPersistTaps="handled"
           showsVerticalScrollIndicator={false}
         >
-          <Card>
+          <View style={styles.addressCard}>
             <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
-              <Txt variant="label">Location of your favor</Txt>
+              <Txt variant="label" color={TXT}>Location of your favor</Txt>
               <TouchableOpacity
                 onPress={() => navigation.goBack()}
                 hitSlop={10}
                 accessibilityRole="button"
                 accessibilityLabel="Close"
               >
-                <Ionicons name="close" size={20} color={theme.textSecondary} />
+                <Ionicons name="close" size={20} color={TXT_2} />
               </TouchableOpacity>
             </View>
 
             <View style={{ flexDirection: 'row', alignItems: 'center', marginTop: tokens.spacing.md }}>
-              <Ionicons name="location" size={18} color={theme.primary} />
+              <Ionicons name="location" size={18} color={BRAND} />
               <TextInput
                 value={address}
                 onChangeText={setAddress}
                 placeholder="Enter the favor address"
-                placeholderTextColor={theme.textTertiary}
-                style={[tokens.typography.body, { flex: 1, marginLeft: 8, color: theme.text, paddingVertical: 0 }]}
+                placeholderTextColor={TXT_3}
+                style={[tokens.typography.body, { flex: 1, marginLeft: 8, color: TXT, paddingVertical: 0 }]}
                 returnKeyType="done"
                 accessibilityLabel="Favor address"
               />
@@ -552,12 +592,13 @@ export function ConfirmAddress({ navigation }: any) {
                     accessibilityRole="button"
                     accessibilityLabel={`Use address ${a}`}
                     style={{
-                      backgroundColor: theme.surfaceAlt, borderRadius: 999, paddingHorizontal: 12, paddingVertical: 6,
+                      backgroundColor: RAISED, borderRadius: 999, paddingHorizontal: 12, paddingVertical: 6,
+                      borderWidth: 1, borderColor: BORDER,
                       flexDirection: 'row', alignItems: 'center', gap: 4,
                     }}
                   >
-                    <Ionicons name={i === 0 && a === s.user?.homeAddress ? 'home-outline' : 'time-outline'} size={13} color={theme.textSecondary} />
-                    <Txt variant="caption" color={theme.text} numberOfLines={1} style={{ maxWidth: 180 }}>{a}</Txt>
+                    <Ionicons name={i === 0 && a === s.user?.homeAddress ? 'home-outline' : 'time-outline'} size={13} color={TXT_2} />
+                    <Txt variant="caption" color={TXT} numberOfLines={1} style={{ maxWidth: 180 }}>{a}</Txt>
                   </TouchableOpacity>
                 ))}
               </View>
@@ -568,13 +609,13 @@ export function ConfirmAddress({ navigation }: any) {
                 marginTop: tokens.spacing.md,
                 paddingTop: tokens.spacing.md,
                 borderTopWidth: StyleSheet.hairlineWidth,
-                borderTopColor: theme.divider,
+                borderTopColor: BORDER,
               }}
             >
               <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
                 <View style={{ flexDirection: 'row', alignItems: 'center' }}>
-                  <Ionicons name="time-outline" size={18} color={theme.textSecondary} />
-                  <Txt variant="bodySm" color={theme.textSecondary} style={{ marginLeft: 8 }}>When?</Txt>
+                  <Ionicons name="time-outline" size={18} color={TXT_2} />
+                  <Txt variant="bodySm" color={TXT_2} style={{ marginLeft: 8 }}>When?</Txt>
                 </View>
                 <View style={{ flexDirection: 'row', gap: 6 }}>
                   {(['now', 'later'] as const).map((m) => {
@@ -587,11 +628,11 @@ export function ConfirmAddress({ navigation }: any) {
                         accessibilityRole="button"
                         accessibilityState={{ selected: on }}
                         style={{
-                          backgroundColor: on ? theme.primary : theme.surfaceAlt,
+                          backgroundColor: on ? BRAND : RAISED,
                           paddingHorizontal: 16, paddingVertical: 7, borderRadius: tokens.radius.pill,
                         }}
                       >
-                        <Txt variant="label" color={on ? '#FFFFFF' : theme.textSecondary}>
+                        <Txt variant="label" color={on ? '#FFFFFF' : TXT_2}>
                           {m === 'now' ? 'Now' : 'Schedule'}
                         </Txt>
                       </TouchableOpacity>
@@ -607,23 +648,23 @@ export function ConfirmAddress({ navigation }: any) {
                       value={dateStr}
                       onChangeText={setDateStr}
                       placeholder="MM/DD/YYYY"
-                      placeholderTextColor={theme.textTertiary}
-                      style={[tokens.typography.body, { flex: 1, backgroundColor: theme.inputBg, color: theme.text, borderRadius: tokens.radius.md, paddingHorizontal: 14, paddingVertical: 12 }]}
+                      placeholderTextColor={TXT_3}
+                      style={[tokens.typography.body, { flex: 1, backgroundColor: RAISED, color: TXT, borderRadius: tokens.radius.md, paddingHorizontal: 14, paddingVertical: 12 }]}
                       accessibilityLabel="Favor date"
                     />
                     <TextInput
                       value={timeStr}
                       onChangeText={setTimeStr}
                       placeholder="2:30 PM"
-                      placeholderTextColor={theme.textTertiary}
-                      style={[tokens.typography.body, { flex: 1, backgroundColor: theme.inputBg, color: theme.text, borderRadius: tokens.radius.md, paddingHorizontal: 14, paddingVertical: 12 }]}
+                      placeholderTextColor={TXT_3}
+                      style={[tokens.typography.body, { flex: 1, backgroundColor: RAISED, color: TXT, borderRadius: tokens.radius.md, paddingHorizontal: 14, paddingVertical: 12 }]}
                       accessibilityLabel="Favor time"
                     />
                   </View>
                   {!scheduleValid ? (
                     <Txt
                       variant="caption"
-                      color={scheduleEntered ? theme.danger : theme.textSecondary}
+                      color={scheduleEntered ? BRAND : TXT_2}
                       style={{ marginTop: 6 }}
                     >
                       {scheduleEntered
@@ -636,27 +677,48 @@ export function ConfirmAddress({ navigation }: any) {
             </View>
 
             <View style={{ marginTop: tokens.spacing.base }}>
-              <Button title="Confirm Address" uppercase={false} disabled={!canConfirm} onPress={onConfirm} />
+              <Button title="Confirm Address" variant="white" uppercase={false} disabled={!canConfirm} onPress={onConfirm} />
             </View>
-          </Card>
+          </View>
         </ScrollView>
       </View>
-    </Screen>
+    </DarkScreen>
   );
 }
 
 const styles = StyleSheet.create({
+  topbar: {
+    height: 52,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: 16,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    borderBottomColor: BORDER,
+    backgroundColor: SCREEN_BG,
+  },
   footer: {
     paddingHorizontal: tokens.spacing.lg,
     paddingTop: tokens.spacing.md,
     paddingBottom: tokens.spacing.lg,
     borderTopWidth: StyleSheet.hairlineWidth,
+    borderTopColor: BORDER,
+    backgroundColor: SCREEN_BG,
+  },
+  tierCard: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    padding: 14,
+    marginBottom: tokens.spacing.base,
+    backgroundColor: SHEET,
+    borderRadius: tokens.radius.lg,
+    ...tokens.shadow.card,
   },
   thumb: {
     width: 72,
     height: 72,
     borderRadius: tokens.radius.sm,
-    backgroundColor: '#EDEDED',
+    backgroundColor: THUMB_BG,
     alignItems: 'center',
     justifyContent: 'center',
     overflow: 'hidden',
@@ -668,6 +730,16 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
   },
+  descInput: {
+    backgroundColor: RAISED,
+    color: TXT,
+    borderRadius: tokens.radius.md,
+    borderWidth: 1,
+    borderColor: BORDER,
+    paddingHorizontal: 14,
+    paddingVertical: 12,
+    minHeight: 120,
+  },
   addTile: {
     width: 110,
     height: 110,
@@ -677,7 +749,28 @@ const styles = StyleSheet.create({
     marginTop: tokens.spacing.base,
     borderWidth: 1,
     borderStyle: 'dashed',
+    borderColor: BORDER,
+    backgroundColor: RAISED,
     overflow: 'hidden',
+  },
+  addressCard: {
+    backgroundColor: SHEET,
+    borderRadius: tokens.radius.lg,
+    padding: tokens.spacing.base,
+    borderWidth: 1,
+    borderColor: BORDER,
+    ...tokens.shadow.card,
+  },
+  radius: {
+    position: 'absolute',
+    top: '34%',
+    left: '28%',
+    width: 180,
+    height: 180,
+    borderRadius: 90,
+    backgroundColor: 'rgba(237,28,36,0.14)',
+    borderWidth: 1,
+    borderColor: 'rgba(237,28,36,0.32)',
   },
   marker: {
     borderWidth: 2,

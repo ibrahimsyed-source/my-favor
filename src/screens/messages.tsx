@@ -3,12 +3,34 @@ import {
   View, Text, TextInput, TouchableOpacity, FlatList, StyleSheet,
   KeyboardAvoidingView, Platform, Modal, ListRenderItemInfo, RefreshControl,
 } from 'react-native';
-import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
-import { Screen, Txt, Avatar, ConfirmModal, InfoModal } from '../components';
+import { Txt, Avatar, ConfirmModal, InfoModal } from '../components';
 import { useStore } from '../store';
-import { useTheme, tokens } from '../theme';
+import { tokens } from '../theme';
 import { Message, Thread } from '../types';
+
+// ---------------------------------------------------------------------------
+// Dark "User App v.2" palette. These screens are intentionally DARK and do NOT
+// use the shared light useTheme() palette — colours/spacing match the v.2
+// reference (dark navy sheets, white text, red accents, white filled CTAs).
+// ---------------------------------------------------------------------------
+const C = {
+  bg: '#0C0C0C',                       // screen background
+  card: '#171922',                     // input bar surface
+  sheet: '#1B222C',                    // bottom sheet / incoming bubble
+  pill: '#1C2331',                     // raised field / input pill / filter chip
+  border: 'rgba(255,255,255,0.10)',    // dividers / borders
+  text: '#FFFFFF',                     // primary text / icons
+  textSecondary: 'rgba(255,255,255,0.6)',
+  textTertiary: 'rgba(255,255,255,0.4)',
+  placeholder: 'rgba(255,255,255,0.4)',
+  their: '#1B222C',                    // incoming bubble (dark navy)
+  mine: '#ED1C24',                     // outgoing bubble (brand red)
+  brand: '#ED1C24',                    // brand red accent
+  ctaBg: '#FFFFFF',                    // v.2 filled CTA background
+  ctaText: '#141414',                  // v.2 filled CTA text
+} as const;
 
 // Reference "now" that matches the seed data's NOW constant so the relative
 // timestamps on the list render sensible values (10m / 3h / 1d).
@@ -27,10 +49,9 @@ function timeAgo(ts: number): string {
 }
 
 // ---------------------------------------------------------------------------
-// Messages — tab screen. Clean iOS-style list of conversation threads.
+// Messages — tab screen. Dark iOS-style list of conversation threads.
 // ---------------------------------------------------------------------------
 export const Messages = ({ navigation }: any) => {
-  const { theme } = useTheme();
   const s = useStore();
   const [onlyUnread, setOnlyUnread] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
@@ -64,11 +85,11 @@ export const Messages = ({ navigation }: any) => {
   );
 
   return (
-    <Screen padded={false}>
+    <SafeAreaView style={{ flex: 1, backgroundColor: C.bg }} edges={['top']}>
       <View style={{ flex: 1 }}>
         {/* Header: large title + Unread filter chip */}
         <View style={lstyles.header}>
-          <Txt variant="h1">Messages</Txt>
+          <Txt variant="h1" color={C.text}>Messages</Txt>
           <TouchableOpacity
             activeOpacity={0.8}
             onPress={() => setOnlyUnread((v) => !v)}
@@ -77,12 +98,12 @@ export const Messages = ({ navigation }: any) => {
             accessibilityState={{ selected: onlyUnread }}
             style={[
               lstyles.chip,
-              { backgroundColor: onlyUnread ? theme.cta : theme.secondaryBtn },
+              { backgroundColor: onlyUnread ? C.ctaBg : C.pill },
             ]}
           >
             <Txt
               variant="bodySm"
-              color={onlyUnread ? theme.ctaText : theme.text}
+              color={onlyUnread ? C.ctaText : C.textSecondary}
               style={{ fontFamily: tokens.typography.label.fontFamily }}
             >
               Unread
@@ -97,24 +118,23 @@ export const Messages = ({ navigation }: any) => {
           contentContainerStyle={{ paddingBottom: tokens.spacing.xl, flexGrow: 1 }}
           keyboardShouldPersistTaps="handled"
           refreshControl={
-            <RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={theme.primary} />
+            <RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={C.text} />
           }
           ListEmptyComponent={
             <View style={{ paddingTop: 80, alignItems: 'center' }}>
-              <Ionicons name="chatbubbles-outline" size={40} color={theme.textTertiary} />
-              <Txt variant="body" color={theme.textSecondary} style={{ marginTop: 12 }}>
+              <Ionicons name="chatbubbles-outline" size={40} color={C.textTertiary} />
+              <Txt variant="body" color={C.textSecondary} style={{ marginTop: 12 }}>
                 {onlyUnread ? 'No unread messages' : 'No conversations yet'}
               </Txt>
             </View>
           }
         />
       </View>
-    </Screen>
+    </SafeAreaView>
   );
 };
 
 const ThreadRow = React.memo<{ thread: Thread; onPress: () => void }>(({ thread, onPress }) => {
-  const { theme } = useTheme();
   const unread = thread.unread > 0;
   return (
     <TouchableOpacity
@@ -125,26 +145,26 @@ const ThreadRow = React.memo<{ thread: Thread; onPress: () => void }>(({ thread,
       accessibilityLabel={`Conversation with ${thread.withUser.name}${unread ? `, ${thread.unread} unread` : ''}`}
     >
       <Avatar uri={thread.withUser.avatar} size={54} name={thread.withUser.name} />
-      <View style={[lstyles.rowBody, { borderBottomColor: theme.divider }]}>
+      <View style={[lstyles.rowBody, { borderBottomColor: C.border }]}>
         <View style={lstyles.rowTop}>
-          <Txt variant="label" numberOfLines={1} style={{ flex: 1 }}>
+          <Txt variant="label" color={C.text} numberOfLines={1} style={{ flex: 1 }}>
             {thread.withUser.name}
           </Txt>
-          <Txt variant="caption" color={theme.textTertiary}>
+          <Txt variant="caption" color={C.textTertiary}>
             {timeAgo(thread.updatedAt)}
           </Txt>
         </View>
         <View style={lstyles.rowBottom}>
           <Txt
             variant="bodySm"
-            color={unread ? theme.text : theme.textSecondary}
+            color={unread ? C.text : C.textSecondary}
             numberOfLines={1}
             style={{ flex: 1 }}
           >
             {thread.lastMessage}
           </Txt>
           {unread && (
-            <View style={[lstyles.badge, { backgroundColor: theme.primary }]}>
+            <View style={[lstyles.badge, { backgroundColor: C.brand }]}>
               <Text style={lstyles.badgeTxt}>{thread.unread}</Text>
             </View>
           )}
@@ -155,19 +175,8 @@ const ThreadRow = React.memo<{ thread: Thread; onPress: () => void }>(({ thread,
 });
 
 // ---------------------------------------------------------------------------
-// MessageThread — light chat thread, consistent with the rest of the app.
+// MessageThread — dark chat thread (v.2): navy incoming bubbles, red outgoing.
 // ---------------------------------------------------------------------------
-const C = {
-  bg: '#FFFFFF',
-  bar: '#F5F5F5',       // header border / input bar / action sheet surface
-  pill: '#FFFFFF',      // input pill (bordered) over the gray bar
-  border: '#E5E5E5',
-  their: '#F0F0F0',     // incoming bubble (dark text)
-  mine: '#FFE1E2',      // outgoing bubble — light brand tint (dark text)
-  placeholder: '#9A9A9A',
-  text: '#1A1A1A',
-};
-
 export const MessageThread = ({ navigation, route }: any) => {
   const s = useStore();
   const insets = useSafeAreaInsets();
@@ -301,8 +310,8 @@ export const MessageThread = ({ navigation, route }: any) => {
                 accessibilityRole="button"
                 accessibilityLabel={`Block ${title}`}
               >
-                <Ionicons name="ban-outline" size={22} color="#E5484D" />
-                <Text style={[tstyles.sheetTxt, { color: '#E5484D' }]}>Block user</Text>
+                <Ionicons name="ban-outline" size={22} color={C.brand} />
+                <Text style={[tstyles.sheetTxt, { color: C.brand }]}>Block user</Text>
               </TouchableOpacity>
               <TouchableOpacity
                 style={[tstyles.sheetRow, tstyles.sheetCancel]}
@@ -310,7 +319,7 @@ export const MessageThread = ({ navigation, route }: any) => {
                 accessibilityRole="button"
                 accessibilityLabel="Cancel"
               >
-                <Text style={[tstyles.sheetTxt, { color: C.placeholder }]}>Cancel</Text>
+                <Text style={[tstyles.sheetTxt, { color: C.textSecondary }]}>Cancel</Text>
               </TouchableOpacity>
             </View>
           </TouchableOpacity>
@@ -358,7 +367,7 @@ export const MessageThread = ({ navigation, route }: any) => {
             accessibilityLabel="Send message"
             accessibilityState={{ disabled: !canSend }}
           >
-            <Ionicons name="send" size={22} color={canSend ? '#ED1C24' : C.placeholder} />
+            <Ionicons name="send" size={22} color={canSend ? C.brand : C.placeholder} />
           </TouchableOpacity>
         </View>
       </View>
@@ -447,7 +456,7 @@ const tstyles = StyleSheet.create({
     alignItems: 'center',
     paddingHorizontal: 16,
     borderBottomWidth: StyleSheet.hairlineWidth,
-    borderBottomColor: C.bar,
+    borderBottomColor: C.border,
   },
   headerName: {
     flex: 1,
@@ -476,7 +485,7 @@ const tstyles = StyleSheet.create({
   inputBar: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: C.bar,
+    backgroundColor: C.card,
     paddingHorizontal: 16,
     paddingTop: 14,
   },
@@ -513,7 +522,7 @@ const tstyles = StyleSheet.create({
     justifyContent: 'flex-end',
   },
   sheet: {
-    backgroundColor: C.bar,
+    backgroundColor: C.sheet,
     borderTopLeftRadius: 18,
     borderTopRightRadius: 18,
     paddingTop: 8,
@@ -526,7 +535,7 @@ const tstyles = StyleSheet.create({
     paddingVertical: 18,
     paddingHorizontal: 16,
     borderBottomWidth: StyleSheet.hairlineWidth,
-    borderBottomColor: C.pill,
+    borderBottomColor: C.border,
   },
   sheetCancel: {
     justifyContent: 'center',

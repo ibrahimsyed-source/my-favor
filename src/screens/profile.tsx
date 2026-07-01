@@ -6,37 +6,53 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import * as ImagePicker from 'expo-image-picker';
-import { Screen, Txt, Button, Row, TopBar, InfoModal, ConfirmModal, Avatar } from '../components';
-import { useTheme, fonts } from '../theme';
+import { Txt, Button, InfoModal, ConfirmModal, Avatar } from '../components';
+import { fonts } from '../theme';
 import { useStore } from '../store';
 
 // ---------------------------------------------------------------------------
-// Module palette — all screens follow the app's light theme; only the brand
-// red accent and the rating-star amber are kept as fixed literals.
+// Module palette — these screens are intentionally DARK ("User App v.2").
+// The shared useTheme() is a single light theme (used by auth/onboarding), so
+// it is NOT consulted here; instead every surface/text/border uses the local
+// dark tokens below so the look matches the v.2 reference exactly.
 // ---------------------------------------------------------------------------
 const RED = '#ED1C24';
 const STAR = '#FFBD00';
+const GREEN = '#02CB00';
+
+const DARK = {
+  bg: '#0C0C0C', // near-black content-screen background
+  card: '#1B222C', // side drawer / bottom-sheet navy
+  field: '#1C2331', // raised input / field navy
+  text: '#FFFFFF',
+  textSecondary: 'rgba(255,255,255,0.6)',
+  textTertiary: 'rgba(255,255,255,0.4)',
+  border: 'rgba(255,255,255,0.10)',
+  divider: 'rgba(255,255,255,0.10)',
+  ctaBg: '#FFFFFF', // v.2 filled CTA is white-on-dark
+  ctaText: '#141414',
+  switchTrack: '#39404B',
+} as const;
 
 // ---------------------------------------------------------------------------
 // Shared dark-surface building blocks
 // ---------------------------------------------------------------------------
 function DarkHeader({ title, onBack, rightIcon, onRight }: any) {
-  const { theme } = useTheme();
   return (
-    <View style={[st.darkHeader, { backgroundColor: theme.background, borderBottomColor: theme.border }]}>
+    <View style={[st.darkHeader, { backgroundColor: DARK.bg, borderBottomColor: DARK.border }]}>
       {/* Root tab screens (Profile) pass no onBack, so no back chevron renders. */}
       <View style={{ width: 40 }}>
         {onBack ? (
           <TouchableOpacity onPress={onBack} hitSlop={10} accessibilityRole="button" accessibilityLabel="Go back">
-            <Ionicons name="chevron-back" size={26} color={theme.text} />
+            <Ionicons name="chevron-back" size={26} color={DARK.text} />
           </TouchableOpacity>
         ) : null}
       </View>
-      <Txt variant="h6" color={theme.text}>{title}</Txt>
+      <Txt variant="h6" color={DARK.text}>{title}</Txt>
       <View style={{ width: 40, alignItems: 'flex-end' }}>
         {rightIcon ? (
           <TouchableOpacity onPress={onRight} hitSlop={10} accessibilityRole="button" accessibilityLabel="Edit profile">
-            <Ionicons name={rightIcon} size={22} color={theme.text} />
+            <Ionicons name={rightIcon} size={22} color={DARK.text} />
           </TouchableOpacity>
         ) : null}
       </View>
@@ -48,18 +64,17 @@ function DarkField({
   label, value, onChangeText, placeholder, secureTextEntry, keyboardType,
   multiline, maxLength, autoCapitalize,
 }: any) {
-  const { theme } = useTheme();
   const [hide, setHide] = useState(!!secureTextEntry);
   return (
     <View style={{ flex: 1 }}>
-      {label ? <Txt variant="label" style={{ marginBottom: 8 }}>{label}</Txt> : null}
-      <View style={[st.darkInput, { backgroundColor: theme.inputBg }, multiline && { height: 120, alignItems: 'flex-start' }]}>
+      {label ? <Txt variant="label" color={DARK.text} style={{ marginBottom: 8 }}>{label}</Txt> : null}
+      <View style={[st.darkInput, { backgroundColor: DARK.field }, multiline && { height: 120, alignItems: 'flex-start' }]}>
         <TextInput
-          style={{ flex: 1, color: theme.text, fontSize: 16, paddingVertical: multiline ? 10 : 0 }}
+          style={{ flex: 1, color: DARK.text, fontSize: 16, paddingVertical: multiline ? 10 : 0 }}
           value={value}
           onChangeText={onChangeText}
           placeholder={placeholder}
-          placeholderTextColor={theme.textTertiary}
+          placeholderTextColor={DARK.textTertiary}
           secureTextEntry={hide}
           keyboardType={keyboardType}
           multiline={multiline}
@@ -69,7 +84,7 @@ function DarkField({
         />
         {secureTextEntry ? (
           <TouchableOpacity onPress={() => setHide((h) => !h)} hitSlop={8}>
-            <Ionicons name={hide ? 'eye-off' : 'eye'} size={20} color={theme.textTertiary} />
+            <Ionicons name={hide ? 'eye-off' : 'eye'} size={20} color={DARK.textSecondary} />
           </TouchableOpacity>
         ) : null}
       </View>
@@ -78,23 +93,22 @@ function DarkField({
 }
 
 function PhoneField({ value, onChangeText }: any) {
-  const { theme } = useTheme();
   return (
     <View>
-      <Txt variant="label" style={{ marginBottom: 8 }}>Phone Number</Txt>
-      <View style={[st.darkInput, { backgroundColor: theme.inputBg }]} accessibilityLabel="Country code, United States, plus 1">
+      <Txt variant="label" color={DARK.text} style={{ marginBottom: 8 }}>Phone Number</Txt>
+      <View style={[st.darkInput, { backgroundColor: DARK.field }]} accessibilityLabel="Country code, United States, plus 1">
         {/* Plain text rather than the regional-indicator flag emoji, which degrades
             to bare letters on Windows/web and to tofu boxes on some Android builds. */}
-        <Txt color={theme.text} style={{ fontSize: 13, fontFamily: fonts.bodyBold }}>US</Txt>
-        <Txt color={theme.text} style={{ fontSize: 16, marginLeft: 8, marginRight: 4 }}>+1</Txt>
-        <Ionicons name="chevron-down" size={16} color={theme.textSecondary} />
-        <View style={{ width: 1, height: 24, backgroundColor: theme.divider, marginHorizontal: 12 }} />
+        <Txt color={DARK.text} style={{ fontSize: 13, fontFamily: fonts.bodyBold }}>US</Txt>
+        <Txt color={DARK.text} style={{ fontSize: 16, marginLeft: 8, marginRight: 4 }}>+1</Txt>
+        <Ionicons name="chevron-down" size={16} color={DARK.textSecondary} />
+        <View style={{ width: 1, height: 24, backgroundColor: DARK.divider, marginHorizontal: 12 }} />
         <TextInput
-          style={{ flex: 1, color: theme.text, fontSize: 16 }}
+          style={{ flex: 1, color: DARK.text, fontSize: 16 }}
           value={value}
           onChangeText={onChangeText}
           placeholder="8000 - 000 - 000"
-          placeholderTextColor={theme.textTertiary}
+          placeholderTextColor={DARK.textTertiary}
           keyboardType="phone-pad"
         />
       </View>
@@ -106,7 +120,6 @@ function PhoneField({ value, onChangeText }: any) {
 // 1. Profile — dark self-profile (figma 100:13030)
 // ===========================================================================
 export const Profile = ({ navigation }: any) => {
-  const { theme } = useTheme();
   const s = useStore();
   const user = s.user;
   if (!user) return null;
@@ -114,7 +127,7 @@ export const Profile = ({ navigation }: any) => {
   const isPal = user.role === 'pal';
 
   return (
-    <SafeAreaView edges={['top']} style={{ flex: 1, backgroundColor: theme.background }}>
+    <SafeAreaView edges={['top']} style={{ flex: 1, backgroundColor: DARK.bg }}>
       {/* Profile is a root tab, not a pushed screen, so no back chevron. */}
       <DarkHeader
         title="Profile"
@@ -126,19 +139,19 @@ export const Profile = ({ navigation }: any) => {
         <View style={{ alignSelf: 'center', marginTop: 16 }}>
           <Avatar uri={user.avatar} name={user.firstName} size={140} />
         </View>
-        <Txt variant="h3" color={theme.text} center style={{ marginTop: 16 }}>{user.firstName}</Txt>
+        <Txt variant="h3" color={DARK.text} center style={{ marginTop: 16 }}>{user.firstName}</Txt>
         <TouchableOpacity onPress={() => navigation.navigate('SetStatus')} style={st.setStatus} activeOpacity={0.7}>
           <View style={st.statusDot} />
           <Txt color={RED} style={{ fontSize: 15, fontFamily: fonts.bodyBold }}>Set Status</Txt>
         </TouchableOpacity>
 
         {/* Bio */}
-        <Txt variant="body" color={theme.textSecondary} center style={{ marginTop: 18, paddingHorizontal: 4 }}>
+        <Txt variant="body" color={DARK.textSecondary} center style={{ marginTop: 18, paddingHorizontal: 4 }}>
           {user.bio}
         </Txt>
 
         {/* Stats */}
-        <View style={[st.statsRow, { borderColor: theme.divider }]}>
+        <View style={[st.statsRow, { borderColor: DARK.divider }]}>
           <Stat value={String(user.totalFavors)} label="Total Favors" />
           <Stat value={user.rating.toFixed(1)} label="Rating" star />
           <Stat value={String(user.yearsActive)} label="Years" />
@@ -152,7 +165,7 @@ export const Profile = ({ navigation }: any) => {
 
         {/* Account hub — the SideDrawer only opens from Home, so the Profile tab is
             the only reliable path to these account controls. */}
-        <Txt variant="caption" color={theme.textTertiary} style={{ marginTop: 24, marginBottom: 2, letterSpacing: 0.8, textTransform: 'uppercase' }}>Account</Txt>
+        <Txt variant="caption" color={DARK.textTertiary} style={{ marginTop: 24, marginBottom: 2, letterSpacing: 0.8, textTransform: 'uppercase' }}>Account</Txt>
         <NavRow icon="time" label="Favor History" onPress={() => navigation.navigate('History')} />
         <NavRow icon="card" label="Payment Methods" onPress={() => navigation.navigate('Payment')} />
         {isPal && (
@@ -167,46 +180,43 @@ export const Profile = ({ navigation }: any) => {
 };
 
 function NavRow({ icon, label, onPress, danger }: any) {
-  const { theme } = useTheme();
-  const tint = danger ? RED : theme.text;
+  const tint = danger ? RED : DARK.text;
   return (
     <TouchableOpacity
       onPress={onPress}
       activeOpacity={0.7}
-      style={[st.infoRow, { borderBottomColor: theme.divider }]}
+      style={[st.infoRow, { borderBottomColor: DARK.divider }]}
       accessibilityRole="button"
       accessibilityLabel={label}
     >
       <Ionicons name={icon} size={22} color={tint} style={{ width: 32 }} />
       <Txt variant="label" color={tint} style={{ flex: 1 }}>{label}</Txt>
-      {danger ? null : <Ionicons name="chevron-forward" size={18} color={theme.textTertiary} />}
+      {danger ? null : <Ionicons name="chevron-forward" size={18} color={DARK.textTertiary} />}
     </TouchableOpacity>
   );
 }
 
 function Stat({ value, label, star }: any) {
-  const { theme } = useTheme();
   return (
     <View style={{ flex: 1, alignItems: 'center' }}>
-      <Txt color={theme.text} style={{ fontSize: 34, fontFamily: fonts.display }}>{value}</Txt>
+      <Txt color={DARK.text} style={{ fontSize: 34, fontFamily: fonts.display }}>{value}</Txt>
       <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4, marginTop: 2 }}>
         {star ? <Ionicons name="star" size={14} color={STAR} /> : null}
-        <Txt color={theme.textSecondary} style={{ fontSize: 14 }}>{label}</Txt>
+        <Txt color={DARK.textSecondary} style={{ fontSize: 14 }}>{label}</Txt>
       </View>
     </View>
   );
 }
 
 function InfoRow({ icon, title, subtitle, onPress }: any) {
-  const { theme } = useTheme();
   return (
-    <TouchableOpacity onPress={onPress} activeOpacity={0.7} style={[st.infoRow, { borderBottomColor: theme.divider }]}>
-      <Ionicons name={icon} size={22} color={theme.text} style={{ width: 32 }} />
+    <TouchableOpacity onPress={onPress} activeOpacity={0.7} style={[st.infoRow, { borderBottomColor: DARK.divider }]}>
+      <Ionicons name={icon} size={22} color={DARK.text} style={{ width: 32 }} />
       <View style={{ flex: 1 }}>
-        <Txt variant="label" color={theme.text}>{title}</Txt>
-        <Txt variant="bodySm" color={theme.textSecondary} numberOfLines={1} style={{ marginTop: 2 }}>{subtitle}</Txt>
+        <Txt variant="label" color={DARK.text}>{title}</Txt>
+        <Txt variant="bodySm" color={DARK.textSecondary} numberOfLines={1} style={{ marginTop: 2 }}>{subtitle}</Txt>
       </View>
-      <Ionicons name="chevron-forward" size={18} color={theme.textTertiary} />
+      <Ionicons name="chevron-forward" size={18} color={DARK.textTertiary} />
     </TouchableOpacity>
   );
 }
@@ -215,7 +225,6 @@ function InfoRow({ icon, title, subtitle, onPress }: any) {
 // 2. EditProfile — dark form (figma 97:4909)
 // ===========================================================================
 export const EditProfile = ({ navigation }: any) => {
-  const { theme } = useTheme();
   const s = useStore();
   const u = s.user;
   const [firstName, setFirstName] = useState(u?.firstName ?? '');
@@ -294,14 +303,14 @@ export const EditProfile = ({ navigation }: any) => {
   };
 
   return (
-    <SafeAreaView edges={['top']} style={{ flex: 1, backgroundColor: theme.background }}>
+    <SafeAreaView edges={['top']} style={{ flex: 1, backgroundColor: DARK.bg }}>
       <DarkHeader title="Edit Profile" onBack={() => navigation.goBack()} />
       <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
         <ScrollView contentContainerStyle={{ padding: 20, paddingBottom: 40 }} keyboardShouldPersistTaps="handled">
           {/* Avatar with red edit badge */}
           <View style={{ alignSelf: 'center', marginBottom: 24 }}>
             <Avatar uri={avatar} name={firstName} size={96} />
-            <TouchableOpacity onPress={pickImage} style={[st.editBadge, { borderColor: theme.background }]} activeOpacity={0.85}>
+            <TouchableOpacity onPress={pickImage} style={[st.editBadge, { borderColor: DARK.bg }]} activeOpacity={0.85}>
               <Ionicons name="pencil" size={15} color="#fff" />
             </TouchableOpacity>
           </View>
@@ -344,7 +353,7 @@ export const EditProfile = ({ navigation }: any) => {
             <DarkField label="New Password" value={newPw} onChangeText={setNewPw} secureTextEntry />
           </View>
 
-          <Button title="SAVE" variant="primary" onPress={onSave} style={{ marginTop: 16 }} />
+          <Button title="SAVE" variant="white" onPress={onSave} style={{ marginTop: 16 }} />
         </ScrollView>
       </KeyboardAvoidingView>
       <InfoModal
@@ -359,10 +368,9 @@ export const EditProfile = ({ navigation }: any) => {
 };
 
 // ===========================================================================
-// 3. Settings — light list (figma 97:4297)
+// 3. Settings — dark list (figma 97:4297)
 // ===========================================================================
 export const Settings = ({ navigation }: any) => {
-  const { theme } = useTheme();
   const s = useStore();
   const [push, setPush] = useState(true);
   const [emailN, setEmailN] = useState(false);
@@ -370,7 +378,7 @@ export const Settings = ({ navigation }: any) => {
   const [deleting, setDeleting] = useState(false);
   const [confirmingDelete, setConfirmingDelete] = useState(false);
 
-  const track = { false: '#D1D5DB', true: theme.primary };
+  const track = { false: DARK.switchTrack, true: RED };
 
   // App Store guideline 5.1.1(v): account deletion must be initiated and
   // completed in-app. ConfirmModal works on web + native (Alert.alert no-ops on web).
@@ -382,40 +390,40 @@ export const Settings = ({ navigation }: any) => {
   };
 
   return (
-    <Screen padded={false}>
-      <TopBar title="Settings" onBack={() => navigation.goBack()} />
+    <SafeAreaView edges={['top']} style={{ flex: 1, backgroundColor: DARK.bg }}>
+      <DarkHeader title="Settings" onBack={() => navigation.goBack()} />
       <ScrollView contentContainerStyle={{ paddingHorizontal: 20, paddingBottom: 32 }}>
         <SectionLabel>Account</SectionLabel>
-        <Row icon="person-outline" title="Edit Profile" onPress={() => navigation.navigate('EditProfile')} />
-        <Row icon="lock-closed-outline" title="Change Password" onPress={() => navigation.navigate('EditProfile')} />
+        <SettingRow icon="person-outline" title="Edit Profile" onPress={() => navigation.navigate('EditProfile')} />
+        <SettingRow icon="lock-closed-outline" title="Change Password" onPress={() => navigation.navigate('EditProfile')} />
 
         <SectionLabel>Notifications</SectionLabel>
-        <Row icon="notifications-outline" title="Push Notifications" right={<Switch value={push} onValueChange={setPush} trackColor={track} />} />
-        <Row icon="mail-outline" title="Email Notifications" right={<Switch value={emailN} onValueChange={setEmailN} trackColor={track} />} />
+        <SettingRow icon="notifications-outline" title="Push Notifications" right={<Switch value={push} onValueChange={setPush} trackColor={track} />} />
+        <SettingRow icon="mail-outline" title="Email Notifications" right={<Switch value={emailN} onValueChange={setEmailN} trackColor={track} />} />
 
         <SectionLabel>Preferences</SectionLabel>
-        <Row icon="location-outline" title="Location Services" right={<Switch value={loc} onValueChange={setLoc} trackColor={track} />} />
+        <SettingRow icon="location-outline" title="Location Services" right={<Switch value={loc} onValueChange={setLoc} trackColor={track} />} />
 
         <SectionLabel>Support</SectionLabel>
-        <Row icon="help-circle-outline" title="Help Center" onPress={() => navigation.navigate('Help')} />
-        <Row icon="document-text-outline" title="Privacy Policy" onPress={() => navigation.navigate('Legal', { doc: 'privacy' })} />
-        <Row icon="shield-checkmark-outline" title="Terms of Service" onPress={() => navigation.navigate('Legal', { doc: 'terms' })} />
+        <SettingRow icon="help-circle-outline" title="Help Center" onPress={() => navigation.navigate('Help')} />
+        <SettingRow icon="document-text-outline" title="Privacy Policy" onPress={() => navigation.navigate('Legal', { doc: 'privacy' })} />
+        <SettingRow icon="shield-checkmark-outline" title="Terms of Service" onPress={() => navigation.navigate('Legal', { doc: 'terms' })} />
 
         <SectionLabel>Account Actions</SectionLabel>
         <TouchableOpacity
           onPress={() => setConfirmingDelete(true)}
           disabled={deleting}
           activeOpacity={0.7}
-          style={[st.lightRow, { borderBottomColor: theme.divider, opacity: deleting ? 0.5 : 1 }]}
+          style={[st.lightRow, { borderBottomColor: DARK.divider, opacity: deleting ? 0.5 : 1 }]}
         >
-          <Ionicons name="trash-outline" size={22} color={theme.danger} style={{ marginRight: 14 }} />
-          <Txt variant="label" color={theme.danger} style={{ flex: 1 }}>
+          <Ionicons name="trash-outline" size={22} color={RED} style={{ marginRight: 14 }} />
+          <Txt variant="label" color={RED} style={{ flex: 1 }}>
             {deleting ? 'Deleting…' : 'Delete Account'}
           </Txt>
         </TouchableOpacity>
-        <TouchableOpacity onPress={() => s.logout()} activeOpacity={0.7} style={[st.lightRow, { borderBottomColor: theme.divider }]}>
-          <Ionicons name="log-out-outline" size={22} color={theme.textSecondary} style={{ marginRight: 14 }} />
-          <Txt variant="label" style={{ flex: 1 }}>Log Out</Txt>
+        <TouchableOpacity onPress={() => s.logout()} activeOpacity={0.7} style={[st.lightRow, { borderBottomColor: DARK.divider }]}>
+          <Ionicons name="log-out-outline" size={22} color={DARK.textSecondary} style={{ marginRight: 14 }} />
+          <Txt variant="label" color={DARK.text} style={{ flex: 1 }}>Log Out</Txt>
         </TouchableOpacity>
       </ScrollView>
       <ConfirmModal
@@ -428,76 +436,92 @@ export const Settings = ({ navigation }: any) => {
         onConfirm={runDelete}
         onCancel={() => setConfirmingDelete(false)}
       />
-    </Screen>
+    </SafeAreaView>
   );
 };
 
-function SectionLabel({ children }: any) {
-  const { theme } = useTheme();
+function SettingRow({ icon, title, right, onPress }: any) {
   return (
-    <Txt variant="caption" color={theme.textTertiary} style={{ marginTop: 22, marginBottom: 4, letterSpacing: 0.8, textTransform: 'uppercase' }}>
+    <TouchableOpacity
+      disabled={!onPress}
+      onPress={onPress}
+      activeOpacity={0.7}
+      style={[st.lightRow, { borderBottomColor: DARK.divider }]}
+    >
+      <Ionicons name={icon} size={22} color={DARK.textSecondary} style={{ marginRight: 14 }} />
+      <Txt variant="label" color={DARK.text} style={{ flex: 1 }}>{title}</Txt>
+      {right ?? (onPress ? <Ionicons name="chevron-forward" size={18} color={DARK.textTertiary} /> : null)}
+    </TouchableOpacity>
+  );
+}
+
+function SectionLabel({ children }: any) {
+  return (
+    <Txt variant="caption" color={DARK.textTertiary} style={{ marginTop: 22, marginBottom: 4, letterSpacing: 0.8, textTransform: 'uppercase' }}>
       {children}
     </Txt>
   );
 }
 
 // ===========================================================================
-// 4. Help — light contact form (figma 2:4291)
+// 4. Help — dark contact form (figma 2:4291)
 // ===========================================================================
 export const Help = ({ navigation }: any) => {
-  const { theme } = useTheme();
   const [msg, setMsg] = useState('');
   const [sent, setSent] = useState(false);
 
   if (sent) {
     return (
-      <Screen padded={false}>
-        <TopBar title="Help" onBack={() => navigation.goBack()} />
+      <SafeAreaView edges={['top']} style={{ flex: 1, backgroundColor: DARK.bg }}>
+        <DarkHeader title="Help" onBack={() => navigation.goBack()} />
         <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center', padding: 24, gap: 16 }}>
-          <Ionicons name="checkmark-circle" size={76} color={theme.success} />
-          <Txt variant="h3" center>Message Sent</Txt>
-          <Txt variant="body" color={theme.textSecondary} center>
+          <Ionicons name="checkmark-circle" size={76} color={GREEN} />
+          <Txt variant="h3" color={DARK.text} center>Message Sent</Txt>
+          <Txt variant="body" color={DARK.textSecondary} center>
             Thanks for reaching out! Our support team will get back to you shortly.
           </Txt>
-          <Button title="Done" uppercase={false} onPress={() => navigation.goBack()} style={{ alignSelf: 'stretch', marginTop: 8 }} />
+          <Button title="Done" variant="white" uppercase={false} onPress={() => navigation.goBack()} style={{ alignSelf: 'stretch', marginTop: 8 }} />
         </View>
-      </Screen>
+      </SafeAreaView>
     );
   }
 
   return (
-    <Screen padded={false}>
-      <TopBar title="Help" onBack={() => navigation.goBack()} />
-      <ScrollView contentContainerStyle={{ padding: 24 }} keyboardShouldPersistTaps="handled">
-        <Txt variant="h2" color={theme.text}>Need help or have a{'\n'}question?</Txt>
-        <Txt variant="body" color={theme.textSecondary} style={{ marginTop: 10, marginBottom: 20 }}>
-          Send us a message.
-        </Txt>
+    <SafeAreaView edges={['top']} style={{ flex: 1, backgroundColor: DARK.bg }}>
+      <DarkHeader title="Help" onBack={() => navigation.goBack()} />
+      <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
+        <ScrollView contentContainerStyle={{ padding: 24 }} keyboardShouldPersistTaps="handled">
+          <Txt variant="h2" color={DARK.text}>Need help or have a{'\n'}question?</Txt>
+          <Txt variant="body" color={DARK.textSecondary} style={{ marginTop: 10, marginBottom: 20 }}>
+            Send us a message.
+          </Txt>
 
-        <View style={[st.helpBox, { borderColor: theme.border }]}>
-          <TextInput
-            style={{ flex: 1, fontSize: 16, color: theme.text, textAlignVertical: 'top' }}
-            value={msg}
-            onChangeText={setMsg}
-            multiline
-            maxLength={700}
-            placeholder="Tell us what's going on and how we can help."
-            placeholderTextColor={theme.textTertiary}
+          <View style={[st.helpBox, { borderColor: DARK.border, backgroundColor: DARK.field }]}>
+            <TextInput
+              style={{ flex: 1, fontSize: 16, color: DARK.text, textAlignVertical: 'top' }}
+              value={msg}
+              onChangeText={setMsg}
+              multiline
+              maxLength={700}
+              placeholder="Tell us what's going on and how we can help."
+              placeholderTextColor={DARK.textTertiary}
+            />
+          </View>
+          <Txt variant="caption" color={DARK.textSecondary} style={{ textAlign: 'right', marginTop: 10 }}>
+            700 characters max.
+          </Txt>
+
+          <Button
+            title="Submit"
+            variant="white"
+            uppercase={false}
+            onPress={() => setSent(true)}
+            disabled={!msg.trim()}
+            style={{ marginTop: 28 }}
           />
-        </View>
-        <Txt variant="caption" color={theme.textSecondary} style={{ textAlign: 'right', marginTop: 10 }}>
-          700 characters max.
-        </Txt>
-
-        <Button
-          title="Submit"
-          uppercase={false}
-          onPress={() => setSent(true)}
-          disabled={!msg.trim()}
-          style={{ marginTop: 28 }}
-        />
-      </ScrollView>
-    </Screen>
+        </ScrollView>
+      </KeyboardAvoidingView>
+    </SafeAreaView>
   );
 };
 
@@ -505,7 +529,6 @@ export const Help = ({ navigation }: any) => {
 // 5. SideDrawer — navy left panel over the map (figma 181:10620)
 // ===========================================================================
 export const SideDrawer = ({ navigation }: any) => {
-  const { theme } = useTheme();
   const s = useStore();
   const u = s.user;
   const close = () => navigation.goBack();
@@ -516,19 +539,19 @@ export const SideDrawer = ({ navigation }: any) => {
 
   return (
     <View style={{ flex: 1, flexDirection: 'row' }}>
-      <SafeAreaView edges={['top', 'bottom']} style={[st.drawer, { backgroundColor: theme.card, borderRightColor: theme.border }]}>
+      <SafeAreaView edges={['top', 'bottom']} style={[st.drawer, { backgroundColor: DARK.card, borderRightColor: DARK.border }]}>
         <View style={{ flex: 1, paddingHorizontal: 20, paddingTop: 12 }}>
           {/* Identity */}
           <View style={{ alignItems: 'center', marginTop: 8 }}>
             <View style={{ width: 86, height: 86 }}>
               <Avatar uri={u?.avatar} name={u?.firstName} size={86} />
-              <TouchableOpacity onPress={() => go('EditProfile')} style={[st.drawerBadge, { borderColor: theme.card }]} activeOpacity={0.85}>
+              <TouchableOpacity onPress={() => go('EditProfile')} style={[st.drawerBadge, { borderColor: DARK.card }]} activeOpacity={0.85}>
                 <Ionicons name="pencil" size={13} color="#fff" />
               </TouchableOpacity>
             </View>
-            <Txt variant="h4" color={theme.text} style={{ marginTop: 12 }}>{u?.firstName ?? 'Anton'}</Txt>
+            <Txt variant="h4" color={DARK.text} style={{ marginTop: 12 }}>{u?.firstName ?? 'Anton'}</Txt>
             <TouchableOpacity onPress={() => go('Tabs', { screen: 'Profile' })}>
-              <Txt color={theme.textSecondary} style={{ fontSize: 14, marginTop: 4 }}>View Profile</Txt>
+              <Txt color={DARK.textSecondary} style={{ fontSize: 14, marginTop: 4 }}>View Profile</Txt>
             </TouchableOpacity>
             <TouchableOpacity
               onPress={() => go('SetStatus')}
@@ -539,7 +562,7 @@ export const SideDrawer = ({ navigation }: any) => {
             </TouchableOpacity>
           </View>
 
-          <View style={[st.drawerDivider, { backgroundColor: theme.divider }]} />
+          <View style={[st.drawerDivider, { backgroundColor: DARK.divider }]} />
 
           {/* Menu */}
           <DrawerRow icon="time-outline" label="Favor History" onPress={() => go('History')} />
@@ -568,11 +591,10 @@ export const SideDrawer = ({ navigation }: any) => {
 };
 
 function DrawerRow({ icon, label, onPress }: any) {
-  const { theme } = useTheme();
   return (
     <TouchableOpacity onPress={onPress} activeOpacity={0.7} style={{ flexDirection: 'row', alignItems: 'center', gap: 16, paddingVertical: 16 }}>
-      <Ionicons name={icon} size={22} color={theme.text} />
-      <Txt color={theme.text} style={{ fontSize: 16 }}>{label}</Txt>
+      <Ionicons name={icon} size={22} color={DARK.text} />
+      <Txt color={DARK.text} style={{ fontSize: 16 }}>{label}</Txt>
     </TouchableOpacity>
   );
 }
@@ -580,14 +602,13 @@ function DrawerRow({ icon, label, onPress }: any) {
 // ===========================================================================
 // 6. SetStatus — availability picker modal (figma "Set Status")
 // ===========================================================================
-const STATUS_OPTIONS: { key: 'online' | 'invisible' | 'offline'; label: string; dot: string }[] = [
-  { key: 'online', label: 'Online', dot: '#4B5563' },
-  { key: 'invisible', label: 'Invisible', dot: 'transparent' },
-  { key: 'offline', label: 'Offline', dot: '#B6BBC4' },
+const STATUS_OPTIONS: { key: 'online' | 'invisible' | 'offline'; label: string; dot: string; color: string }[] = [
+  { key: 'online', label: 'Online', dot: GREEN, color: GREEN },
+  { key: 'invisible', label: 'Invisible', dot: 'transparent', color: DARK.text },
+  { key: 'offline', label: 'Offline', dot: 'rgba(255,255,255,0.4)', color: DARK.textSecondary },
 ];
 
 export const SetStatus = ({ navigation }: any) => {
-  const { theme } = useTheme();
   const s = useStore();
   const current = s.user?.status ?? 'online';
   const choose = (status: 'online' | 'invisible' | 'offline') => {
@@ -596,9 +617,9 @@ export const SetStatus = ({ navigation }: any) => {
   };
   return (
     <Pressable style={st.statusScrim} onPress={() => navigation.goBack()}>
-      <Pressable style={[st.statusCard, { backgroundColor: theme.card }]} onPress={() => {}}>
-        <Txt variant="h2" center color={theme.text} style={{ marginBottom: 18 }}>Set Status</Txt>
-        <View style={[st.statusDivider, { backgroundColor: theme.divider }]} />
+      <Pressable style={[st.statusCard, { backgroundColor: DARK.card }]} onPress={() => {}}>
+        <Txt variant="h2" center color={DARK.text} style={{ marginBottom: 18 }}>Set Status</Txt>
+        <View style={[st.statusDivider, { backgroundColor: DARK.divider }]} />
         {STATUS_OPTIONS.map((opt) => {
           const sel = current === opt.key;
           return (
@@ -611,15 +632,15 @@ export const SetStatus = ({ navigation }: any) => {
               accessibilityState={{ selected: sel, checked: sel }}
             >
               <View style={st.statusRow}>
-                <View style={[st.statusRadio, { borderColor: opt.dot === 'transparent' ? theme.textTertiary : opt.dot, backgroundColor: opt.dot }]} />
+                <View style={[st.statusRadio, { borderColor: opt.dot === 'transparent' ? DARK.textTertiary : opt.dot, backgroundColor: opt.dot }]} />
                 <Txt
-                  color={sel ? theme.text : theme.textSecondary}
+                  color={opt.color}
                   style={{ fontSize: 18, fontFamily: sel ? fonts.bodyBold : fonts.bodyRegular }}
                 >
                   {opt.label}
                 </Txt>
               </View>
-              <View style={[st.statusDivider, { backgroundColor: theme.divider }]} />
+              <View style={[st.statusDivider, { backgroundColor: DARK.divider }]} />
             </TouchableOpacity>
           );
         })}

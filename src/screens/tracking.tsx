@@ -1,13 +1,14 @@
 import React, { useState } from 'react';
 import {
   View, Image, ScrollView, TouchableOpacity, StyleSheet, Share,
+  TextInput, KeyboardAvoidingView, Platform,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import {
-  Screen, Txt, Button, Field, Avatar, StarRating, InfoModal, ConfirmModal, StaticMap,
+  Txt, Button, Avatar, StarRating, InfoModal, ConfirmModal, StaticMap,
 } from '../components';
-import { useTheme, tokens, palette } from '../theme';
+import { tokens, palette } from '../theme';
 import { useStore } from '../store';
 import {
   computeFees, computePayout, computeCancellation, FAVOR_TIERS, MEMBER_STATUS_STEPS,
@@ -16,6 +17,26 @@ import {
 // Brand + on-accent constants reused across this screen.
 const WHITE = palette.white;
 const RED = palette.brand;
+
+// ---------------------------------------------------------------------------
+// Local DARK v.2 palette. These screens are intentionally dark (the shared
+// useTheme() is light and used by the auth screens) — every colour below is
+// applied explicitly here so nothing falls back to the light theme.
+// ---------------------------------------------------------------------------
+const DARK = {
+  bg: '#0C0C0C', // content screen background
+  map: '#0C0C0C', // dark map backdrop
+  scrim: 'rgba(12,12,12,0.55)', // darkens the map peek
+  sheet: '#171922', // dark navy bottom sheet
+  card: '#1B222C', // feedback textarea / cards
+  raised: '#1C2331', // raised fields / pills / chips
+  text: '#FFFFFF',
+  textSecondary: 'rgba(255,255,255,0.6)',
+  textTertiary: 'rgba(255,255,255,0.4)',
+  border: 'rgba(255,255,255,0.10)',
+  ctaText: '#141414', // dark text on white primary buttons
+  star: '#FFBD00',
+} as const;
 
 const MONTHS_FULL = [
   'January', 'February', 'March', 'April', 'May', 'June',
@@ -38,7 +59,6 @@ const formatFavorDate = (ms?: number) => {
 // back to the Figma literals when there is no live favor (prototype/demo).
 // ---------------------------------------------------------------------------
 export const FavorTracking = ({ navigation }: any) => {
-  const { theme } = useTheme();
   const s = useStore();
   const fav = s.activeFavor;
   const pal = s.activePal;
@@ -98,67 +118,62 @@ export const FavorTracking = ({ navigation }: any) => {
   };
 
   return (
-    <SafeAreaView style={{ flex: 1, backgroundColor: theme.background }} edges={['top', 'bottom']}>
+    <SafeAreaView style={{ flex: 1, backgroundColor: DARK.bg }} edges={['top', 'bottom']}>
       {/* Live-tracking map backdrop. StaticMap renders the real Google Static
           Map when a key + coords are present and falls back to the styled
-          MapPlaceholder grid otherwise, so the area always reads as a map. */}
-      <View style={{ position: 'absolute', top: 0, left: 0, right: 0, height: 440 }} pointerEvents="none">
+          MapPlaceholder grid otherwise; a dark scrim keeps the peek reading as
+          a night/dark map to match the v.2 reference. */}
+      <View style={{ position: 'absolute', top: 0, left: 0, right: 0, height: 440, backgroundColor: DARK.map }} pointerEvents="none">
         <StaticMap lat={fav?.location?.lat} lng={fav?.location?.lng} height={440} zoom={14} />
+        <View style={[StyleSheet.absoluteFill, { backgroundColor: DARK.scrim }]} />
       </View>
-      {/* Top nav banner over the (light) map */}
+      {/* Top nav banner over the map */}
       <View style={styles.navRow}>
         <TouchableOpacity
-          style={[styles.menuBtn, { backgroundColor: theme.card, borderColor: theme.divider }, tokens.shadow.card]}
+          style={[styles.menuBtn, { backgroundColor: WHITE }, tokens.shadow.card]}
           activeOpacity={0.8}
           onPress={() => navigation.navigate('SideDrawer')}
           accessibilityRole="button"
           accessibilityLabel="Open menu"
         >
-          <Ionicons name="menu" size={22} color={theme.text} />
+          <Ionicons name="menu" size={22} color={DARK.ctaText} />
         </TouchableOpacity>
       </View>
 
-      {/* small peek of the light map */}
+      {/* small peek of the dark map */}
       <View style={{ height: 52 }} />
 
-      {/* Light bottom sheet */}
-      <View style={[styles.sheet, { backgroundColor: theme.card, borderTopWidth: StyleSheet.hairlineWidth, borderColor: theme.border }, tokens.shadow.card]}>
+      {/* Dark navy bottom sheet */}
+      <View style={[styles.sheet, { backgroundColor: DARK.sheet, borderTopWidth: StyleSheet.hairlineWidth, borderColor: DARK.border }, tokens.shadow.card]}>
         <ScrollView
           showsVerticalScrollIndicator={false}
           contentContainerStyle={{ padding: tokens.spacing.lg, paddingBottom: tokens.spacing.xl }}
         >
-          <Ionicons
-            name="chevron-down"
-            size={22}
-            color={theme.textSecondary}
-            style={{ alignSelf: 'center', marginBottom: 6 }}
-          />
-          <Txt variant="h3" center color={theme.text}>Favor Booked</Txt>
+          <View style={styles.handle} />
+          <Txt variant="h3" center color={DARK.text}>Favor Booked</Txt>
 
-          <View style={[styles.divider, { backgroundColor: theme.divider }]} />
+          <View style={[styles.divider, { backgroundColor: DARK.border }]} />
 
           {/* Pal / favor profile row */}
           <View style={styles.profileRow}>
             <View>
               <Avatar uri={palAvatar} size={56} />
-              <View style={[styles.badge, { borderColor: theme.card }]}>
-                <Ionicons name="add" size={12} color={WHITE} />
-              </View>
+              <View style={[styles.badge, { borderColor: DARK.sheet }]} />
             </View>
             <View style={{ flex: 1, marginLeft: 14 }}>
-              <Txt variant="label" color={theme.text}>{palName}</Txt>
+              <Txt variant="label" color={DARK.text}>{palName}</Txt>
               {pal ? (
                 <View style={styles.ratingRow} accessibilityLabel={`Pal rated ${pal.rating.toFixed(1)} out of 5`}>
                   <StarRating value={pal.rating} size={12} />
-                  <Txt variant="caption" color={theme.textSecondary} style={{ marginLeft: 6 }}>
+                  <Txt variant="caption" color={DARK.textSecondary} style={{ marginLeft: 6 }}>
                     {pal.rating.toFixed(1)}
                   </Txt>
                 </View>
               ) : null}
-              <Txt variant="caption" color={theme.textSecondary} numberOfLines={2} style={{ marginTop: 2 }}>
+              <Txt variant="caption" color={DARK.textSecondary} numberOfLines={2} style={{ marginTop: 2 }}>
                 {description}
               </Txt>
-              <Txt variant="caption" color={theme.textSecondary} style={{ marginTop: 2 }}>
+              <Txt variant="caption" color={DARK.textSecondary} style={{ marginTop: 2 }}>
                 {dateLabel}
               </Txt>
               {fav ? (
@@ -168,14 +183,14 @@ export const FavorTracking = ({ navigation }: any) => {
                   accessibilityRole="button"
                   accessibilityLabel="View favor details"
                 >
-                  <Txt variant="caption" color={theme.primaryDark} style={{ marginTop: 4 }}>View More</Txt>
+                  <Txt variant="caption" color={DARK.text} style={{ marginTop: 4 }}>View More</Txt>
                 </TouchableOpacity>
               ) : null}
             </View>
           </View>
 
           {/* Arrival window */}
-          <Txt variant="h2" center color={theme.text} style={{ marginTop: tokens.spacing.lg }}>
+          <Txt variant="h2" center color={DARK.text} style={{ marginTop: tokens.spacing.lg }}>
             {etaWindow}
           </Txt>
 
@@ -191,14 +206,14 @@ export const FavorTracking = ({ navigation }: any) => {
               return (
                 <React.Fragment key={step.status}>
                   {i > 0 && (
-                    <View style={[styles.timelineBar, { backgroundColor: i <= currentStep ? RED : theme.border }]} />
+                    <View style={[styles.timelineBar, { backgroundColor: i <= currentStep ? RED : DARK.border }]} />
                   )}
                   <View
                     style={[
                       styles.timelineDot,
                       {
-                        backgroundColor: done ? RED : theme.surfaceAlt,
-                        borderColor: isCurrent ? theme.text : done ? RED : theme.border,
+                        backgroundColor: done ? RED : DARK.raised,
+                        borderColor: isCurrent ? DARK.text : done ? RED : DARK.border,
                       },
                     ]}
                   />
@@ -206,7 +221,7 @@ export const FavorTracking = ({ navigation }: any) => {
               );
             })}
           </View>
-          <Txt variant="caption" center color={theme.textSecondary} style={{ marginTop: 6 }}>
+          <Txt variant="caption" center color={DARK.textSecondary} style={{ marginTop: 6 }}>
             {statusLabel}
           </Txt>
 
@@ -215,72 +230,76 @@ export const FavorTracking = ({ navigation }: any) => {
               to avoid pushing a phantom 'cancelled' duplicate into History. */}
           {!isCompleted ? (
             <TouchableOpacity
-              style={[styles.cancelPill, { borderColor: theme.border }]}
+              style={[styles.cancelPill, { backgroundColor: DARK.raised, borderColor: DARK.border }]}
               activeOpacity={0.8}
               onPress={onCancel}
               accessibilityRole="button"
               accessibilityLabel="Cancel favor"
             >
-              <Txt variant="button" color={theme.text}>CANCEL FAVOR</Txt>
+              <Txt variant="button" color={DARK.text}>CANCEL FAVOR</Txt>
             </TouchableOpacity>
           ) : null}
 
-          <View style={[styles.divider, { backgroundColor: theme.divider }]} />
+          <View style={[styles.divider, { backgroundColor: DARK.border }]} />
 
           {/* Favor / total-paid row */}
           <View style={styles.favorRow}>
-            <View style={[styles.favorIcon, { backgroundColor: theme.surfaceAlt }]}>
+            <View style={[styles.favorIcon, { backgroundColor: WHITE }]}>
               <Ionicons name="cube" size={20} color={RED} />
             </View>
             <View style={{ flex: 1, marginLeft: 14 }}>
-              <Txt variant="label" color={theme.text}>{tierLabel}</Txt>
-              <Txt variant="caption" color={theme.textSecondary} style={{ marginTop: 2 }}>Total paid</Txt>
+              <Txt variant="label" color={DARK.text}>{tierLabel}</Txt>
+              <Txt variant="caption" color={DARK.textSecondary} style={{ marginTop: 2 }}>Total paid</Txt>
             </View>
-            <Txt variant="label" color={theme.text}>${totalPaid.toFixed(2)}</Txt>
+            <Txt variant="label" color={DARK.text}>${totalPaid.toFixed(2)}</Txt>
           </View>
           {/* Transparency: what the member paid vs what the Pal actually receives */}
-          <Txt variant="caption" color={theme.textSecondary} style={{ marginTop: 6, marginLeft: 58 }}>
+          <Txt variant="caption" color={DARK.textSecondary} style={{ marginTop: 6, marginLeft: 58 }}>
             Pal receives ${payout.toFixed(2)} · Service fee ${fees.serviceFee.toFixed(2)}
           </Txt>
 
           {/* Description */}
           <View style={styles.metaLabel}>
-            <Ionicons name="document-text-outline" size={16} color={RED} />
-            <Txt variant="caption" color={theme.textSecondary} style={{ marginLeft: 8 }}>Description</Txt>
+            <Ionicons name="document-text-outline" size={16} color={DARK.text} />
+            <Txt variant="label" color={DARK.text} style={{ marginLeft: 8 }}>Description</Txt>
           </View>
-          <Txt variant="bodySm" color={theme.text} style={{ marginTop: 4, marginLeft: 24 }}>
+          <Txt variant="bodySm" color={DARK.textSecondary} style={{ marginTop: 4, marginLeft: 24 }}>
             {description}
           </Txt>
 
           {/* Address */}
           <View style={[styles.metaLabel, { marginTop: tokens.spacing.base }]}>
-            <Ionicons name="location-outline" size={16} color={RED} />
-            <Txt variant="caption" color={theme.textSecondary} style={{ marginLeft: 8 }}>Address</Txt>
+            <Ionicons name="location-outline" size={16} color={DARK.text} />
+            <Txt variant="label" color={DARK.text} style={{ marginLeft: 8 }}>Address</Txt>
           </View>
-          <Txt variant="bodySm" color={theme.text} style={{ marginTop: 4, marginLeft: 24 }}>
+          <Txt variant="bodySm" color={DARK.textSecondary} style={{ marginTop: 4, marginLeft: 24 }}>
             {address}
           </Txt>
 
           {/* Actions — member-voiced. The member never self-completes; rating is
-              gated behind a real pal-driven 'completed' status. */}
+              gated behind a real pal-driven 'completed' status. Left = dark pill
+              (call), right = white primary (v.2 filled button). */}
           <View style={styles.actionRow}>
-            <Button
-              title="CALL YOUR PAL"
-              variant="primary"
-              style={{ flex: 1 }}
+            <TouchableOpacity
+              style={[styles.darkBtn, { backgroundColor: DARK.raised, borderColor: DARK.border }]}
+              activeOpacity={0.85}
               onPress={() => setCallVisible(true)}
-            />
+              accessibilityRole="button"
+              accessibilityLabel="Call your pal"
+            >
+              <Txt variant="button" color={DARK.text}>CALL YOUR PAL</Txt>
+            </TouchableOpacity>
             {isCompleted ? (
               <Button
                 title="RATE YOUR PAL"
-                variant="secondary"
+                variant="white"
                 style={{ flex: 1 }}
                 onPress={() => navigation.navigate('OrderComplete')}
               />
             ) : (
               <Button
                 title="MESSAGE PAL"
-                variant="secondary"
+                variant="white"
                 style={{ flex: 1 }}
                 onPress={async () => {
                   // Open the direct thread with this Pal when possible; fall
@@ -300,7 +319,7 @@ export const FavorTracking = ({ navigation }: any) => {
         </ScrollView>
 
         {/* Bottom tab bar (visual, matches reference) — now wired */}
-        <View style={[styles.tabBar, { borderTopColor: theme.divider }]}>
+        <View style={[styles.tabBar, { backgroundColor: DARK.bg, borderTopColor: DARK.border }]}>
           <TouchableOpacity
             style={styles.tabItem}
             activeOpacity={0.7}
@@ -308,8 +327,8 @@ export const FavorTracking = ({ navigation }: any) => {
             accessibilityRole="button"
             accessibilityLabel="Share favor status and invite a friend"
           >
-            <Ionicons name="share-social-outline" size={22} color={theme.textSecondary} />
-            <Txt variant="tab" color={theme.textSecondary} style={{ marginTop: 4 }}>SHARE</Txt>
+            <Ionicons name="share-social-outline" size={22} color={DARK.textSecondary} />
+            <Txt variant="tab" color={DARK.textSecondary} style={{ marginTop: 4 }}>SHARE</Txt>
           </TouchableOpacity>
           <TouchableOpacity
             style={styles.tabItem}
@@ -321,7 +340,7 @@ export const FavorTracking = ({ navigation }: any) => {
             <View style={styles.homeBtn}>
               <Ionicons name="home" size={22} color={WHITE} />
             </View>
-            <Txt variant="tab" color={theme.primaryDark} style={{ marginTop: 4 }}>HOME</Txt>
+            <Txt variant="tab" color={RED} style={{ marginTop: 4 }}>HOME</Txt>
           </TouchableOpacity>
           <TouchableOpacity
             style={styles.tabItem}
@@ -330,8 +349,8 @@ export const FavorTracking = ({ navigation }: any) => {
             accessibilityRole="button"
             accessibilityLabel="Activity history"
           >
-            <Ionicons name="time-outline" size={22} color={theme.textSecondary} />
-            <Txt variant="tab" color={theme.textSecondary} style={{ marginTop: 4 }}>ACTIVITY</Txt>
+            <Ionicons name="time-outline" size={22} color={DARK.textSecondary} />
+            <Txt variant="tab" color={DARK.textSecondary} style={{ marginTop: 4 }}>ACTIVITY</Txt>
           </TouchableOpacity>
         </View>
       </View>
@@ -359,7 +378,7 @@ export const FavorTracking = ({ navigation }: any) => {
 };
 
 // ---------------------------------------------------------------------------
-// 2) OrderComplete — Thank you + rating + tip + feedback.
+// 2) OrderComplete — Thank you + rating + tip + feedback (dark v.2).
 // ---------------------------------------------------------------------------
 const TIPS = [
   { key: '2', label: '$2.00', value: 2 },
@@ -369,7 +388,6 @@ const TIPS = [
 ] as const;
 
 export const OrderComplete = ({ navigation }: any) => {
-  const { theme } = useTheme();
   const s = useStore();
   const [rating, setRating] = useState(0);
   const [feedback, setFeedback] = useState('');
@@ -398,101 +416,115 @@ export const OrderComplete = ({ navigation }: any) => {
     else doSubmit();
   };
 
-  const hr = <View style={[styles.hr, { backgroundColor: theme.divider }]} />;
+  const hr = <View style={[styles.hr, { backgroundColor: DARK.border }]} />;
 
   return (
-    <Screen scroll>
-      <Txt variant="display" center>Thank You!</Txt>
-      <Txt variant="h4" center style={{ marginTop: tokens.spacing.base }}>
-        Favor Pal has completed your favor.
-      </Txt>
+    <SafeAreaView style={{ flex: 1, backgroundColor: DARK.bg }} edges={['top', 'bottom']}>
+      <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
+        <ScrollView contentContainerStyle={{ flexGrow: 1, padding: tokens.spacing.lg }} keyboardShouldPersistTaps="handled">
+          <Txt variant="display" center color={DARK.text}>Thank You!</Txt>
+          <Txt variant="h4" center color={DARK.textSecondary} style={{ marginTop: tokens.spacing.base }}>
+            Favor Pal has completed your favor.
+          </Txt>
 
-      <Image
-        source={require('../../assets/img/tracking/celebration.png')}
-        style={{ width: '100%', height: 300, resizeMode: 'contain', marginTop: tokens.spacing.lg }}
-      />
-
-      {hr}
-
-      {/* Rating */}
-      <View style={styles.ratingRow}>
-        <Txt variant="h4">Rating</Txt>
-        <StarRating value={rating} size={28} onChange={setRating} />
-      </View>
-
-      {hr}
-
-      {/* Tip */}
-      <Txt variant="h4">Great Pal? Consider giving a tip!</Txt>
-      <View style={styles.tipRow}>
-        {TIPS.map((t) => {
-          const active = tipKey === t.key;
-          return (
-            <TouchableOpacity
-              key={t.key}
-              activeOpacity={0.8}
-              onPress={() => { setTipKey(t.key); if (t.key !== 'other') setCustomTip(''); }}
-              style={[styles.tipChip, { backgroundColor: active ? theme.cta : theme.inputBg }]}
-              accessibilityRole="button"
-              accessibilityState={{ selected: active }}
-              accessibilityLabel={t.key === 'other' ? 'Other tip amount' : `Tip ${t.label}`}
-            >
-              <Txt variant="body" color={active ? WHITE : theme.text}>{t.label}</Txt>
-            </TouchableOpacity>
-          );
-        })}
-      </View>
-
-      {isOther ? (
-        <View style={{ marginTop: tokens.spacing.base }}>
-          <Field
-            value={customTip}
-            onChangeText={setCustomTip}
-            placeholder="Enter tip amount (e.g. 8)"
-            keyboardType="decimal-pad"
-            icon="cash-outline"
+          <Image
+            source={require('../../assets/img/tracking/celebration.png')}
+            style={{ width: '100%', height: 300, resizeMode: 'contain', marginTop: tokens.spacing.lg }}
           />
-          {customTip.length > 0 && !customValid ? (
-            <Txt variant="caption" color={theme.danger} style={{ marginTop: -6 }}>
-              Enter a tip amount greater than $0.
-            </Txt>
+
+          {hr}
+
+          {/* Rating */}
+          <View style={styles.ratingRow}>
+            <Txt variant="h4" color={DARK.text}>Rating</Txt>
+            <StarRating value={rating} size={28} onChange={setRating} />
+          </View>
+
+          {hr}
+
+          {/* Tip */}
+          <Txt variant="h4" color={DARK.text}>Great Pal? Consider giving a tip!</Txt>
+          <View style={styles.tipRow}>
+            {TIPS.map((t) => {
+              const active = tipKey === t.key;
+              return (
+                <TouchableOpacity
+                  key={t.key}
+                  activeOpacity={0.8}
+                  onPress={() => { setTipKey(t.key); if (t.key !== 'other') setCustomTip(''); }}
+                  style={[styles.tipChip, { backgroundColor: active ? WHITE : DARK.raised }]}
+                  accessibilityRole="button"
+                  accessibilityState={{ selected: active }}
+                  accessibilityLabel={t.key === 'other' ? 'Other tip amount' : `Tip ${t.label}`}
+                >
+                  <Txt variant="body" color={active ? DARK.ctaText : DARK.text}>{t.label}</Txt>
+                </TouchableOpacity>
+              );
+            })}
+          </View>
+
+          {isOther ? (
+            <View style={{ marginTop: tokens.spacing.base }}>
+              <View style={[styles.darkField, { backgroundColor: DARK.raised, borderColor: DARK.border }]}>
+                <Ionicons name="cash-outline" size={18} color={DARK.textTertiary} style={{ marginRight: 8 }} />
+                <TextInput
+                  style={{ flex: 1, color: DARK.text, fontSize: 16 }}
+                  value={customTip}
+                  onChangeText={setCustomTip}
+                  placeholder="Enter tip amount (e.g. 8)"
+                  placeholderTextColor={DARK.textTertiary}
+                  keyboardType="decimal-pad"
+                />
+              </View>
+              {customTip.length > 0 && !customValid ? (
+                <Txt variant="caption" color={RED} style={{ marginTop: 6 }}>
+                  Enter a tip amount greater than $0.
+                </Txt>
+              ) : null}
+            </View>
           ) : null}
-        </View>
-      ) : null}
 
-      {hr}
+          {hr}
 
-      {/* Feedback */}
-      <Txt variant="h4" style={{ marginBottom: tokens.spacing.md }}>Feedback</Txt>
-      <Field
-        value={feedback}
-        onChangeText={setFeedback}
-        placeholder="Please tell us about your experience"
-        multiline
-        maxLength={700}
-      />
-      <Txt variant="caption" color={theme.textSecondary} style={{ textAlign: 'right', marginTop: -6 }}>
-        700 characters max.
-      </Txt>
+          {/* Feedback */}
+          <Txt variant="h4" color={DARK.text} style={{ marginBottom: tokens.spacing.md }}>
+            Tell us about your experience
+          </Txt>
+          <View style={[styles.darkTextarea, { backgroundColor: DARK.card, borderColor: DARK.border }]}>
+            <TextInput
+              style={styles.textareaInput}
+              value={feedback}
+              onChangeText={setFeedback}
+              placeholder="Please tell us about your experience"
+              placeholderTextColor={DARK.textTertiary}
+              multiline
+              maxLength={700}
+            />
+          </View>
+          <Txt variant="caption" color={DARK.textSecondary} style={{ textAlign: 'right', marginTop: 6 }}>
+            700 characters max.
+          </Txt>
 
-      <Button
-        title="SUBMIT FEEDBACK"
-        variant="primary"
-        disabled={!canSubmit}
-        onPress={onSubmit}
-        style={{ marginTop: tokens.spacing.lg }}
-      />
+          <Button
+            title="SUBMIT FEEDBACK"
+            variant="white"
+            disabled={!canSubmit}
+            onPress={onSubmit}
+            style={{ marginTop: tokens.spacing.lg }}
+          />
 
-      {/* Rating is optional — never trap the member on this screen. Mirrors the
-          pal-side "Maybe later" skip so either party can leave without rating. */}
-      <TouchableOpacity
-        onPress={() => navigation.navigate('Tabs')}
-        style={{ alignSelf: 'center', marginTop: tokens.spacing.md, paddingVertical: 6 }}
-        accessibilityRole="button"
-        accessibilityLabel="Skip rating and return home"
-      >
-        <Txt variant="button" color={theme.textSecondary}>Maybe later</Txt>
-      </TouchableOpacity>
+          {/* Rating is optional — never trap the member on this screen. Mirrors the
+              pal-side "Maybe later" skip so either party can leave without rating. */}
+          <TouchableOpacity
+            onPress={() => navigation.navigate('Tabs')}
+            style={{ alignSelf: 'center', marginTop: tokens.spacing.md, paddingVertical: 6 }}
+            accessibilityRole="button"
+            accessibilityLabel="Skip rating and return home"
+          >
+            <Txt variant="button" color={DARK.textSecondary}>Maybe later</Txt>
+          </TouchableOpacity>
+        </ScrollView>
+      </KeyboardAvoidingView>
 
       <ConfirmModal
         visible={confirmVisible}
@@ -503,7 +535,7 @@ export const OrderComplete = ({ navigation }: any) => {
         onConfirm={() => { setConfirmVisible(false); doSubmit(); }}
         onCancel={() => setConfirmVisible(false)}
       />
-    </Screen>
+    </SafeAreaView>
   );
 };
 
@@ -520,7 +552,6 @@ const styles = StyleSheet.create({
     width: 44,
     height: 44,
     borderRadius: tokens.radius.md,
-    borderWidth: 1,
     alignItems: 'center',
     justifyContent: 'center',
   },
@@ -530,6 +561,14 @@ const styles = StyleSheet.create({
     borderTopRightRadius: 28,
     overflow: 'hidden',
   },
+  handle: {
+    alignSelf: 'center',
+    width: 40,
+    height: 5,
+    borderRadius: 3,
+    backgroundColor: 'rgba(255,255,255,0.25)',
+    marginBottom: 12,
+  },
   divider: {
     height: StyleSheet.hairlineWidth,
     marginVertical: tokens.spacing.base,
@@ -538,13 +577,11 @@ const styles = StyleSheet.create({
   badge: {
     position: 'absolute',
     right: -2,
-    bottom: -2,
+    top: -2,
     width: 20,
     height: 20,
-    borderRadius: 10,
+    borderRadius: 6,
     backgroundColor: RED,
-    alignItems: 'center',
-    justifyContent: 'center',
     borderWidth: 2,
   },
   timeline: {
@@ -582,6 +619,15 @@ const styles = StyleSheet.create({
   },
   metaLabel: { flexDirection: 'row', alignItems: 'center', marginTop: tokens.spacing.base },
   actionRow: { flexDirection: 'row', gap: tokens.spacing.md, marginTop: tokens.spacing.xl },
+  darkBtn: {
+    flex: 1,
+    height: 54,
+    borderRadius: tokens.radius.md,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: 1,
+    paddingHorizontal: 20,
+  },
   tabBar: {
     flexDirection: 'row',
     borderTopWidth: StyleSheet.hairlineWidth,
@@ -606,5 +652,26 @@ const styles = StyleSheet.create({
     paddingHorizontal: tokens.spacing.xl,
     paddingVertical: tokens.spacing.md,
     borderRadius: tokens.radius.pill,
+  },
+  darkField: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    borderRadius: tokens.radius.md,
+    borderWidth: 1,
+    paddingHorizontal: 16,
+    minHeight: 56,
+  },
+  darkTextarea: {
+    borderRadius: tokens.radius.md,
+    borderWidth: 1,
+    paddingHorizontal: 16,
+    paddingVertical: 12,
+  },
+  textareaInput: {
+    color: DARK.text,
+    fontSize: 16,
+    minHeight: 140,
+    textAlignVertical: 'top',
+    padding: 0,
   },
 });

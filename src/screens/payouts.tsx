@@ -5,16 +5,37 @@ import {
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
-import { Screen, Txt, Button, TopBar, InfoModal } from '../components';
-import { useTheme, tokens, fonts } from '../theme';
+import { Txt, Button, InfoModal } from '../components';
+import { tokens, fonts } from '../theme';
 import { useStore } from '../store';
 import { Transaction } from '../types';
 
 // ---------------------------------------------------------------------------
-// The Earnings + Bank Information surfaces now use the shared LIGHT theme via
-// useTheme(), matching the rest of the app (these screens previously rolled
-// their own black canvas with navy darkTokens surfaces/fields).
+// "User App v.2" DARK design. These payout surfaces (Earning History, the
+// Account/Bank Information settings and the Bank Information form) are
+// intentionally DARK — the shared useTheme() palette is LIGHT (used by the auth
+// screens) and must NOT drive backgrounds/text here. Instead we drive every
+// colour from the local dark palette below, matching the v.2 reference exactly.
 // ---------------------------------------------------------------------------
+const D = {
+  bg: '#0C0C0C', // screen background
+  card: '#171922', // summary card / raised panel
+  cardAlt: '#1B222C',
+  field: '#1C2331', // filled input field (navy)
+  fieldAlt: '#2E3A44',
+  text: '#FFFFFF',
+  textSecondary: 'rgba(255,255,255,0.6)',
+  textTertiary: 'rgba(255,255,255,0.4)',
+  border: 'rgba(255,255,255,0.10)',
+  divider: 'rgba(255,255,255,0.10)',
+  red: '#ED1C24',
+  star: '#FFBD00',
+  success: '#02CB00',
+  ctaBg: '#FFFFFF', // v.2 primary CTA — white pill…
+  ctaText: '#141414', // …with dark text/icons
+  badgeBg: '#FFFFFF',
+} as const;
+
 const DAY = 86400000;
 
 const MONTHS = [
@@ -54,7 +75,7 @@ function groupByMonth(items: Transaction[]) {
 // bank details in BankInfo — instead of the old screen pre-claiming a fake
 // "Stripe *1234" as connected on first visit.
 // ---------------------------------------------------------------------------
-const PAYOUT_LAST4 = '6789'; // matches the bank-info.png account (…789) the seed earnings paid to
+const PAYOUT_LAST4 = '6789'; // matches the bank-info account (…789) the seed earnings paid to
 const bankLabel = (last4: string) => `Bank ****${last4}`;
 
 type PayoutAccount = { connected: boolean; last4: string };
@@ -76,11 +97,10 @@ function usePayoutAccount(): PayoutAccount {
   return _payout;
 }
 
-// Top bar (chevron + centered title) for the payout screens.
+// Top bar (chevron + centered title) for the dark payout screens.
 function DarkTopBar({ title, onBack, right }: { title: string; onBack?: () => void; right?: React.ReactNode }) {
-  const { theme } = useTheme();
   return (
-    <View style={[dark.topbar, { borderBottomColor: theme.border }]}>
+    <View style={dark.topbar}>
       {onBack ? (
         <TouchableOpacity
           onPress={onBack}
@@ -88,12 +108,12 @@ function DarkTopBar({ title, onBack, right }: { title: string; onBack?: () => vo
           accessibilityRole="button"
           accessibilityLabel="Go back"
         >
-          <Ionicons name="chevron-back" size={26} color={theme.text} />
+          <Ionicons name="chevron-back" size={26} color={D.text} />
         </TouchableOpacity>
       ) : (
         <View style={{ width: 26 }} />
       )}
-      <Txt variant="h4" color={theme.text}>{title}</Txt>
+      <Txt variant="h4" color={D.text}>{title}</Txt>
       <View style={{ width: 26, alignItems: 'flex-end' }}>{right}</View>
     </View>
   );
@@ -103,29 +123,27 @@ function DarkTopBar({ title, onBack, right }: { title: string; onBack?: () => vo
 // paid out to their connected bank account (Apple Pay is how the MEMBER pays in,
 // never how the PAL is paid).
 function BankBadge() {
-  const { theme } = useTheme();
   return (
-    <View style={[dark.payBadge, { backgroundColor: theme.surfaceAlt }]}>
-      <Ionicons name="business" size={15} color={theme.text} />
+    <View style={dark.payBadge}>
+      <Ionicons name="business" size={15} color={D.ctaText} />
     </View>
   );
 }
 
-// Filled text field for the Bank Information form.
+// Filled text field for the Bank Information form (navy raised field).
 function DarkField({
   label, value, onChangeText, keyboardType,
 }: { label: string; value: string; onChangeText: (t: string) => void; keyboardType?: any }) {
-  const { theme } = useTheme();
   return (
     <View style={{ marginBottom: 18 }}>
-      <Txt variant="label" color={theme.text} style={{ marginBottom: 8 }}>{label}</Txt>
-      <View style={[dark.field, { backgroundColor: theme.surfaceAlt, borderWidth: 1, borderColor: theme.border }]}>
+      <Txt variant="label" color={D.text} style={{ marginBottom: 8 }}>{label}</Txt>
+      <View style={dark.field}>
         <TextInput
-          style={{ color: theme.text, fontSize: 18, fontFamily: fonts.bodyRegular }}
+          style={{ color: D.text, fontSize: 18, fontFamily: fonts.bodyRegular }}
           value={value}
           onChangeText={onChangeText}
           keyboardType={keyboardType}
-          placeholderTextColor={theme.textTertiary}
+          placeholderTextColor={D.textTertiary}
           accessibilityLabel={label}
         />
       </View>
@@ -134,12 +152,11 @@ function DarkField({
 }
 
 // ---------------------------------------------------------------------------
-// 1. Earnings — "Earning History" (black). Now leads with a payout summary
+// 1. Earnings — "Earning History" (dark). Leads with a payout summary
 //    (available balance, pending, total earned, next-payout date + cadence) and
 //    each row names the real destination bank instead of the member's Apple Pay.
 // ---------------------------------------------------------------------------
 export function Earnings({ navigation }: any) {
-  const { theme } = useTheme();
   const { earnings, cashOut, paymentsLive, connectStatus } = useStore();
   const payout = usePayoutAccount();
   const groups = groupByMonth(earnings);
@@ -186,7 +203,7 @@ export function Earnings({ navigation }: any) {
   const rowDest = connected ? destLabel : 'Awaiting payout setup';
 
   return (
-    <SafeAreaView style={{ flex: 1, backgroundColor: theme.background }} edges={['top']}>
+    <SafeAreaView style={{ flex: 1, backgroundColor: D.bg }} edges={['top']}>
       <DarkTopBar
         title="Earning History"
         onBack={navigation.canGoBack() ? navigation.goBack : undefined}
@@ -197,7 +214,7 @@ export function Earnings({ navigation }: any) {
             accessibilityRole="button"
             accessibilityLabel="Payout account settings"
           >
-            <Ionicons name="wallet-outline" size={23} color={theme.text} />
+            <Ionicons name="wallet-outline" size={23} color={D.text} />
           </TouchableOpacity>
         }
       />
@@ -207,21 +224,21 @@ export function Earnings({ navigation }: any) {
       >
         {/* Payout summary — answers "what's my balance and when do I get paid?" */}
         <View
-          style={[dark.summary, tokens.shadow.card, { backgroundColor: theme.card, borderColor: theme.border }]}
+          style={dark.summary}
           accessible
           accessibilityLabel={`Available balance ${money(available)}. Pending ${money(pending)}. Total earned ${money(total)}.`}
         >
-          <Txt variant="bodySm" color={theme.textSecondary}>Available balance</Txt>
-          <Txt variant="h1" color={theme.text} style={{ marginTop: 2 }}>{money(available)}</Txt>
+          <Txt variant="bodySm" color={D.textSecondary}>Available balance</Txt>
+          <Txt variant="h1" color={D.text} style={{ marginTop: 2 }}>{money(available)}</Txt>
 
           <View style={{ flexDirection: 'row', marginTop: 16 }}>
             <View style={{ flex: 1 }}>
-              <Txt variant="caption" color={theme.textTertiary}>Pending</Txt>
-              <Txt variant="h4" color={theme.text} style={{ marginTop: 2 }}>{money(pending)}</Txt>
+              <Txt variant="caption" color={D.textTertiary}>Pending</Txt>
+              <Txt variant="h4" color={D.text} style={{ marginTop: 2 }}>{money(pending)}</Txt>
             </View>
             <View style={{ flex: 1 }}>
-              <Txt variant="caption" color={theme.textTertiary}>Total earned</Txt>
-              <Txt variant="h4" color={theme.text} style={{ marginTop: 2 }}>{money(total)}</Txt>
+              <Txt variant="caption" color={D.textTertiary}>Total earned</Txt>
+              <Txt variant="h4" color={D.text} style={{ marginTop: 2 }}>{money(total)}</Txt>
             </View>
           </View>
 
@@ -238,13 +255,13 @@ export function Earnings({ navigation }: any) {
                 accessibilityState={{ disabled: cashing || available <= 0 }}
                 style={[dark.cashBtn, { opacity: cashing || available <= 0 ? 0.5 : 1 }]}
               >
-                <Ionicons name="cash-outline" size={18} color="#FFFFFF" />
-                <Txt variant="button" color="#FFFFFF" style={{ marginLeft: 8 }}>
+                <Ionicons name="cash-outline" size={18} color={D.ctaText} />
+                <Txt variant="button" color={D.ctaText} style={{ marginLeft: 8 }}>
                   {cashing ? 'Cashing out…' : available > 0 ? `Cash out ${money(available)}` : 'No balance to cash out'}
                 </Txt>
               </TouchableOpacity>
               {cashError ? (
-                <Txt variant="caption" color={theme.danger} style={{ marginTop: 8 }}>{cashError}</Txt>
+                <Txt variant="caption" color={D.red} style={{ marginTop: 8 }}>{cashError}</Txt>
               ) : null}
             </>
           ) : (
@@ -255,18 +272,18 @@ export function Earnings({ navigation }: any) {
               accessibilityLabel="Set up payouts to get paid"
               style={dark.cashBtn}
             >
-              <Ionicons name="card-outline" size={18} color="#FFFFFF" />
-              <Txt variant="button" color="#FFFFFF" style={{ marginLeft: 8 }}>
+              <Ionicons name="card-outline" size={18} color={D.ctaText} />
+              <Txt variant="button" color={D.ctaText} style={{ marginLeft: 8 }}>
                 Set up payouts to get paid
               </Txt>
             </TouchableOpacity>
           )}
 
-          <View style={{ height: 1, backgroundColor: theme.divider, marginVertical: 16 }} />
+          <View style={{ height: 1, backgroundColor: D.divider, marginVertical: 16 }} />
 
           <View style={{ flexDirection: 'row', alignItems: 'center' }}>
-            <Ionicons name="calendar-outline" size={16} color={theme.textSecondary} />
-            <Txt variant="bodySm" color={theme.text} style={{ marginLeft: 8, flex: 1 }}>
+            <Ionicons name="calendar-outline" size={16} color={D.textSecondary} />
+            <Txt variant="bodySm" color={D.text} style={{ marginLeft: 8, flex: 1 }}>
               {!connected
                 ? 'Connect a bank account to receive your earnings.'
                 : nextPayoutMs
@@ -274,7 +291,7 @@ export function Earnings({ navigation }: any) {
                   : 'No payouts scheduled'}
             </Txt>
           </View>
-          <Txt variant="caption" color={theme.textTertiary} style={{ marginTop: 6 }}>
+          <Txt variant="caption" color={D.textTertiary} style={{ marginTop: 6 }}>
             Payouts arrive 2-3 business days after a favor is completed.
           </Txt>
         </View>
@@ -289,28 +306,28 @@ export function Earnings({ navigation }: any) {
 
         {groups.map((g) => (
           <View key={g.key} style={{ marginTop: 28 }}>
-            <Txt variant="h3" color={theme.text}>{g.key}</Txt>
-            <View style={{ height: 1, backgroundColor: theme.divider, marginTop: 16 }} />
+            <Txt variant="h3" color={D.text}>{g.key}</Txt>
+            <View style={{ height: 1, backgroundColor: D.divider, marginTop: 16 }} />
             {g.items.map((item) => (
               <View
                 key={item.id}
-                style={[dark.earnRow, { borderBottomColor: theme.divider }]}
+                style={dark.earnRow}
                 accessible
                 accessibilityLabel={`${fmtDate(item.date)}, ${money(item.amount)}${connected ? ` to ${destLabel}` : ', awaiting payout setup'}`}
               >
                 <BankBadge />
                 <View style={{ flex: 1, marginLeft: 16 }}>
-                  <Txt variant="body" color={theme.text} style={{ fontSize: 19, lineHeight: 24 }}>
+                  <Txt variant="body" color={D.text} style={{ fontSize: 19, lineHeight: 24 }}>
                     {fmtDate(item.date)}
                   </Txt>
-                  <Txt variant="body" color={theme.textSecondary} style={{ fontSize: 16, marginTop: 2 }}>
+                  <Txt variant="body" color={D.textSecondary} style={{ fontSize: 16, marginTop: 2 }}>
                     {rowDest}
                   </Txt>
                 </View>
-                <Txt variant="label" color={theme.text} style={{ fontSize: 19, marginRight: 10 }}>
+                <Txt variant="label" color={D.text} style={{ fontSize: 19, marginRight: 10 }}>
                   {money(item.amount)}
                 </Txt>
-                <Ionicons name="chevron-forward" size={22} color={theme.textTertiary} />
+                <Ionicons name="chevron-forward" size={22} color={D.textTertiary} />
               </View>
             ))}
           </View>
@@ -321,13 +338,13 @@ export function Earnings({ navigation }: any) {
 }
 
 // ---------------------------------------------------------------------------
-// 2. StripeOnboarding — "Account" (white). Bank Information section. The first
-//    row now reflects the REAL connection state: an honest "Set up payouts to
-//    get paid" prompt until the pal saves valid bank details (then it shows the
-//    connected bank), rather than pre-claiming a fake account.
+// 2. StripeOnboarding — "Account" settings (dark, same v.2 language). Bank
+//    Information section. The first row reflects the REAL connection state: an
+//    honest "Set up payouts to get paid" prompt until the pal saves valid bank
+//    details (then it shows the connected bank), rather than pre-claiming a fake
+//    account.
 // ---------------------------------------------------------------------------
 export function StripeOnboarding({ navigation }: any) {
-  const { theme } = useTheme();
   const payout = usePayoutAccount();
   const { paymentsLive, connectOnboard, connectStatus } = useStore();
   const [conn, setConn] = useState<{ onboarded: boolean; payoutsEnabled: boolean } | null>(null);
@@ -358,36 +375,36 @@ export function StripeOnboarding({ navigation }: any) {
   const connected = paymentsLive ? !!conn?.payoutsEnabled : payout.connected;
 
   return (
-    <Screen padded={false}>
-      <TopBar title="Account" onBack={navigation.canGoBack() ? navigation.goBack : undefined} />
+    <SafeAreaView style={{ flex: 1, backgroundColor: D.bg }} edges={['top']}>
+      <DarkTopBar title="Account" onBack={navigation.canGoBack() ? navigation.goBack : undefined} />
       <View style={{ paddingHorizontal: 20 }}>
-        <Txt variant="h4" color={theme.textSecondary} style={{ marginTop: 20, marginBottom: 8 }}>
+        <Txt variant="h4" color={D.textSecondary} style={{ marginTop: 20, marginBottom: 8 }}>
           Bank Information
         </Txt>
-        <View style={{ height: 1, backgroundColor: theme.divider }} />
+        <View style={{ height: 1, backgroundColor: D.divider }} />
 
         {/* Payout account — connected bank, or an honest not-yet-set-up prompt */}
         {connected ? (
           <View
-            style={[acct.row, { borderBottomColor: theme.divider }]}
+            style={acct.row}
             accessible
             accessibilityLabel={`Payout account connected: ${bankLabel(payout.last4)}`}
           >
-            <Ionicons name="card-outline" size={24} color={theme.textSecondary} style={{ width: 30, marginRight: 14 }} />
-            <Txt variant="body" color={theme.text} style={{ flex: 1 }}>{paymentsLive ? 'Payouts active (Stripe)' : bankLabel(payout.last4)}</Txt>
-            <Ionicons name="checkmark-circle" size={20} color={theme.success} />
+            <Ionicons name="card-outline" size={24} color={D.textSecondary} style={{ width: 30, marginRight: 14 }} />
+            <Txt variant="body" color={D.text} style={{ flex: 1 }}>{paymentsLive ? 'Payouts active (Stripe)' : bankLabel(payout.last4)}</Txt>
+            <Ionicons name="checkmark-circle" size={20} color={D.success} />
           </View>
         ) : (
           <TouchableOpacity
             activeOpacity={0.7}
             onPress={setupPayouts}
-            style={[acct.row, { borderBottomColor: theme.divider }]}
+            style={acct.row}
             accessibilityRole="button"
             accessibilityLabel="Set up payouts to get paid"
           >
-            <Ionicons name="card-outline" size={24} color={theme.textSecondary} style={{ width: 30, marginRight: 14 }} />
-            <Txt variant="body" color={theme.text} style={{ flex: 1 }}>{opening ? 'Opening…' : 'Set up payouts to get paid'}</Txt>
-            <Ionicons name="chevron-forward" size={22} color={theme.textTertiary} />
+            <Ionicons name="card-outline" size={24} color={D.textSecondary} style={{ width: 30, marginRight: 14 }} />
+            <Txt variant="body" color={D.text} style={{ flex: 1 }}>{opening ? 'Opening…' : 'Set up payouts to get paid'}</Txt>
+            <Ionicons name="chevron-forward" size={22} color={D.textTertiary} />
           </TouchableOpacity>
         )}
 
@@ -395,42 +412,41 @@ export function StripeOnboarding({ navigation }: any) {
         <TouchableOpacity
           activeOpacity={0.7}
           onPress={() => (paymentsLive ? setupPayouts() : navigation.navigate('BankInfo'))}
-          style={[acct.row, { borderBottomColor: theme.divider }]}
+          style={acct.row}
           accessibilityRole="button"
           accessibilityLabel={connected ? 'Edit bank information' : 'Add bank information'}
         >
-          <Ionicons name="pencil" size={22} color={theme.textSecondary} style={{ width: 30, marginRight: 14 }} />
-          <Txt variant="body" color={theme.text} style={{ flex: 1 }}>
+          <Ionicons name="pencil" size={22} color={D.textSecondary} style={{ width: 30, marginRight: 14 }} />
+          <Txt variant="body" color={D.text} style={{ flex: 1 }}>
             {connected ? 'Edit Bank Information' : 'Add Bank Information'}
           </Txt>
-          <Ionicons name="chevron-forward" size={22} color={theme.textTertiary} />
+          <Ionicons name="chevron-forward" size={22} color={D.textTertiary} />
         </TouchableOpacity>
 
         {/* Earning History → Earnings */}
         <TouchableOpacity
           activeOpacity={0.7}
           onPress={() => navigation.navigate('Earnings')}
-          style={[acct.row, { marginTop: 18, borderBottomColor: theme.divider }]}
+          style={[acct.row, { marginTop: 18 }]}
           accessibilityRole="button"
           accessibilityLabel="Earning History"
         >
-          <Ionicons name="reader-outline" size={24} color={theme.textSecondary} style={{ width: 30, marginRight: 14 }} />
-          <Txt variant="h4" color={theme.text} style={{ flex: 1 }}>Earning History</Txt>
-          <Ionicons name="chevron-forward" size={24} color={theme.textTertiary} />
+          <Ionicons name="reader-outline" size={24} color={D.textSecondary} style={{ width: 30, marginRight: 14 }} />
+          <Txt variant="h4" color={D.text} style={{ flex: 1 }}>Earning History</Txt>
+          <Ionicons name="chevron-forward" size={24} color={D.textTertiary} />
         </TouchableOpacity>
       </View>
-    </Screen>
+    </SafeAreaView>
   );
 }
 
 // ---------------------------------------------------------------------------
-// 3. BankInfo — "Bank Information" form (black). Prefilled to match the
-//    reference, but SAVE now VALIDATES (required fields, 9-digit routing,
+// 3. BankInfo — "Bank Information" form (dark). Prefilled to match the
+//    reference, but SAVE VALIDATES (required fields, 9-digit routing,
 //    account == confirm) and, on success, marks the payout account connected
 //    and confirms it before returning — instead of silently navigating away.
 // ---------------------------------------------------------------------------
 export function BankInfo({ navigation }: any) {
-  const { theme } = useTheme();
   const { user } = useStore();
   const [accountName, setAccountName] = useState(user ? `${user.firstName} ${user.lastName}` : 'Anton Vanko');
   const [bankName, setBankName] = useState('Bank of America');
@@ -467,7 +483,7 @@ export function BankInfo({ navigation }: any) {
   };
 
   return (
-    <SafeAreaView style={{ flex: 1, backgroundColor: theme.background }} edges={['top', 'bottom']}>
+    <SafeAreaView style={{ flex: 1, backgroundColor: D.bg }} edges={['top', 'bottom']}>
       <DarkTopBar title="Bank Information" onBack={navigation.canGoBack() ? navigation.goBack : undefined} />
       <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
         <ScrollView
@@ -481,7 +497,7 @@ export function BankInfo({ navigation }: any) {
           <DarkField label="Account Number" value={accountNumber} onChangeText={edit(setAccountNumber)} />
           <DarkField label="Confirm Account Number" value={confirmAccount} onChangeText={edit(setConfirmAccount)} />
 
-          <Txt variant="label" color={theme.text} style={{ marginBottom: 10 }}>Account Type</Txt>
+          <Txt variant="label" color={D.text} style={{ marginBottom: 10 }}>Account Type</Txt>
           <View style={{ flexDirection: 'row', gap: 12 }}>
             {(['Savings', 'Checking'] as const).map((opt) => {
               const sel = accountType === opt;
@@ -501,13 +517,13 @@ export function BankInfo({ navigation }: any) {
                     alignItems: 'center',
                     justifyContent: 'center',
                     gap: 8,
-                    backgroundColor: sel ? theme.cta : theme.surfaceAlt,
+                    backgroundColor: sel ? D.ctaBg : D.field,
                     borderWidth: sel ? 0 : 1,
-                    borderColor: theme.border,
+                    borderColor: D.border,
                   }}
                 >
-                  {sel && <Ionicons name="checkmark-circle" size={18} color="#FFFFFF" />}
-                  <Txt variant="label" color={sel ? '#FFFFFF' : theme.textSecondary}>{opt}</Txt>
+                  {sel && <Ionicons name="checkmark-circle" size={18} color={D.ctaText} />}
+                  <Txt variant="label" color={sel ? D.ctaText : D.textSecondary}>{opt}</Txt>
                 </TouchableOpacity>
               );
             })}
@@ -519,11 +535,12 @@ export function BankInfo({ navigation }: any) {
               accessibilityLiveRegion="polite"
               style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 12 }}
             >
-              <Ionicons name="alert-circle" size={18} color={theme.danger} style={{ marginRight: 6 }} />
-              <Txt variant="bodySm" color={theme.danger} style={{ flex: 1 }}>{error}</Txt>
+              <Ionicons name="alert-circle" size={18} color={D.red} style={{ marginRight: 6 }} />
+              <Txt variant="bodySm" color={D.red} style={{ flex: 1 }}>{error}</Txt>
             </View>
           ) : null}
-          <Button title="Save" variant="primary" onPress={onSave} />
+          {/* v.2 primary CTA — white pill with dark uppercase text */}
+          <Button title="Save" variant="white" onPress={onSave} />
         </View>
       </KeyboardAvoidingView>
 
@@ -552,21 +569,21 @@ const dark = StyleSheet.create({
     justifyContent: 'space-between',
     paddingHorizontal: 16,
     borderBottomWidth: StyleSheet.hairlineWidth,
-    borderBottomColor: '#ECEBED',
+    borderBottomColor: D.border,
   },
   summary: {
     marginTop: 12,
-    backgroundColor: '#FFFFFF',
+    backgroundColor: D.card,
     borderRadius: tokens.radius.lg,
     borderWidth: 1,
-    borderColor: '#ECEBED',
+    borderColor: D.border,
     padding: 20,
   },
   cashBtn: {
     marginTop: 18,
     height: 48,
     borderRadius: tokens.radius.md,
-    backgroundColor: '#ED1C24',
+    backgroundColor: D.ctaBg,
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
@@ -575,7 +592,7 @@ const dark = StyleSheet.create({
     width: 40,
     height: 26,
     borderRadius: 5,
-    backgroundColor: '#F5F5F5',
+    backgroundColor: D.badgeBg,
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
@@ -585,10 +602,10 @@ const dark = StyleSheet.create({
     alignItems: 'center',
     paddingVertical: 18,
     borderBottomWidth: 1,
-    borderBottomColor: '#E5E5E5',
+    borderBottomColor: D.divider,
   },
   field: {
-    backgroundColor: '#F5F5F5',
+    backgroundColor: D.field,
     borderRadius: tokens.radius.md,
     paddingHorizontal: 16,
     minHeight: 56,
@@ -597,5 +614,5 @@ const dark = StyleSheet.create({
 });
 
 const acct = StyleSheet.create({
-  row: { flexDirection: 'row', alignItems: 'center', paddingVertical: 18, borderBottomWidth: 1 },
+  row: { flexDirection: 'row', alignItems: 'center', paddingVertical: 18, borderBottomWidth: 1, borderBottomColor: D.divider },
 });

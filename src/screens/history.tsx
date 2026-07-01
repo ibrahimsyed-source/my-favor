@@ -1,15 +1,37 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import {
-  View, ScrollView, TouchableOpacity, StyleSheet, Image, FlatList, RefreshControl,
+  View, ScrollView, TouchableOpacity, StyleSheet, Image, FlatList, RefreshControl, TextInput,
 } from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
-import { useTheme, tokens } from '../theme';
-import {
-  Screen, Txt, Button, Field, Avatar, StarRating, TopBar, InfoModal,
-} from '../components';
+import { useTheme, tokens, fonts } from '../theme';
+import { Txt, Avatar, StarRating, InfoModal } from '../components';
 import { useStore } from '../store';
 import { getFavorsApi } from '../api/endpoints';
 import { FAVOR_TIERS, Favor, FavorStatus, User } from '../types';
+
+// ---------------------------------------------------------------------------
+// User App v.2 — DARK palette (local consts). These screens are intentionally
+// dark and must NOT use the shared light useTheme() colours for backgrounds /
+// text; the tokens below match the v.2 "Earning History" dark reference.
+// ---------------------------------------------------------------------------
+const DK = {
+  bg: '#0C0C0C', // near-black screen background
+  card: '#171922', // dark navy card / sheet
+  surfaceAlt: '#1C2331', // raised field / pill / thumb
+  field: '#1C2331', // input field navy
+  pill: '#1C2331', // dark secondary pill button
+  text: '#FFFFFF', // primary text / icons
+  textSecondary: 'rgba(255,255,255,0.6)', // secondary text
+  textTertiary: 'rgba(255,255,255,0.4)', // placeholder / tertiary
+  divider: 'rgba(255,255,255,0.10)', // hairline dividers / borders
+  border: 'rgba(255,255,255,0.10)',
+  red: '#ED1C24', // brand red accent
+  star: '#FFBD00', // rating star amber
+  success: '#02CB00', // success green
+  cta: '#FFFFFF', // primary CTA button bg (white-on-dark)
+  ctaText: '#141414', // primary CTA button text
+} as const;
 
 // ---------------------------------------------------------------------------
 // Date helpers (deterministic formatting from ms epoch)
@@ -59,32 +81,53 @@ const cap = (s: string) => s.charAt(0).toUpperCase() + s.slice(1);
 
 type IconName = React.ComponentProps<typeof Ionicons>['name'];
 
-// Status badge meta. Each state carries a distinguishing icon + text label so it
-// is never communicated by color alone (WCAG 1.4.1), and the foreground colors
-// are darkened to clear AA (>=4.5:1) on their tints at the 12px badge size.
+// ---------------------------------------------------------------------------
+// Dark top bar (back chevron + centered title) — replaces the shared light
+// <TopBar>, which renders dark-on-white and would vanish on the dark canvas.
+// ---------------------------------------------------------------------------
+function DarkTopBar({ title, onBack }: { title: string; onBack?: () => void }) {
+  return (
+    <View style={styles.topbar}>
+      {onBack ? (
+        <TouchableOpacity onPress={onBack} hitSlop={12} accessibilityRole="button" accessibilityLabel="Go back">
+          <Ionicons name="arrow-back" size={26} color={DK.text} />
+        </TouchableOpacity>
+      ) : (
+        <View style={{ width: 26 }} />
+      )}
+      <Txt variant="h6" color={DK.text}>{title}</Txt>
+      <View style={{ width: 26 }} />
+    </View>
+  );
+}
+
+// Status badge meta — dark v.2 chips: a bright foreground label + icon on a
+// subtle translucent tint of the same hue (never colour alone → WCAG 1.4.1),
+// tuned for AA contrast on the near-black canvas. `theme` is threaded from the
+// row for data-flow parity but the dark palette (DK) drives the actual colours.
 function statusMeta(
   status: FavorStatus,
   theme: any,
 ): { label: string; fg: string; bg: string; icon: IconName } {
   switch (status) {
     case 'completed':
-      return { label: 'Completed', fg: '#0A6B05', bg: '#E4F8E4', icon: 'checkmark-circle' };
+      return { label: 'Completed', fg: DK.success, bg: 'rgba(2,203,0,0.16)', icon: 'checkmark-circle' };
     case 'cancelled':
-      return { label: 'Cancelled', fg: theme.primaryDark, bg: '#FCE3E4', icon: 'close-circle' };
+      return { label: 'Cancelled', fg: '#FF6B6E', bg: 'rgba(237,28,36,0.16)', icon: 'close-circle' };
     case 'in_progress':
-      return { label: 'In Progress', fg: '#8A5E00', bg: '#FFF3D6', icon: 'sync' };
+      return { label: 'In Progress', fg: DK.star, bg: 'rgba(255,189,0,0.16)', icon: 'sync' };
     case 'matched':
-      return { label: 'Matched', fg: '#8A5E00', bg: '#FFF3D6', icon: 'person-circle' };
+      return { label: 'Matched', fg: DK.star, bg: 'rgba(255,189,0,0.16)', icon: 'person-circle' };
     case 'enroute':
-      return { label: 'En Route', fg: '#8A5E00', bg: '#FFF3D6', icon: 'navigate' };
+      return { label: 'En Route', fg: DK.star, bg: 'rgba(255,189,0,0.16)', icon: 'navigate' };
     case 'arrived':
-      return { label: 'Arrived', fg: '#8A5E00', bg: '#FFF3D6', icon: 'location' };
+      return { label: 'Arrived', fg: DK.star, bg: 'rgba(255,189,0,0.16)', icon: 'location' };
     case 'requested':
-      return { label: 'Requested', fg: '#005FCC', bg: '#E3F1FC', icon: 'hourglass' };
+      return { label: 'Requested', fg: '#4DA6FF', bg: 'rgba(0,159,238,0.16)', icon: 'hourglass' };
     case 'no_pal':
-      return { label: 'No Pal', fg: theme.primaryDark, bg: '#FCE3E4', icon: 'alert-circle' };
+      return { label: 'No Pal', fg: '#FF6B6E', bg: 'rgba(237,28,36,0.16)', icon: 'alert-circle' };
     default:
-      return { label: cap(status), fg: theme.textSecondary, bg: theme.surfaceAlt, icon: 'ellipse' };
+      return { label: cap(status), fg: DK.textSecondary, bg: DK.surfaceAlt, icon: 'ellipse' };
   }
 }
 
@@ -127,30 +170,30 @@ const HistoryRow = React.memo(function HistoryRow({
     <TouchableOpacity
       activeOpacity={0.7}
       onPress={() => onPress(favor.id)}
-      style={[styles.listRow, { borderBottomColor: theme.divider }]}
+      style={styles.listRow}
       accessibilityRole="button"
       accessibilityLabel={`${name}, ${tierLabel}, ${badge.label}. View favor details`}
     >
       <Avatar uri={pal?.avatar} size={60} name={name} />
       <View style={{ flex: 1, marginLeft: tokens.spacing.base }}>
         <View style={styles.rowBetween}>
-          <Txt variant="label" style={{ fontSize: 17, flex: 1 }} numberOfLines={1}>
+          <Txt variant="label" color={DK.text} style={{ fontSize: 17, flex: 1 }} numberOfLines={1}>
             {name}
           </Txt>
-          <Txt variant="bodySm" color={theme.textSecondary}>
+          <Txt variant="bodySm" color={DK.textSecondary}>
             View More
           </Txt>
         </View>
-        <Txt variant="bodySm" color={theme.textSecondary} style={{ marginTop: 1 }}>
+        <Txt variant="bodySm" color={DK.textSecondary} style={{ marginTop: 1 }}>
           {tierLabel}
         </Txt>
-        <Txt variant="bodySm" color={theme.textSecondary} numberOfLines={2} style={{ marginTop: 6 }}>
+        <Txt variant="bodySm" color={DK.textSecondary} numberOfLines={2} style={{ marginTop: 6 }}>
           {favor.description}
         </Txt>
         <View style={[styles.rowBetween, { marginTop: 8 }]}>
           <View style={styles.inline}>
-            <Ionicons name="calendar-outline" size={16} color={theme.textSecondary} />
-            <Txt variant="label" style={{ fontSize: 14, marginLeft: 8 }}>
+            <Ionicons name="calendar-outline" size={16} color={DK.textSecondary} />
+            <Txt variant="label" color={DK.text} style={{ fontSize: 14, marginLeft: 8 }}>
               {listDate(favor.scheduledFor ?? favor.createdAt)}
             </Txt>
           </View>
@@ -220,26 +263,26 @@ export const History = ({ navigation }: any) => {
   );
 
   return (
-    <Screen padded={false}>
-      <TopBar title="Favor History" onBack={() => navigation.goBack()} />
+    <SafeAreaView style={{ flex: 1, backgroundColor: DK.bg }} edges={['top']}>
+      <DarkTopBar title="Favor History" onBack={() => navigation.goBack()} />
       <FlatList
         data={items}
         keyExtractor={(h) => h.id}
         renderItem={renderItem}
         contentContainerStyle={{ paddingTop: tokens.spacing.sm, flexGrow: 1 }}
         refreshControl={
-          <RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={theme.primary} />
+          <RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={DK.text} colors={[DK.red]} />
         }
         initialNumToRender={8}
         maxToRenderPerBatch={8}
         windowSize={7}
         ListEmptyComponent={
-          <Txt variant="body" color={theme.textSecondary} center style={{ marginTop: 48 }}>
+          <Txt variant="body" color={DK.textSecondary} center style={{ marginTop: 48 }}>
             No past favors yet.
           </Txt>
         }
       />
-    </Screen>
+    </SafeAreaView>
   );
 };
 
@@ -247,7 +290,6 @@ export const History = ({ navigation }: any) => {
 // FavorHistoryDetail — full record of a single favor
 // ===========================================================================
 export const FavorHistoryDetail = ({ navigation, route }: any) => {
-  const { theme } = useTheme();
   const s = useStore();
   const [message, setMessage] = useState('');
   const [sent, setSent] = useState(false);
@@ -293,52 +335,57 @@ export const FavorHistoryDetail = ({ navigation, route }: any) => {
     setSent(true);
   };
 
-  const Divider = () => <View style={[styles.divider, { backgroundColor: theme.divider }]} />;
+  const Divider = () => <View style={[styles.divider, { backgroundColor: DK.divider }]} />;
+  const canSend = !!message.trim();
 
   return (
-    <Screen padded={false}>
-      <TopBar title="Favor Details" onBack={() => navigation.goBack()} />
+    <SafeAreaView style={{ flex: 1, backgroundColor: DK.bg }} edges={['top']}>
+      <DarkTopBar title="Favor Details" onBack={() => navigation.goBack()} />
       <ScrollView contentContainerStyle={{ padding: tokens.spacing.lg, paddingBottom: 40 }}>
         {/* ---- Header: type + schedule ---- */}
         <View style={styles.inline}>
-          <View style={[styles.thumb, { backgroundColor: theme.surfaceAlt }]}>
+          <View style={[styles.thumb, { backgroundColor: DK.surfaceAlt }]}>
             {favor?.images?.[0] ? (
               <Image source={{ uri: favor.images[0] }} style={styles.thumbImg} />
             ) : (
-              <Ionicons name="cube" size={22} color={theme.textTertiary} />
+              <Ionicons name="cube" size={22} color={DK.textTertiary} />
             )}
           </View>
           <View style={{ marginLeft: tokens.spacing.md }}>
-            <Txt variant="label" style={{ fontSize: 17 }}>
+            <Txt variant="label" color={DK.text} style={{ fontSize: 17 }}>
               {tierLabel}
             </Txt>
-            <Txt variant="caption" color={theme.textSecondary} style={{ marginTop: 2 }}>
+            <Txt variant="caption" color={DK.textSecondary} style={{ marginTop: 2 }}>
               {longDay(when)}
             </Txt>
-            <Txt variant="caption" color={theme.textSecondary}>
+            <Txt variant="caption" color={DK.textSecondary}>
               {timeOnly(when)}
             </Txt>
           </View>
         </View>
 
-        <Button
-          title="Request this favor again"
-          variant="secondary"
-          uppercase={false}
+        <TouchableOpacity
+          activeOpacity={0.85}
           onPress={requestAgain}
-          style={{ marginTop: tokens.spacing.base }}
-        />
+          style={[styles.pillBtn, { backgroundColor: DK.pill, marginTop: tokens.spacing.base }]}
+          accessibilityRole="button"
+          accessibilityLabel="Request this favor again"
+        >
+          <Txt variant="button" color={DK.text} style={{ letterSpacing: 0.3 }}>
+            Request this favor again
+          </Txt>
+        </TouchableOpacity>
 
         <Divider />
 
         {/* ---- Description ---- */}
         <View style={styles.sectionHead}>
-          <Ionicons name="document-text-outline" size={20} color={theme.text} />
-          <Txt variant="label" style={{ marginLeft: 10 }}>
+          <Ionicons name="document-text-outline" size={20} color={DK.text} />
+          <Txt variant="label" color={DK.text} style={{ marginLeft: 10 }}>
             Description
           </Txt>
         </View>
-        <Txt variant="bodySm" color={theme.textSecondary} style={{ marginTop: 6 }}>
+        <Txt variant="bodySm" color={DK.textSecondary} style={{ marginTop: 6 }}>
           {favor?.description}
         </Txt>
 
@@ -346,32 +393,32 @@ export const FavorHistoryDetail = ({ navigation, route }: any) => {
 
         {/* ---- Address ---- */}
         <View style={styles.sectionHead}>
-          <Ionicons name="location-outline" size={20} color={theme.text} />
-          <Txt variant="label" style={{ marginLeft: 10 }}>
+          <Ionicons name="location-outline" size={20} color={DK.text} />
+          <Txt variant="label" color={DK.text} style={{ marginLeft: 10 }}>
             Address
           </Txt>
         </View>
-        <Txt variant="bodySm" color={theme.textSecondary} style={{ marginTop: 6 }}>
+        <Txt variant="bodySm" color={DK.textSecondary} style={{ marginTop: 6 }}>
           {favor?.location?.address}
         </Txt>
 
         <Divider />
 
         {/* ---- Favor Pal ---- */}
-        <Txt variant="label" style={{ marginBottom: tokens.spacing.md }}>
+        <Txt variant="label" color={DK.text} style={{ marginBottom: tokens.spacing.md }}>
           Favor Pal
         </Txt>
         <View style={styles.inline}>
           <Avatar uri={pal?.avatar} size={56} name={palName} />
           <View style={{ flex: 1, marginLeft: tokens.spacing.md }}>
             <View style={styles.rowBetween}>
-              <Txt variant="label" style={{ fontSize: 17 }}>
+              <Txt variant="label" color={DK.text} style={{ fontSize: 17 }}>
                 {palName}
               </Txt>
               {pal && (
                 <View style={styles.inline}>
-                  <Ionicons name="star" size={15} color={theme.star} />
-                  <Txt variant="bodySm" style={{ marginLeft: 4 }}>
+                  <Ionicons name="star" size={15} color={DK.star} />
+                  <Txt variant="bodySm" color={DK.text} style={{ marginLeft: 4 }}>
                     {pal.rating?.toFixed(1)}
                   </Txt>
                 </View>
@@ -379,24 +426,24 @@ export const FavorHistoryDetail = ({ navigation, route }: any) => {
             </View>
             {pal ? (
               <>
-                <Txt variant="caption" color={theme.textSecondary} style={{ marginTop: 2 }}>
+                <Txt variant="caption" color={DK.textSecondary} style={{ marginTop: 2 }}>
                   3 Miles away
                 </Txt>
                 <View style={[styles.inline, { marginTop: 6 }]}>
-                  <Ionicons name="thumbs-up-outline" size={14} color={theme.textSecondary} />
-                  <Txt variant="caption" color={theme.textSecondary} style={{ marginLeft: 6 }}>
+                  <Ionicons name="thumbs-up-outline" size={14} color={DK.textSecondary} />
+                  <Txt variant="caption" color={DK.textSecondary} style={{ marginLeft: 6 }}>
                     {pal.reliability}% Reliable
                   </Txt>
                 </View>
                 <View style={[styles.inline, { marginTop: 4 }]}>
-                  <Ionicons name="star-outline" size={14} color={theme.textSecondary} />
-                  <Txt variant="caption" color={theme.textSecondary} style={{ marginLeft: 6 }}>
+                  <Ionicons name="star-outline" size={14} color={DK.textSecondary} />
+                  <Txt variant="caption" color={DK.textSecondary} style={{ marginLeft: 6 }}>
                     {pal.positiveReviews}% Positive Reviews
                   </Txt>
                 </View>
               </>
             ) : (
-              <Txt variant="caption" color={theme.textSecondary} style={{ marginTop: 2 }}>
+              <Txt variant="caption" color={DK.textSecondary} style={{ marginTop: 2 }}>
                 Pal details unavailable for this favor.
               </Txt>
             )}
@@ -406,77 +453,88 @@ export const FavorHistoryDetail = ({ navigation, route }: any) => {
         <Divider />
 
         {/* ---- Payment ---- */}
-        <Txt variant="label" style={{ marginBottom: tokens.spacing.md }}>
+        <Txt variant="label" color={DK.text} style={{ marginBottom: tokens.spacing.md }}>
           Payment
         </Txt>
         <View style={styles.rowBetween}>
           <View style={styles.inline}>
-            <Ionicons name="card-outline" size={20} color={theme.text} />
-            <Txt variant="label" style={{ marginLeft: 10 }}>
+            <Ionicons name="card-outline" size={20} color={DK.text} />
+            <Txt variant="label" color={DK.text} style={{ marginLeft: 10 }}>
               {card ? `${cap(card.brand)} •••• ${card.last4}` : 'Card on file'}
             </Txt>
           </View>
-          <Txt variant="label">${favor?.total?.toFixed(2)}</Txt>
+          <Txt variant="label" color={DK.text}>${favor?.total?.toFixed(2)}</Txt>
         </View>
-        <Txt variant="bodySm" color={theme.textSecondary} style={{ marginTop: 6 }}>
+        <Txt variant="bodySm" color={DK.textSecondary} style={{ marginTop: 6 }}>
           Favor ${favor?.price?.toFixed(2)} + fees ${feeTotal.toFixed(2)}
           {favor?.tip ? ` + tip $${favor.tip.toFixed(2)}` : ''}
         </Txt>
         <View style={[styles.rowBetween, { marginTop: 14 }]}>
-          <Txt variant="caption" color={theme.textSecondary}>
+          <Txt variant="caption" color={DK.textSecondary}>
             Date &amp; Time
           </Txt>
-          <Txt variant="bodySm">{stampDate(when)}</Txt>
+          <Txt variant="bodySm" color={DK.text}>{stampDate(when)}</Txt>
         </View>
         <View style={[styles.rowBetween, { marginTop: 8 }]}>
-          <Txt variant="caption" color={theme.textSecondary}>
+          <Txt variant="caption" color={DK.textSecondary}>
             Transaction ID
           </Txt>
-          <Txt variant="bodySm">{txnId(favor?.id)}</Txt>
+          <Txt variant="bodySm" color={DK.text}>{txnId(favor?.id)}</Txt>
         </View>
 
         <Divider />
 
         {/* ---- Feedback ---- */}
-        <Txt variant="label" style={{ marginBottom: tokens.spacing.md }}>
+        <Txt variant="label" color={DK.text} style={{ marginBottom: tokens.spacing.md }}>
           Feedback
         </Txt>
         <View style={styles.inline}>
-          <Txt variant="bodySm" color={theme.textSecondary} style={{ marginRight: 14 }}>
+          <Txt variant="bodySm" color={DK.textSecondary} style={{ marginRight: 14 }}>
             Rating
           </Txt>
           <StarRating value={favor?.rating ?? 0} size={20} />
         </View>
-        <Txt variant="label" style={{ marginTop: tokens.spacing.base }}>
+        <Txt variant="label" color={DK.text} style={{ marginTop: tokens.spacing.base }}>
           Comment
         </Txt>
-        <Txt variant="bodySm" color={theme.textSecondary} style={{ marginTop: 6 }}>
+        <Txt variant="bodySm" color={DK.textSecondary} style={{ marginTop: 6 }}>
           {favor?.feedback ?? 'No comment was left for this favor.'}
         </Txt>
 
         <Divider />
 
         {/* ---- Help / support ---- */}
-        <Txt variant="label">Need help or have a question with this favor?</Txt>
-        <Txt variant="label" style={{ marginBottom: tokens.spacing.md }}>
+        <Txt variant="label" color={DK.text}>Need help or have a question with this favor?</Txt>
+        <Txt variant="label" color={DK.text} style={{ marginBottom: tokens.spacing.md }}>
           Send us a message.
         </Txt>
-        <Field
-          value={message}
-          onChangeText={setMessage}
-          multiline
-          maxLength={700}
-          placeholder="Provide as much detail as possible about your favor!  Let your provider know what they will be doing, what they will need to bring, special requirements, etc."
-        />
-        <Txt variant="caption" color={theme.textSecondary} style={{ textAlign: 'right', marginTop: -6, marginBottom: tokens.spacing.lg }}>
+        <View style={[styles.msgBox, { backgroundColor: DK.field, borderColor: DK.border }]}>
+          <TextInput
+            style={{ flex: 1, color: DK.text, fontSize: 16, fontFamily: fonts.bodyRegular, textAlignVertical: 'top', minHeight: 120 }}
+            value={message}
+            onChangeText={setMessage}
+            multiline
+            maxLength={700}
+            placeholder="Provide as much detail as possible about your favor!  Let your provider know what they will be doing, what they will need to bring, special requirements, etc."
+            placeholderTextColor={DK.textTertiary}
+          />
+        </View>
+        <Txt variant="caption" color={DK.textSecondary} style={{ textAlign: 'right', marginTop: 8, marginBottom: tokens.spacing.lg }}>
           700 characters max.
         </Txt>
-        <Button
-          title="SEND"
-          variant="primary"
-          disabled={!message.trim()}
+        <TouchableOpacity
+          activeOpacity={0.85}
+          disabled={!canSend}
           onPress={sendMessage}
-        />
+          style={[styles.pillBtn, { backgroundColor: canSend ? DK.cta : DK.pill }]}
+          accessibilityRole="button"
+          accessibilityState={{ disabled: !canSend }}
+          accessibilityLabel="Send"
+        >
+          <Txt variant="button" color={canSend ? DK.ctaText : DK.textTertiary} style={{ letterSpacing: 0.5 }}>
+            SEND
+          </Txt>
+        </TouchableOpacity>
       </ScrollView>
       <InfoModal
         visible={sent}
@@ -485,17 +543,27 @@ export const FavorHistoryDetail = ({ navigation, route }: any) => {
         buttonLabel="OK"
         onClose={() => setSent(false)}
       />
-    </Screen>
+    </SafeAreaView>
   );
 };
 
 const styles = StyleSheet.create({
+  topbar: {
+    height: 52,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: 16,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    borderBottomColor: DK.divider,
+  },
   listRow: {
     flexDirection: 'row',
     alignItems: 'flex-start',
     paddingHorizontal: tokens.spacing.lg,
     paddingVertical: tokens.spacing.lg,
     borderBottomWidth: StyleSheet.hairlineWidth,
+    borderBottomColor: DK.divider,
   },
   rowBetween: {
     flexDirection: 'row',
@@ -512,6 +580,20 @@ const styles = StyleSheet.create({
     paddingHorizontal: 10,
     paddingVertical: 3,
     borderRadius: tokens.radius.pill,
+  },
+  pillBtn: {
+    height: 54,
+    borderRadius: tokens.radius.md,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: 20,
+  },
+  msgBox: {
+    borderRadius: tokens.radius.md,
+    borderWidth: 1,
+    padding: 14,
+    minHeight: 140,
   },
   thumb: {
     width: 46,
