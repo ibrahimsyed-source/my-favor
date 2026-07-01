@@ -48,14 +48,31 @@ async function settle(opts: {
   charge: (palConnectId: string, paymentMethodId: string) => Promise<string>;
 }): Promise<'completed' | 'incomplete'> {
   const writeRows = async (status: 'completed' | 'incomplete') => {
-    await prisma.transaction.create({
-      data: { userId: opts.memberId, favorId: opts.favorId, title: opts.memberTitle, amount: opts.memberAmount, status, kind: 'payment' },
-    });
+    // Commit the member debit and the pal credit atomically: a crash can never
+    // leave a half-ledger (one side written without the other). Both rows share
+    // one $transaction so the stated invariant — member debit and pal credit
+    // happen together — holds even mid-write.
+    //
+    // Deferred (needs infra not added here): folding these rows into the same
+    // transaction that flips the favor status would also close the tiny window
+    // where a crash after the status flip but before settle() leaves a completed
+    // favor with no ledger rows. It isn't done because settle()'s live path makes
+    // an external Stripe charge, which must not run inside an open DB transaction;
+    // and a retry/reconcile path would require a unique (favorId, userId, kind)
+    // constraint (a migration) to stay idempotent.
+    const writes = [
+      prisma.transaction.create({
+        data: { userId: opts.memberId, favorId: opts.favorId, title: opts.memberTitle, amount: opts.memberAmount, status, kind: 'payment' },
+      }),
+    ];
     if (opts.palId && opts.palAmount != null) {
-      await prisma.transaction.create({
-        data: { userId: opts.palId, favorId: opts.favorId, title: opts.palTitle ?? opts.memberTitle, amount: opts.palAmount, status, kind: 'earning' },
-      });
+      writes.push(
+        prisma.transaction.create({
+          data: { userId: opts.palId, favorId: opts.favorId, title: opts.palTitle ?? opts.memberTitle, amount: opts.palAmount, status, kind: 'earning' },
+        }),
+      );
     }
+    await prisma.$transaction(writes);
   };
 
   if (!stripeEnabled()) {
@@ -215,6 +232,13 @@ favorRouter.post(
     if (!favor) throw notFound('Favor not found');
     if (favor.memberId === me) throw forbidden('You cannot accept your own favor');
 
+    // One favor at a time: a pal already mid-favor can't claim another (server-
+    // side guard for the single active-favor slot; the client guards too).
+    const activeAsPal = await prisma.favor.count({
+      where: { palId: me, status: { in: ['matched', 'enroute', 'arrived', 'in_progress'] } },
+    });
+    if (activeAsPal > 0) throw conflict('Finish your active favor before accepting another');
+
     const claimed = await prisma.favor.updateMany({
       where: { id: req.params.id, status: 'requested', palId: null },
       data: { status: 'matched', palId: me },
@@ -234,6 +258,28 @@ favorRouter.post(
   '/:id/decline',
   validate({ params: idParam }),
   asyncHandler(async (req, res) => {
+    res.json({ ok: true });
+  }),
+);
+
+// POST /api/favors/:id/abandon — the assigned pal steps back before completing.
+// The favor returns to the open board (status 'requested', palId cleared) and the
+// member is notified, so a pal cancelling never strands the member's request.
+favorRouter.post(
+  '/:id/abandon',
+  validate({ params: idParam }),
+  asyncHandler(async (req, res) => {
+    const me = req.user!.id;
+    const favor = await prisma.favor.findUnique({ where: { id: req.params.id } });
+    if (!favor) throw notFound('Favor not found');
+    if (favor.palId !== me) throw forbidden('Only the assigned pal can release this favor');
+    const released = await prisma.favor.updateMany({
+      where: { id: req.params.id, palId: me, status: { in: ['matched', 'enroute', 'arrived', 'in_progress'] } },
+      data: { status: 'requested', palId: null },
+    });
+    if (released.count === 0) throw conflict('This favor can no longer be released');
+    await prisma.favorEvent.create({ data: { favorId: req.params.id, status: 'requested', actorId: me } });
+    await notify(favor.memberId, 'cancellation', 'Your Pal stepped back', 'Your Favor Pal had to release your favor — it is open again for another Pal.');
     res.json({ ok: true });
   }),
 );

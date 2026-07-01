@@ -30,7 +30,19 @@ RUN sed -i 's/provider = "sqlite"/provider = "postgresql"/' prisma/schema.prisma
 RUN npx prisma generate
 COPY --from=build /app/dist ./dist
 EXPOSE 4000
-# Sync the schema to the Postgres DB, then start. db push (no migration files
-# needed) keeps the SQLite-vs-Postgres migration histories from diverging; it
-# applies non-destructive changes and refuses silent data loss.
+# Sync the schema to the Postgres DB, then start.
+#
+# TRADEOFF (deferred, intentional): This uses `prisma db push`, not the
+# production-grade `prisma migrate deploy`. db push is a schema-diff tool with
+# no migration history, no review/rollback, and it can drop/alter columns to
+# match the schema (potential data loss on a live DB). We use it here because
+# the committed migrations are SQLite-only (schema.prisma ships as SQLite for
+# zero-setup local dev and is flipped to Postgres in this image above), so
+# there are no Postgres-native migration files to deploy.
+#
+# PRODUCTION-GRADE PATH (do this before real user data lands): generate a
+# Postgres migration set (`prisma migrate dev` against a Postgres URL, commit
+# prisma/migrations), fix the provider to postgresql for prod instead of
+# sed-rewriting at build time so local and prod share ONE migration history,
+# then replace the command below with `npx prisma migrate deploy`.
 CMD ["sh", "-c", "npx prisma db push --skip-generate && node dist/index.js"]

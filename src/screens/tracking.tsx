@@ -10,7 +10,7 @@ import {
 import { useTheme, tokens, palette } from '../theme';
 import { useStore } from '../store';
 import {
-  computeFees, computePayout, FAVOR_TIERS, MEMBER_STATUS_STEPS,
+  computeFees, computePayout, computeCancellation, FAVOR_TIERS, MEMBER_STATUS_STEPS,
 } from '../types';
 
 // Brand + on-accent constants reused across this screen.
@@ -43,6 +43,7 @@ export const FavorTracking = ({ navigation }: any) => {
   const fav = s.activeFavor;
   const pal = s.activePal;
   const [callVisible, setCallVisible] = useState(false);
+  const [cancelVisible, setCancelVisible] = useState(false);
 
   // Resolve display values from real state, with design-literal fallbacks.
   const palName = pal ? `${pal.firstName} ${pal.lastName}` : 'Aditya Patil';
@@ -67,9 +68,24 @@ export const FavorTracking = ({ navigation }: any) => {
   const statusLabel = currentStep >= 0 ? MEMBER_STATUS_STEPS[currentStep].label : 'Finding your Pal…';
   const isCompleted = fav?.status === 'completed';
 
-  const onCancel = () => {
+  // Cancelling a committed favor forfeits a fee and refunds the rest, per the
+  // shared cancellation policy — surface that via ConfirmModal before doing
+  // anything irreversible so the member isn't charged silently.
+  const cancelInfo = fav ? computeCancellation(fav) : null;
+  const cancelMessage = cancelInfo
+    ? (cancelInfo.fee > 0
+      ? `You'll be refunded $${cancelInfo.refund.toFixed(2)}. A $${cancelInfo.fee.toFixed(2)} cancellation fee applies because your Pal is already committed.`
+      : `You'll be refunded $${cancelInfo.refund.toFixed(2)} in full.`)
+    : 'Are you sure you want to cancel this favor?';
+
+  const onCancel = () => setCancelVisible(true);
+  // On confirm, unwind the whole checkout stack back to Home via popToTop()
+  // instead of goBack() — the underlying SelectPayment draft was already
+  // cleared by requestFavor(), so returning there shows a stale payment sheet.
+  const confirmCancel = () => {
+    setCancelVisible(false);
     s.cancelFavor();
-    if (navigation.canGoBack()) navigation.goBack();
+    navigation.popToTop();
   };
 
   // SHARE doubles as share-trip (live status/ETA) + a referral growth loop.
@@ -327,6 +343,17 @@ export const FavorTracking = ({ navigation }: any) => {
         buttonLabel="OK"
         onClose={() => setCallVisible(false)}
       />
+
+      <ConfirmModal
+        visible={cancelVisible}
+        title="Cancel this favor?"
+        message={cancelMessage}
+        confirmLabel="Cancel favor"
+        cancelLabel="Keep favor"
+        destructive
+        onConfirm={confirmCancel}
+        onCancel={() => setCancelVisible(false)}
+      />
     </SafeAreaView>
   );
 };
@@ -455,6 +482,17 @@ export const OrderComplete = ({ navigation }: any) => {
         onPress={onSubmit}
         style={{ marginTop: tokens.spacing.lg }}
       />
+
+      {/* Rating is optional — never trap the member on this screen. Mirrors the
+          pal-side "Maybe later" skip so either party can leave without rating. */}
+      <TouchableOpacity
+        onPress={() => navigation.navigate('Tabs')}
+        style={{ alignSelf: 'center', marginTop: tokens.spacing.md, paddingVertical: 6 }}
+        accessibilityRole="button"
+        accessibilityLabel="Skip rating and return home"
+      >
+        <Txt variant="button" color={theme.textSecondary}>Maybe later</Txt>
+      </TouchableOpacity>
 
       <ConfirmModal
         visible={confirmVisible}

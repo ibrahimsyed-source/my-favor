@@ -9,6 +9,24 @@ import { prisma } from '../db';
 // secret configured we run in mock mode and accept nothing destructive.
 export const stripeRouter = Router();
 
+// In-memory log of Stripe event IDs we've already fully processed. Stripe delivers
+// events at-least-once and can re-deliver/reorder them, so we must no-op on duplicates
+// to avoid re-running side effects (e.g. downgrading an already-collected earning).
+// NOTE: this Set is per-process — it is lost on restart and not shared across instances.
+// The production-grade version persists processed event IDs in a ProcessedWebhookEvent
+// table (unique on eventId), written in the same DB transaction as the handler's rows;
+// that needs a new table + migration, which is out of scope here.
+const processedEventIds = new Set<string>();
+const MAX_PROCESSED_EVENTS = 5000;
+function markEventProcessed(eventId: string) {
+  processedEventIds.add(eventId);
+  // Bound memory: Stripe stops retrying after ~3 days, so a recent window is enough.
+  if (processedEventIds.size > MAX_PROCESSED_EVENTS) {
+    const oldest = processedEventIds.values().next().value; // Set preserves insertion order
+    if (oldest !== undefined) processedEventIds.delete(oldest);
+  }
+}
+
 stripeRouter.post('/webhook', raw({ type: 'application/json' }), async (req, res) => {
   if (!stripe || !config.stripe.webhookSecret) {
     // Mock mode: acknowledge but do nothing. Real keys enable verification below.
@@ -24,6 +42,12 @@ stripeRouter.post('/webhook', raw({ type: 'application/json' }), async (req, res
   } catch {
     // Signature failed — reject. Never trust an unverified webhook body.
     return res.status(400).json({ error: { code: 'invalid_signature', message: 'Signature verification failed' } });
+  }
+
+  // Idempotency guard: if we've already fully processed this event id, ack without
+  // re-running any side effects. (See processedEventIds above.)
+  if (processedEventIds.has(event.id)) {
+    return res.json({ received: true, duplicate: true });
   }
 
   try {
@@ -42,15 +66,23 @@ stripeRouter.post('/webhook', raw({ type: 'application/json' }), async (req, res
         break;
       }
       case 'payment_intent.payment_failed': {
-        // Charge failed — mark BOTH ledgers for the favor uncollected so the pal
-        // earning is not cashable without real funds.
+        // Charge failed — mark the favor's still-pending ledger rows uncollected so the
+        // pal earning is not cashable without real funds. Only touch rows that are still
+        // 'completed' (available): never 'processing'/'paid_out' rows, which belong to an
+        // in-flight or settled cashout and must not be silently un-collected.
         const pi = event.data.object as Stripe.PaymentIntent;
         const favorId = pi.metadata?.favorId;
         if (favorId) {
-          await prisma.transaction.updateMany({
-            where: { favorId, status: { in: ['completed', 'processing'] } },
-            data: { status: 'incomplete' },
-          });
+          // Reconcile against the PaymentIntent's live status: Stripe can re-deliver or
+          // reorder events, so a stale 'payment_failed' may arrive after a later success.
+          // Re-fetch and only downgrade if the charge is genuinely not succeeded.
+          const current = await stripe.paymentIntents.retrieve(pi.id);
+          if (current.status !== 'succeeded') {
+            await prisma.transaction.updateMany({
+              where: { favorId, status: 'completed' },
+              data: { status: 'incomplete' },
+            });
+          }
         }
         break;
       }
@@ -74,10 +106,17 @@ stripeRouter.post('/webhook', raw({ type: 'application/json' }), async (req, res
       default:
         break;
     }
+    // Only record the event as processed AFTER its side effects succeeded, so a thrown
+    // handler (below) leaves it un-recorded and Stripe's retry can re-process it safely.
+    markEventProcessed(event.id);
   } catch (err) {
-    // Don't 500 to Stripe on a handler hiccup; log and ack so it isn't retried forever.
+    // A handler threw (e.g. a transient DB outage while promoting rows). Respond 500 so
+    // Stripe retries with its own backoff instead of treating the event as acknowledged
+    // and dropping it forever. The idempotency guard + post-success recording above make
+    // those retries safe (a genuinely-processed event is never re-run).
     // eslint-disable-next-line no-console
     console.error('Stripe webhook handler error:', err);
+    return res.status(500).json({ error: { code: 'handler_error', message: 'Webhook processing failed; will retry' } });
   }
 
   return res.json({ received: true });

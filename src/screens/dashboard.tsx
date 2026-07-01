@@ -215,7 +215,7 @@ export function Home({ navigation }: any) {
       </View>
 
       {/* BOTTOM BAR */}
-      <View style={{ position: 'absolute', left: 16, right: 16, bottom: 16, gap: 12 }}>
+      <View style={{ position: 'absolute', left: 16, right: 16, bottom: insets.bottom || 16, gap: 12 }}>
         {/* Resume-active-favor card: returns the user into their live favor. */}
         {active ? (
           <TouchableOpacity

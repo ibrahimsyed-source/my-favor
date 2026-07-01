@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import {
-  View, Text, Image, ScrollView, TouchableOpacity, Pressable, StyleSheet, Dimensions,
+  View, Text, Image, ScrollView, TouchableOpacity, Pressable, StyleSheet, Dimensions, ActivityIndicator,
 } from 'react-native';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
@@ -103,10 +103,11 @@ function SummaryBody() {
           )}
         </View>
         <View style={{ flex: 1, marginLeft: 16 }}>
-          <CostRow left={label} right={`$${base.toFixed(2)}`} bold />
+          <CostRow left={label} right={`$${base.toFixed(2)}`} />
           <CostRow left="Service Fee @ 2.9%" right={`$${fees.serviceFee.toFixed(2)}`} />
           <CostRow left="Transaction Fee" right={`$${fees.transactionFee.toFixed(2)}`} />
-          <CostRow left="Total Cost" right={`$${fees.total.toFixed(2)}`} />
+          {/* Emphasize the Total — this is the amount the member is actually charged. */}
+          <CostRow left="Total Cost" right={`$${fees.total.toFixed(2)}`} bold />
           <CostRow left="Favor Pal receives" right={`$${payout.toFixed(2)}`} />
         </View>
       </View>
@@ -176,6 +177,11 @@ export const SelectPayment = ({ navigation }: any) => {
   const [selected, setSelected] = useState<string | null>(cards[0]?.id ?? null);
   const [noPal, setNoPal] = useState(false);
   const [notified, setNotified] = useState(false);
+  // In-flight guard for the (money-sensitive) Pay call: blocks double-submit and
+  // drives the button's busy/spinner state. `payError` surfaces a failed charge
+  // instead of silently stranding the member on the sheet.
+  const [paying, setPaying] = useState(false);
+  const [payError, setPayError] = useState(false);
 
   // Resolve the selection against the live card list rather than trusting raw
   // state: if the chosen card was deleted on the Payment screen, `selected` no
@@ -185,14 +191,26 @@ export const SelectPayment = ({ navigation }: any) => {
   const canPay = Boolean(selectedCard);
 
   const pay = async () => {
-    if (!canPay) return; // guarded both here and via the disabled Pay button
+    // Guarded three ways: card selected, and not already paying (a second tap
+    // while the request is in flight would create a duplicate favor / double
+    // charge). The disabled Pay button reflects both.
+    if (!canPay || paying) return;
     // No FavorPals available in the area → surface the recovery flow.
     if (pals.length === 0) {
       setNoPal(true);
       return;
     }
-    await requestFavor();
-    navigation.navigate('Searching');
+    setPaying(true);
+    try {
+      await requestFavor();
+      navigation.navigate('Searching');
+    } catch {
+      // Offline / 500 from createFavorApi: tell the member the payment didn't go
+      // through (rather than failing silently) and reset so they can retry.
+      setPayError(true);
+    } finally {
+      setPaying(false);
+    }
   };
 
   // Zero-supply recovery: instead of dead-ending the member on the payment
@@ -279,16 +297,22 @@ export const SelectPayment = ({ navigation }: any) => {
         <TouchableOpacity
           activeOpacity={0.9}
           onPress={pay}
-          disabled={!canPay}
+          disabled={!canPay || paying}
           accessibilityRole="button"
           accessibilityLabel={`Pay US$${fees.total.toFixed(2)}`}
-          accessibilityState={{ disabled: !canPay }}
-          style={[styles.payBtn, { backgroundColor: PAY_BLUE, opacity: canPay ? 1 : 0.5 }]}
+          accessibilityState={{ disabled: !canPay || paying, busy: paying }}
+          style={[styles.payBtn, { backgroundColor: PAY_BLUE, opacity: canPay && !paying ? 1 : 0.5 }]}
         >
-          <Txt variant="button" color="#fff" style={{ fontSize: 18, lineHeight: 24 }}>
-            {`Pay US$${fees.total.toFixed(2)}`}
-          </Txt>
-          <Ionicons name="lock-closed" size={18} color="#fff" style={{ position: 'absolute', right: 22 }} />
+          {paying ? (
+            <ActivityIndicator color="#fff" />
+          ) : (
+            <>
+              <Txt variant="button" color="#fff" style={{ fontSize: 18, lineHeight: 24 }}>
+                {`Pay US$${fees.total.toFixed(2)}`}
+              </Txt>
+              <Ionicons name="lock-closed" size={18} color="#fff" style={{ position: 'absolute', right: 22 }} />
+            </>
+          )}
         </TouchableOpacity>
       </View>
 
@@ -306,6 +330,14 @@ export const SelectPayment = ({ navigation }: any) => {
         message="Great — we'll send you a notification as soon as a Favor Pal is available in your area. Your favor details have been saved."
         buttonLabel="Back to Home"
         onClose={onNotifiedClose}
+      />
+
+      <InfoModal
+        visible={payError}
+        title="PAYMENT FAILED"
+        message="We couldn't complete your payment. Please check your connection and try again — you have not been charged."
+        buttonLabel="Try again"
+        onClose={() => setPayError(false)}
       />
     </View>
   );
@@ -376,6 +408,7 @@ export const Searching = ({ navigation }: any) => {
           ) : (
             <>
               <Txt variant="h3" center>{`You have asked a favor from ${palName}`}</Txt>
+              <ActivityIndicator color={theme.primary} size="large" style={{ marginTop: 18 }} />
               <Txt variant="body" color={theme.textSecondary} center style={{ marginTop: 12 }}>
                 Please wait while we confirm.
               </Txt>

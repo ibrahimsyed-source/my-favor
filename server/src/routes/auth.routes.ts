@@ -123,6 +123,53 @@ authRouter.post(
   }),
 );
 
+// POST /api/auth/forgot-password — issue a password-reset code to a verified
+// account. Always responds generically so it can't probe which emails exist.
+const forgotSchema = z.object({ email: z.string().trim().toLowerCase().email().max(200) });
+authRouter.post(
+  '/forgot-password',
+  otpLimiter,
+  validate({ body: forgotSchema }),
+  asyncHandler(async (req, res) => {
+    const { email } = req.body as z.infer<typeof forgotSchema>;
+    const user = await prisma.user.findUnique({ where: { email } });
+    let devCode;
+    if (user && user.verified) {
+      const otp = await issueOtp({ destination: email, purpose: 'reset', userId: user.id });
+      devCode = otp.devCode;
+    } else {
+      await bcrypt.hash(email, 10); // equalize timing when we don't issue a code
+    }
+    res.json({ otpSent: true, ...(devCode ? { devCode } : {}) });
+  }),
+);
+
+// POST /api/auth/reset-password — verify a reset code and set a new password.
+// Revokes every existing session so a leaked old password/token can't be reused.
+const resetSchema = z.object({
+  email: z.string().trim().toLowerCase().email().max(200),
+  code: z.string().trim().regex(/^\d{6}$/, 'Code must be 6 digits'),
+  password: passwordSchema,
+});
+authRouter.post(
+  '/reset-password',
+  authLimiter,
+  validate({ body: resetSchema }),
+  asyncHandler(async (req, res) => {
+    const { email, code, password } = req.body as z.infer<typeof resetSchema>;
+    const result = await verifyOtp({ destination: email, purpose: 'reset', code });
+    if (!result.ok) throw badRequest('Invalid or expired code');
+    const user = await prisma.user.findUnique({ where: { email } });
+    if (!user) throw badRequest('Invalid or expired code'); // generic, no enumeration
+    await prisma.user.update({
+      where: { id: user.id },
+      data: { passwordHash: await hashPassword(password), verified: true },
+    });
+    await revokeAllRefreshTokens(user.id);
+    res.json({ ok: true });
+  }),
+);
+
 // POST /api/auth/login — password login. Returns a session for verified users.
 const loginSchema = z.object({
   email: z.string().trim().toLowerCase().email().max(200),

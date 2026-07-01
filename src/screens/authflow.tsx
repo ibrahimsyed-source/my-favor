@@ -8,7 +8,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { Screen, TopBar, Txt, Button, Field } from '../components';
 import { useTheme, tokens, fonts } from '../theme';
 import { useStore } from '../store';
-import { resendOtpApi } from '../api/endpoints';
+import { resendOtpApi, forgotPasswordApi, resetPasswordApi } from '../api/endpoints';
 
 const logo = require('../../assets/img/logo.png');
 
@@ -163,7 +163,28 @@ export const Login = ({ navigation }: any) => {
 // 2. Forgot Password — single email field, black SUBMIT.
 // ---------------------------------------------------------------------------
 export const ForgotPassword = ({ navigation }: any) => {
+  const { theme } = useTheme();
   const [email, setEmail] = useState('');
+  const [error, setError] = useState('');
+  const [busy, setBusy] = useState(false);
+
+  const onSubmit = async () => {
+    const e = email.trim().toLowerCase();
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(e)) { setError('Please enter a valid email address.'); return; }
+    if (busy) return;
+    setBusy(true);
+    setError('');
+    try {
+      // Generic response either way (no account-enumeration). Move to the code step.
+      await forgotPasswordApi(e);
+      navigation.navigate('OtpVerify', { context: 'reset', destination: e });
+    } catch {
+      setError('Could not reach the server. Please try again.');
+    } finally {
+      setBusy(false);
+    }
+  };
+
   return (
     <Screen padded={false}>
       <TopBar title="Forgot Password" onBack={navigation.canGoBack() ? navigation.goBack : undefined} />
@@ -171,19 +192,25 @@ export const ForgotPassword = ({ navigation }: any) => {
         contentContainerStyle={{ flexGrow: 1, padding: tokens.spacing.lg, paddingBottom: tokens.spacing.xl }}
         keyboardShouldPersistTaps="handled"
       >
-        <Txt variant="h4" center style={{ fontSize: 22, lineHeight: 30, marginTop: tokens.spacing.lg, marginBottom: tokens.spacing.xxl }}>
+        <Txt variant="h4" center style={{ fontSize: 22, lineHeight: 30, marginTop: tokens.spacing.lg, marginBottom: tokens.spacing.md }}>
           Enter Email to reset password
+        </Txt>
+        <Txt variant="bodySm" color={theme.textSecondary} center style={{ marginBottom: tokens.spacing.xl }}>
+          We'll send a 6-digit code to reset your password.
         </Txt>
         <Field
           label="Email Address"
           value={email}
-          onChangeText={setEmail}
+          onChangeText={(t) => { setEmail(t); setError(''); }}
           placeholder="Email Address"
           keyboardType="email-address"
           autoCapitalize="none"
         />
+        {error ? (
+          <Txt variant="bodySm" color={theme.danger} style={{ marginTop: tokens.spacing.sm }}>{error}</Txt>
+        ) : null}
         <View style={{ flex: 1 }} />
-        <Button title="SUBMIT" variant="primary" onPress={() => navigation.navigate('NewPassword')} />
+        <Button title={busy ? 'SENDING…' : 'SUBMIT'} variant="primary" disabled={busy} onPress={onSubmit} />
       </ScrollView>
     </Screen>
   );
@@ -192,20 +219,33 @@ export const ForgotPassword = ({ navigation }: any) => {
 // ---------------------------------------------------------------------------
 // 3. New Password — new + confirm password (eye toggles), black SUBMIT.
 // ---------------------------------------------------------------------------
-export const NewPassword = ({ navigation }: any) => {
+export const NewPassword = ({ navigation, route }: any) => {
   const { theme } = useTheme();
   const [pw, setPw] = useState('');
   const [confirm, setConfirm] = useState('');
   const [error, setError] = useState('');
+  const [busy, setBusy] = useState(false);
+  const email: string | undefined = route?.params?.email;
+  const code: string | undefined = route?.params?.code;
 
-  // Enforce the matching/length the confirm field implies before reporting
-  // success — previously SUBMIT navigated to Login with zero validation.
-  const onSubmit = () => {
+  // Verify the reset code + set the new password on the server (min length 8 to
+  // match the API). Previously SUBMIT navigated to Login without changing anything.
+  const onSubmit = async () => {
     if (!pw || !confirm) { setError('Please enter and confirm your new password.'); return; }
-    if (pw.length < 6) { setError('Password must be at least 6 characters.'); return; }
+    if (pw.length < 8) { setError('Password must be at least 8 characters.'); return; }
     if (pw !== confirm) { setError('Passwords do not match.'); return; }
+    if (!email || !code) { setError('Your reset link expired. Please start over.'); return; }
+    if (busy) return;
+    setBusy(true);
     setError('');
-    navigation.navigate('Login');
+    try {
+      await resetPasswordApi(email, code, pw);
+      navigation.reset({ index: 0, routes: [{ name: 'Login' }] });
+    } catch (e: any) {
+      setError(e?.message || 'Could not reset your password. The code may have expired.');
+    } finally {
+      setBusy(false);
+    }
   };
 
   return (
@@ -226,7 +266,7 @@ export const NewPassword = ({ navigation }: any) => {
           </Txt>
         ) : null}
         <View style={{ flex: 1 }} />
-        <Button title="SUBMIT" variant="primary" onPress={onSubmit} />
+        <Button title={busy ? 'SAVING…' : 'SUBMIT'} variant="primary" disabled={busy} onPress={onSubmit} />
       </ScrollView>
     </Screen>
   );
@@ -411,6 +451,7 @@ export const OtpVerify = ({ navigation, route }: any) => {
   const [seconds, setSeconds] = useState(OTP_SECONDS);
   const inputs = useRef<Array<TextInput | null>>([]);
   const dest: string | undefined = route?.params?.destination;
+  const isReset = route?.params?.context === 'reset';
   const maskedDest = maskDestination(dest);
 
   // Real countdown (was a frozen "00:43" string). Ticks down to 0, then stops
@@ -446,11 +487,22 @@ export const OtpVerify = ({ navigation, route }: any) => {
   // guards double-taps.
   const onVerify = async () => {
     if (submitting) return;
+    const full = code.join('');
+    if (full.length < 6) {
+      setError('Please enter the full 6-digit code.');
+      return;
+    }
+    // Password reset: the code is verified server-side by reset-password (with the
+    // new password), so here we just carry the code forward to the next step.
+    if (isReset) {
+      navigation.navigate('NewPassword', { email: dest, code: full });
+      return;
+    }
     setSubmitting(true);
     setError('');
     setNotice('');
     try {
-      const ok = await s.verifyOtp(code.join(''));
+      const ok = await s.verifyOtp(full);
       if (!ok) {
         setError('Incorrect or expired code. Please enter the full 6-digit code.');
         return;
@@ -472,7 +524,7 @@ export const OtpVerify = ({ navigation, route }: any) => {
     setError('');
     setNotice('');
     try {
-      if (dest) await resendOtpApi(dest, 'signup');
+      if (dest) await (isReset ? forgotPasswordApi(dest) : resendOtpApi(dest, 'signup'));
       setCode(['', '', '', '', '', '']);
       setSeconds(OTP_SECONDS);
       setNotice('A new code has been sent.');
@@ -516,7 +568,9 @@ export const OtpVerify = ({ navigation, route }: any) => {
 
         <Txt variant="h1" center style={{ marginBottom: tokens.spacing.base }}>Verification</Txt>
         <Txt variant="body" center color={theme.textSecondary}>
-          Please enter the 6 digit code to verify your account.
+          {isReset
+            ? 'Enter the 6-digit code we sent to reset your password.'
+            : 'Please enter the 6 digit code to verify your account.'}
         </Txt>
         {maskedDest ? (
           <Txt variant="bodySm" center color={theme.textSecondary} style={{ marginTop: 4 }}>
@@ -524,7 +578,7 @@ export const OtpVerify = ({ navigation, route }: any) => {
           </Txt>
         ) : null}
         <Txt variant="body" center style={{ marginTop: tokens.spacing.base }}>
-          {seconds > 0 ? `Code expires in ${fmt(seconds)}` : 'Code expired'}
+          {seconds > 0 ? `You can resend a code in ${fmt(seconds)}` : 'You can resend a code now'}
         </Txt>
 
         <View style={{ flexDirection: 'row', justifyContent: 'center', gap: tokens.spacing.sm, marginTop: tokens.spacing.xl }}>

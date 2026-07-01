@@ -71,6 +71,21 @@ export function Welcome({ navigation }: any) {
 
   const pick = (role: 'member' | 'pal') => {
     s.setRole(role);
+    // Pals must clear the identity + background Vetting gate before they can earn,
+    // so route pal sign-ups to the Vetting screen when this navigator exposes it.
+    // Vetting currently lives in the post-auth stack, so at sign-up time it isn't
+    // reachable yet and we fall back to the normal signup form (account creation
+    // must never break). DEFERRED (cross-file / backend, out of this screen):
+    // register/redirect Vetting into the post-auth pal flow so new pals land on it
+    // after OTP, and add a persisted server-side `palVerified` flag that gates the
+    // favor accept/assign + "go online" routes so the check can't be bypassed.
+    if (role === 'pal') {
+      const routeNames: string[] = navigation.getState?.()?.routeNames ?? [];
+      if (routeNames.includes('Vetting')) {
+        navigation.navigate('Vetting');
+        return;
+      }
+    }
     navigation.navigate('Signup', { role });
   };
 
@@ -128,9 +143,14 @@ export function Welcome({ navigation }: any) {
 // A real launch wires ID + selfie + background-check vendors here; this is a
 // faithful MOCK of that gate. Strangers enter members' homes, so a pal must
 // clear all three checks before they can go online to earn. Completing the gate
-// also flips the user into pal mode + online (the "go online" commitment), which
-// is where the Welcome "BE A FAVOR PAL" choice actually carries through, since
-// the pre-auth role pick can't persist through the locked signup store.
+// flips the user into pal mode + online (the "go online" commitment).
+//
+// REACHABILITY: this is the informational verification step for pal sign-ups —
+// Welcome routes pals here once the navigator exposes it. True gating, though,
+// can't be enforced from the client alone: it needs a persisted server-side
+// `palVerified` flag checked in the favor accept/assign routes (and honored by
+// the post-auth SetStatus "go online" path) so it can't be bypassed. That flag
+// and the post-auth routing hop are DEFERRED (backend / cross-file).
 // ---------------------------------------------------------------------------
 type Phase = 'todo' | 'pending' | 'done';
 
@@ -206,8 +226,10 @@ export function Vetting({ navigation }: any) {
   const allCleared = doneCount === steps.length;
 
   const goOnline = () => {
-    // The pal's role intent finally lands here (post-auth, so it persists), and
-    // completing the gate is what puts them online and ready to receive favors.
+    // Completing the gate persists the pal role + online status (post-auth) and
+    // puts them ready to receive favors. NOTE: with no persisted `palVerified`
+    // flag yet, the online state alone doesn't prove vetting was cleared —
+    // enforcing that is deferred to the backend (see the header note above).
     s.setRole('pal');
     s.setStatus('online');
     setVerified(true);

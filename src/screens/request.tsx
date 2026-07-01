@@ -124,7 +124,7 @@ export function SelectFavor({ navigation }: any) {
         title="Select Favor"
         onBack={navigation.canGoBack() ? navigation.goBack : undefined}
       />
-      <ScrollView contentContainerStyle={{ padding: tokens.spacing.lg }}>
+      <ScrollView contentContainerStyle={{ padding: tokens.spacing.lg }} keyboardShouldPersistTaps="handled">
         <Txt variant="h3">How big is the favor?</Txt>
         <Txt variant="body" color={theme.text} style={{ marginTop: 8, marginBottom: tokens.spacing.base }}>
           Choose the cost of favor based on the amount of effort required.
@@ -206,12 +206,21 @@ export function FavorDescription({ navigation }: any) {
   const { theme } = useTheme();
   const s = useStore();
   const [desc, setDesc] = useState(s.draftFavor?.description ?? '');
-  const [image, setImage] = useState<string | null>(null);
+  // Rehydrate a previously-picked photo from the draft so back-navigation through
+  // this step doesn't silently overwrite draft.images with [] on re-submit.
+  const [image, setImage] = useState<string | null>(s.draftFavor?.images?.[0] || null);
+  // Track a failed load so we degrade to the "Add Image" placeholder instead of a
+  // broken tile (e.g. a stale local URI that no longer resolves).
+  const [imgError, setImgError] = useState(false);
 
   const pickImage = async () => {
     try {
       const res = await ImagePicker.launchImageLibraryAsync({ quality: 0.7 });
-      if (!res.canceled && res.assets?.[0]) setImage(res.assets[0].uri);
+      // NOTE: expo-image-picker returns a device-local file:// URI. Uploading it to
+      // real storage/CDN (returning an https URL the Pal can load on their device)
+      // is DEFERRED — no upload infra/deps available here. Until then the URI only
+      // resolves on this device; rendering degrades gracefully via onError below.
+      if (!res.canceled && res.assets?.[0]) { setImage(res.assets[0].uri); setImgError(false); }
     } catch {
       // image picker is optional — ignore failures (e.g. web / no permission)
     }
@@ -231,7 +240,7 @@ export function FavorDescription({ navigation }: any) {
         title="Favor Description"
         onBack={navigation.canGoBack() ? navigation.goBack : undefined}
       />
-      <ScrollView contentContainerStyle={{ flexGrow: 1, padding: tokens.spacing.lg }}>
+      <ScrollView contentContainerStyle={{ flexGrow: 1, padding: tokens.spacing.lg }} keyboardShouldPersistTaps="handled">
         <Txt variant="h3" style={{ marginTop: 8 }}>What is the favor?</Txt>
         <Txt variant="body" color={theme.text} style={{ marginTop: tokens.spacing.base, marginBottom: tokens.spacing.base }}>
           Describe the favor you need.
@@ -240,8 +249,13 @@ export function FavorDescription({ navigation }: any) {
         <DescriptionField value={desc} onChangeText={setDesc} />
 
         <TouchableOpacity activeOpacity={0.8} onPress={pickImage} style={[styles.addTile, { backgroundColor: theme.inputBg, borderColor: theme.border }]}>
-          {image ? (
-            <Image source={{ uri: image }} style={{ width: '100%', height: '100%', borderRadius: tokens.radius.md }} resizeMode="cover" />
+          {image && !imgError ? (
+            <Image
+              source={{ uri: image }}
+              onError={() => setImgError(true)}
+              style={{ width: '100%', height: '100%', borderRadius: tokens.radius.md }}
+              resizeMode="cover"
+            />
           ) : (
             <>
               <Ionicons name="camera" size={26} color={theme.textTertiary} />
@@ -368,7 +382,7 @@ export function Negotiate({ navigation }: any) {
         title="Negotiate Your Favor"
         onBack={navigation.canGoBack() ? navigation.goBack : undefined}
       />
-      <ScrollView contentContainerStyle={{ flexGrow: 1, padding: tokens.spacing.lg }}>
+      <ScrollView contentContainerStyle={{ flexGrow: 1, padding: tokens.spacing.lg }} keyboardShouldPersistTaps="handled">
         <Txt variant="h3" style={{ marginTop: 8 }}>What is the favor?</Txt>
         <Txt variant="body" color={theme.text} style={{ marginTop: tokens.spacing.base }}>
           Use the slider below to calculate your favor price based on the time you need
@@ -454,8 +468,12 @@ export function ConfirmAddress({ navigation }: any) {
   };
   const scheduleEntered = scheduleMode === 'later' && dateStr.trim() !== '' && timeStr.trim() !== '';
   const parsedSchedule = scheduleMode === 'later' ? parseSchedule(dateStr, timeStr) : NaN;
-  // Require BOTH fields, a valid parse, and a future timestamp before confirming.
-  const scheduleValid = scheduleEntered && Number.isFinite(parsedSchedule) && parsedSchedule > Date.now();
+  // Minimum lead time so a Pal realistically has time to accept and travel — a
+  // favor can't be scheduled for one minute from now.
+  const MIN_LEAD_MS = 30 * 60 * 1000;
+  // Require BOTH fields, a valid parse, and a far-enough-future timestamp.
+  const scheduleValid =
+    scheduleEntered && Number.isFinite(parsedSchedule) && parsedSchedule > Date.now() + MIN_LEAD_MS;
   const canConfirm = address.trim().length > 0 && (scheduleMode === 'now' || scheduleValid);
 
   const onConfirm = () => {
@@ -488,7 +506,16 @@ export function ConfirmAddress({ navigation }: any) {
           </View>
         </MapPlaceholder>
 
-        <View style={{ position: 'absolute', top: 16, left: 16, right: 16 }}>
+        {/* Scrollable so the schedule inputs + Confirm button stay reachable when
+            the keyboard is up (the card floats at top:16, so padding-based KAV
+            can't lift it). bottom:0 gives the ScrollView a bounded, scrollable
+            height; keyboardShouldPersistTaps lets a single tap hit chips/fields. */}
+        <ScrollView
+          style={{ position: 'absolute', top: 16, left: 16, right: 16, bottom: 0 }}
+          contentContainerStyle={{ paddingBottom: 16 }}
+          keyboardShouldPersistTaps="handled"
+          showsVerticalScrollIndicator={false}
+        >
           <Card>
             <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
               <Txt variant="label">Location of your favor</Txt>
@@ -600,8 +627,8 @@ export function ConfirmAddress({ navigation }: any) {
                       style={{ marginTop: 6 }}
                     >
                       {scheduleEntered
-                        ? 'Enter a valid future date and time (e.g. 06/30/2026 and 2:30 PM).'
-                        : 'Enter both a date (MM/DD/YYYY) and time (e.g. 2:30 PM) in the future.'}
+                        ? 'Pick a valid date and time at least 30 minutes from now (e.g. 06/30/2026 and 2:30 PM).'
+                        : 'Enter a date (MM/DD/YYYY) and time (e.g. 2:30 PM) at least 30 minutes out.'}
                     </Txt>
                   ) : null}
                 </>
@@ -612,7 +639,7 @@ export function ConfirmAddress({ navigation }: any) {
               <Button title="Confirm Address" uppercase={false} disabled={!canConfirm} onPress={onConfirm} />
             </View>
           </Card>
-        </View>
+        </ScrollView>
       </View>
     </Screen>
   );

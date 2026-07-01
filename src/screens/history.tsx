@@ -1,12 +1,15 @@
-import React, { useState } from 'react';
-import { View, ScrollView, TouchableOpacity, StyleSheet, Image } from 'react-native';
+import React, { useState, useEffect, useCallback } from 'react';
+import {
+  View, ScrollView, TouchableOpacity, StyleSheet, Image, FlatList, RefreshControl,
+} from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useTheme, tokens } from '../theme';
 import {
   Screen, Txt, Button, Field, Avatar, StarRating, TopBar, InfoModal,
 } from '../components';
 import { useStore } from '../store';
-import { FAVOR_TIERS, Favor, FavorStatus } from '../types';
+import { getFavorsApi } from '../api/endpoints';
+import { FAVOR_TIERS, Favor, FavorStatus, User } from '../types';
 
 // ---------------------------------------------------------------------------
 // Date helpers (deterministic formatting from ms epoch)
@@ -102,72 +105,140 @@ function txnId(id?: string): string {
 // ===========================================================================
 // History — list of past favors
 // ===========================================================================
+
+// Memoized list row so scrolling/refresh never re-renders off-screen rows: all
+// of its props (favor, pal, theme, onPress) are reference-stable per item, so
+// React.memo can skip rows whose data hasn't changed.
+const HistoryRow = React.memo(function HistoryRow({
+  favor,
+  pal,
+  theme,
+  onPress,
+}: {
+  favor: Favor;
+  pal?: User;
+  theme: any;
+  onPress: (favorId: string) => void;
+}) {
+  const name = pal ? `${pal.firstName} ${pal.lastName}` : 'Favor Pal';
+  const tierLabel = FAVOR_TIERS[favor.tier as keyof typeof FAVOR_TIERS]?.label ?? 'Custom Favor';
+  const badge = statusMeta(favor.status, theme);
+  return (
+    <TouchableOpacity
+      activeOpacity={0.7}
+      onPress={() => onPress(favor.id)}
+      style={[styles.listRow, { borderBottomColor: theme.divider }]}
+      accessibilityRole="button"
+      accessibilityLabel={`${name}, ${tierLabel}, ${badge.label}. View favor details`}
+    >
+      <Avatar uri={pal?.avatar} size={60} name={name} />
+      <View style={{ flex: 1, marginLeft: tokens.spacing.base }}>
+        <View style={styles.rowBetween}>
+          <Txt variant="label" style={{ fontSize: 17, flex: 1 }} numberOfLines={1}>
+            {name}
+          </Txt>
+          <Txt variant="bodySm" color={theme.textSecondary}>
+            View More
+          </Txt>
+        </View>
+        <Txt variant="bodySm" color={theme.textSecondary} style={{ marginTop: 1 }}>
+          {tierLabel}
+        </Txt>
+        <Txt variant="bodySm" color={theme.textSecondary} numberOfLines={2} style={{ marginTop: 6 }}>
+          {favor.description}
+        </Txt>
+        <View style={[styles.rowBetween, { marginTop: 8 }]}>
+          <View style={styles.inline}>
+            <Ionicons name="calendar-outline" size={16} color={theme.textSecondary} />
+            <Txt variant="label" style={{ fontSize: 14, marginLeft: 8 }}>
+              {listDate(favor.scheduledFor ?? favor.createdAt)}
+            </Txt>
+          </View>
+          <View
+            style={[styles.badge, { backgroundColor: badge.bg }]}
+            accessibilityRole="text"
+            accessibilityLabel={`Status: ${badge.label}`}
+          >
+            <Ionicons name={badge.icon} size={12} color={badge.fg} />
+            <Txt variant="caption" color={badge.fg} style={{ fontSize: 12, marginLeft: 4 }}>
+              {badge.label}
+            </Txt>
+          </View>
+        </View>
+      </View>
+    </TouchableOpacity>
+  );
+});
+
 export const History = ({ navigation }: any) => {
   const { theme } = useTheme();
   const s = useStore();
 
+  // The store owns `history` (seeded at login, updated by favor mutations) but
+  // exposes no public refresher, so we mirror it locally and re-pull via the
+  // existing /api/favors endpoint on pull-to-refresh and on focus. The mirror
+  // re-syncs whenever the store's history changes (e.g. a favor completed or
+  // cancelled elsewhere), so the store stays the source of truth.
+  // NOTE: /api/favors returns the full list (no cursor/limit yet); true
+  // server-side pagination is deferred until the endpoint accepts paging params.
+  const [items, setItems] = useState<Favor[]>(s.history);
+  const [refreshing, setRefreshing] = useState(false);
+  useEffect(() => { setItems(s.history); }, [s.history]);
+
+  const refresh = useCallback(async () => {
+    try {
+      const { favors } = await getFavorsApi();
+      setItems(favors);
+    } catch {
+      /* keep showing the cached list on a transient network failure */
+    }
+  }, []);
+
+  const onRefresh = useCallback(async () => {
+    setRefreshing(true);
+    await refresh();
+    setRefreshing(false);
+  }, [refresh]);
+
+  // Refresh whenever History regains focus so a favor completed/cancelled from
+  // another screen appears without a full app reload (mirrors Notifications).
+  useEffect(() => {
+    const unsub = navigation.addListener('focus', () => { void refresh(); });
+    return unsub;
+  }, [navigation, refresh]);
+
+  const palById = s.palById;
+  const openDetail = useCallback(
+    (favorId: string) => navigation.navigate('FavorHistoryDetail', { favorId }),
+    [navigation],
+  );
+  const renderItem = useCallback(
+    ({ item }: { item: Favor }) => (
+      <HistoryRow favor={item} pal={palById(item.palId)} theme={theme} onPress={openDetail} />
+    ),
+    [palById, theme, openDetail],
+  );
+
   return (
     <Screen padded={false}>
       <TopBar title="Favor History" onBack={() => navigation.goBack()} />
-      <ScrollView contentContainerStyle={{ paddingTop: tokens.spacing.sm }}>
-        {s.history.map((h) => {
-          const pal = s.palById(h.palId);
-          const name = pal ? `${pal.firstName} ${pal.lastName}` : 'Favor Pal';
-          const tierLabel = FAVOR_TIERS[h.tier as keyof typeof FAVOR_TIERS]?.label ?? 'Custom Favor';
-          const badge = statusMeta(h.status, theme);
-          return (
-            <TouchableOpacity
-              key={h.id}
-              activeOpacity={0.7}
-              onPress={() => navigation.navigate('FavorHistoryDetail', { favorId: h.id })}
-              style={[styles.listRow, { borderBottomColor: theme.divider }]}
-              accessibilityRole="button"
-              accessibilityLabel={`${name}, ${tierLabel}, ${badge.label}. View favor details`}
-            >
-              <Avatar uri={pal?.avatar} size={60} name={name} />
-              <View style={{ flex: 1, marginLeft: tokens.spacing.base }}>
-                <View style={styles.rowBetween}>
-                  <Txt variant="label" style={{ fontSize: 17, flex: 1 }} numberOfLines={1}>
-                    {name}
-                  </Txt>
-                  <Txt variant="bodySm" color={theme.textSecondary}>
-                    View More
-                  </Txt>
-                </View>
-                <Txt variant="bodySm" color={theme.textSecondary} style={{ marginTop: 1 }}>
-                  {tierLabel}
-                </Txt>
-                <Txt variant="bodySm" color={theme.textSecondary} numberOfLines={2} style={{ marginTop: 6 }}>
-                  {h.description}
-                </Txt>
-                <View style={[styles.rowBetween, { marginTop: 8 }]}>
-                  <View style={styles.inline}>
-                    <Ionicons name="calendar-outline" size={16} color={theme.textSecondary} />
-                    <Txt variant="label" style={{ fontSize: 14, marginLeft: 8 }}>
-                      {listDate(h.scheduledFor ?? h.createdAt)}
-                    </Txt>
-                  </View>
-                  <View
-                    style={[styles.badge, { backgroundColor: badge.bg }]}
-                    accessibilityRole="text"
-                    accessibilityLabel={`Status: ${badge.label}`}
-                  >
-                    <Ionicons name={badge.icon} size={12} color={badge.fg} />
-                    <Txt variant="caption" color={badge.fg} style={{ fontSize: 12, marginLeft: 4 }}>
-                      {badge.label}
-                    </Txt>
-                  </View>
-                </View>
-              </View>
-            </TouchableOpacity>
-          );
-        })}
-        {s.history.length === 0 && (
+      <FlatList
+        data={items}
+        keyExtractor={(h) => h.id}
+        renderItem={renderItem}
+        contentContainerStyle={{ paddingTop: tokens.spacing.sm, flexGrow: 1 }}
+        refreshControl={
+          <RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={theme.primary} />
+        }
+        initialNumToRender={8}
+        maxToRenderPerBatch={8}
+        windowSize={7}
+        ListEmptyComponent={
           <Txt variant="body" color={theme.textSecondary} center style={{ marginTop: 48 }}>
             No past favors yet.
           </Txt>
-        )}
-      </ScrollView>
+        }
+      />
     </Screen>
   );
 };
@@ -226,7 +297,7 @@ export const FavorHistoryDetail = ({ navigation, route }: any) => {
 
   return (
     <Screen padded={false}>
-      <TopBar title="Payment History Detail" onBack={() => navigation.goBack()} />
+      <TopBar title="Favor Details" onBack={() => navigation.goBack()} />
       <ScrollView contentContainerStyle={{ padding: tokens.spacing.lg, paddingBottom: 40 }}>
         {/* ---- Header: type + schedule ---- */}
         <View style={styles.inline}>

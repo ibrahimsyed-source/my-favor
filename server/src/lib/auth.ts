@@ -60,6 +60,23 @@ export async function issueRefreshToken(userId: string): Promise<string> {
   return raw;
 }
 
+// Opportunistic housekeeping so the auth tables don't grow without bound.
+// Revoked/expired refresh tokens and consumed/expired OTP codes can never be
+// used again (rotate/verify reject all of them), so deleting them is safe.
+// Runs best-effort and off the request path — failures are swallowed and never
+// affect the auth flow. Sampled (~1 in 10) to keep write amplification low.
+async function pruneExpiredAuthRows(): Promise<void> {
+  const now = new Date();
+  await Promise.all([
+    prisma.refreshToken.deleteMany({
+      where: { OR: [{ revoked: true }, { expiresAt: { lt: now } }] },
+    }),
+    prisma.otpCode.deleteMany({
+      where: { OR: [{ consumed: true }, { expiresAt: { lt: now } }] },
+    }),
+  ]).catch(() => undefined);
+}
+
 // Validate + rotate a refresh token. Returns the userId and a freshly issued
 // token, revoking the old one. Throws on missing/expired/revoked tokens.
 export async function rotateRefreshToken(raw: string): Promise<{ userId: string; token: string }> {
@@ -70,6 +87,8 @@ export async function rotateRefreshToken(raw: string): Promise<{ userId: string;
   // Rotate: revoke the presented token, mint a new one.
   await prisma.refreshToken.update({ where: { id: record.id }, data: { revoked: true } });
   const token = await issueRefreshToken(record.userId);
+  // Opportunistically sweep dead auth rows (fire-and-forget; ~10% of rotations).
+  if (Math.random() < 0.1) void pruneExpiredAuthRows();
   return { userId: record.userId, token };
 }
 

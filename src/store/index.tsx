@@ -4,12 +4,12 @@ import {
   User, Favor, PaymentCard, Transaction, Thread, Message, AppNotification,
   Role, UserStatus, FavorTier, GeoPoint, FavorStatus, computeFees, computePayout,
 } from '../types';
-import { setSession, clearSession, getStoredRefresh } from '../api/client';
+import { setSession, clearSession, getStoredRefresh, getStoredUser, setStoredUser, ApiError } from '../api/client';
 import {
   signupApi, verifyOtpApi, loginApi, logoutApi, deleteAccountApi, changePasswordApi,
   getMeApi, updateProfileApi, setRoleApi, setStatusApi, getPalsApi, getPalApi,
   createFavorApi, getFavorsApi, getActiveFavorApi, getFavorApi, getIncomingApi,
-  acceptFavorApi, declineFavorApi, assignPalApi, advanceFavorApi, finishFavorApi, cancelFavorApi, rateFavorApi, rateMemberApi,
+  acceptFavorApi, declineFavorApi, abandonFavorApi, assignPalApi, advanceFavorApi, finishFavorApi, cancelFavorApi, rateFavorApi, rateMemberApi,
   getCardsApi, addCardApi, removeCardApi, getTransactionsApi, getEarningsApi, cashoutApi,
   getPaymentsConfigApi, createSetupCheckoutApi, syncCardsApi, connectOnboardApi, connectStatusApi,
   getThreadsApi, getMessagesApi, sendMessageApi, createThreadApi,
@@ -53,6 +53,7 @@ interface StoreValue {
   // auth
   user: User | null;
   isAuthenticated: boolean;
+  restoring: boolean; // true while the app is restoring a saved session on cold start
   signup: (data: Partial<User> & { password: string }) => Promise<void>;
   verifyOtp: (code: string) => Promise<boolean>;
   login: (email: string, password: string) => Promise<'ok' | 'unverified' | 'invalid'>;
@@ -79,8 +80,9 @@ interface StoreValue {
   // pal side
   incomingFavors: Favor[];
   refreshIncoming: () => Promise<void>;
-  acceptFavor: (favorId: string) => void;
+  acceptFavor: (favorId: string) => Promise<{ ok: boolean; reason?: string }>;
   declineFavor: (favorId: string) => void;
+  abandonFavor: () => Promise<boolean>;
   assignPal: (palId: string) => void;
   finishFavorAsPal: () => number;
   rateMember: (rating: number, feedback: string) => void;
@@ -123,6 +125,7 @@ const StoreContext = createContext<StoreValue | null>(null);
 
 export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const [user, setUser] = useState<User | null>(null);
+  const [restoring, setRestoring] = useState(true);
   const [pendingDest, setPendingDest] = useState<string | null>(null);
   const [draftFavor, setDraftFavor] = useState<Partial<Favor> | null>(null);
   const [activeFavor, setActiveFavor] = useState<Favor | null>(null);
@@ -200,16 +203,33 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
   // ---- session bootstrap (restore on app start) ----
   useEffect(() => {
     (async () => {
-      const refresh = await getStoredRefresh();
-      if (!refresh) return;
+      try {
+        const [refresh, cached] = await Promise.all([getStoredRefresh(), getStoredUser<User>()]);
+        if (!refresh) return; // no saved session → show onboarding/login
+        // Show the app IMMEDIATELY using the cached user, so returning users
+        // never flash the login screen while the network confirms.
+        if (cached) setUser(cached);
+      } finally {
+        setRestoring(false);
+      }
+
+      if (!(await getStoredRefresh())) return;
       try {
         // No access token in memory yet → this 401s, the client refreshes using
-        // the stored refresh token, and retries. If that fails, sign out.
+        // the stored refresh token, and retries.
         const { user: u } = await getMeApi();
         setUser(u);
+        await setStoredUser(u);
         await loadAll(u);
-      } catch {
-        await clearSession();
+      } catch (e) {
+        // Only a genuine auth failure (the refresh token itself was rejected,
+        // surfaced as a 401 after refresh) signs the user out. A network/timeout/
+        // 5xx (e.g. a Render free-tier cold start) is transient: keep the saved
+        // session so a later action — or the next launch — simply retries.
+        if (e instanceof ApiError && e.status === 401) {
+          await clearSession();
+          setUser(null);
+        }
       }
     })();
   }, [loadAll]);
@@ -270,6 +290,7 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       const session = await verifyOtpApi(pendingDest, code);
       await setSession(session);
       setUser(session.user);
+      await setStoredUser(session.user);
       setPendingDest(null);
       await loadAll(session.user);
       return true;
@@ -283,6 +304,7 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       const session = await loginApi(email.toLowerCase(), password);
       await setSession(session);
       setUser(session.user);
+      await setStoredUser(session.user);
       await loadAll(session.user);
       return 'ok';
     } catch (e: any) {
@@ -314,6 +336,7 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
   const updateProfile = useCallback(async (patch: Partial<User>) => {
     const { user: u } = await updateProfileApi(patch);
     setUser(u);
+    await setStoredUser(u);
   }, []);
 
   const changePassword = useCallback(async (current: string, next: string) => {
@@ -417,26 +440,45 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     return () => clearInterval(id);
   }, [user, refreshIncoming]);
 
-  const acceptFavor = useCallback((favorId: string) => {
-    // optimistic: pull from the feed and make it the active favor
-    setIncomingFavors((list) => {
-      const found = list.find((x) => x.id === favorId);
-      if (found) setActiveFavor({ ...found, palId: user?.id, status: 'matched' });
-      return list.filter((x) => x.id !== favorId);
-    });
-    void acceptFavorApi(favorId)
-      .then(({ favor }) => setActiveFavor(favor))
-      .catch(() => {
-        // lost the race / already taken — refresh the feed + active state
-        void getIncomingApi().then(({ favors }) => setIncomingFavors(favors)).catch(() => undefined);
-        void getActiveFavorApi().then(({ favor }) => setActiveFavor(favor)).catch(() => undefined);
-      });
-  }, [user]);
+  const acceptFavor = useCallback(async (favorId: string): Promise<{ ok: boolean; reason?: string }> => {
+    // One favor at a time: since a single account can both request and fulfill,
+    // guard the single active-favor slot so a user mid-favor can't accept another
+    // (which would silently overwrite their in-progress favor).
+    if (activeFavor) {
+      return { ok: false, reason: 'You already have an active favor. Finish it before accepting another.' };
+    }
+    try {
+      const { favor } = await acceptFavorApi(favorId);
+      setIncomingFavors((list) => list.filter((x) => x.id !== favorId));
+      setActiveFavor(favor);
+      return { ok: true };
+    } catch (e: any) {
+      // lost the race / already taken — refresh the feed + active state
+      void getIncomingApi().then(({ favors }) => setIncomingFavors(favors)).catch(() => undefined);
+      void getActiveFavorApi().then(({ favor }) => setActiveFavor(favor)).catch(() => undefined);
+      return { ok: false, reason: e?.message || 'This favor is no longer available.' };
+    }
+  }, [activeFavor]);
 
   const declineFavor = useCallback((favorId: string) => {
     setIncomingFavors((list) => list.filter((x) => x.id !== favorId));
     void declineFavorApi(favorId).catch(() => undefined);
   }, []);
+
+  // A pal steps back from an accepted favor: it returns to the open board and
+  // the member's request lives on (never stranded). Clears the pal's active slot.
+  const abandonFavor = useCallback(async (): Promise<boolean> => {
+    const id = activeFavor?.id;
+    if (!id) return false;
+    try {
+      await abandonFavorApi(id);
+      setActiveFavor(null);
+      void refreshIncoming();
+      return true;
+    } catch {
+      return false;
+    }
+  }, [activeFavor, refreshIncoming]);
 
   const assignPal = useCallback((palId: string) => {
     const id = activeFavor?.id;
@@ -653,21 +695,21 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
 
   const value = useMemo<StoreValue>(
     () => ({
-      user, isAuthenticated: !!user, signup, verifyOtp, login, logout, deleteAccount, updateProfile, changePassword,
+      user, isAuthenticated: !!user, restoring, signup, verifyOtp, login, logout, deleteAccount, updateProfile, changePassword,
       setRole, setStatus,
       pals, draftFavor, setDraft, clearDraft,
       activeFavor, activePal: palById(activeFavor?.palId) ?? null, palById, history,
       requestFavor, advanceFavor, cancelFavor, rateFavor, incomingFavors, refreshIncoming, acceptFavor,
-      declineFavor, assignPal, finishFavorAsPal, rateMember,
+      declineFavor, abandonFavor, assignPal, finishFavorAsPal, rateMember,
       blockedUsers, reportUser, blockUser,
       cards, addCard, removeCard, transactions, earnings, cashOut,
       paymentsLive, startAddCard, syncCards, connectOnboard, connectStatus,
       threads, messagesFor, sendMessage, refreshMessages, refreshThreads, openThreadWith,
       notifications, markNotificationRead, markAllNotificationsRead, refreshNotifications,
     }),
-    [user, signup, verifyOtp, login, logout, deleteAccount, updateProfile, changePassword, setRole, setStatus,
+    [user, restoring, signup, verifyOtp, login, logout, deleteAccount, updateProfile, changePassword, setRole, setStatus,
       pals, draftFavor, setDraft, clearDraft, activeFavor, palById, history, requestFavor, advanceFavor, cancelFavor,
-      rateFavor, incomingFavors, refreshIncoming, acceptFavor, declineFavor, assignPal, finishFavorAsPal, rateMember, blockedUsers, reportUser,
+      rateFavor, incomingFavors, refreshIncoming, acceptFavor, declineFavor, abandonFavor, assignPal, finishFavorAsPal, rateMember, blockedUsers, reportUser,
       blockUser, cards, addCard, removeCard, transactions, earnings, cashOut,
       paymentsLive, startAddCard, syncCards, connectOnboard, connectStatus,
       threads, messagesFor, sendMessage,

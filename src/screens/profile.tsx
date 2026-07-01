@@ -1,12 +1,12 @@
 import React, { useState } from 'react';
 import {
   View, TextInput, TouchableOpacity, Pressable, ScrollView, Switch,
-  StyleSheet, Image, KeyboardAvoidingView, Platform,
+  StyleSheet, KeyboardAvoidingView, Platform,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import * as ImagePicker from 'expo-image-picker';
-import { Screen, Txt, Button, Row, TopBar, InfoModal, ConfirmModal } from '../components';
+import { Screen, Txt, Button, Row, TopBar, InfoModal, ConfirmModal, Avatar } from '../components';
 import { useTheme, fonts } from '../theme';
 import { useStore } from '../store';
 
@@ -122,8 +122,10 @@ export const Profile = ({ navigation }: any) => {
         onRight={() => navigation.navigate('EditProfile')}
       />
       <ScrollView contentContainerStyle={{ paddingHorizontal: 20, paddingBottom: 32 }}>
-        {/* Avatar + identity */}
-        <Image source={{ uri: user.avatar }} style={[st.profileAvatar, { backgroundColor: theme.surfaceAlt }]} />
+        {/* Avatar + identity — shared Avatar shows the user's initial when no photo is set. */}
+        <View style={{ alignSelf: 'center', marginTop: 16 }}>
+          <Avatar uri={user.avatar} name={user.firstName} size={140} />
+        </View>
         <Txt variant="h3" color={theme.text} center style={{ marginTop: 16 }}>{user.firstName}</Txt>
         <TouchableOpacity onPress={() => navigation.navigate('SetStatus')} style={st.setStatus} activeOpacity={0.7}>
           <View style={st.statusDot} />
@@ -298,7 +300,7 @@ export const EditProfile = ({ navigation }: any) => {
         <ScrollView contentContainerStyle={{ padding: 20, paddingBottom: 40 }} keyboardShouldPersistTaps="handled">
           {/* Avatar with red edit badge */}
           <View style={{ alignSelf: 'center', marginBottom: 24 }}>
-            <Image source={avatar ? { uri: avatar } : undefined} style={[st.editAvatar, { backgroundColor: theme.surfaceAlt }]} />
+            <Avatar uri={avatar} name={firstName} size={96} />
             <TouchableOpacity onPress={pickImage} style={[st.editBadge, { borderColor: theme.background }]} activeOpacity={0.85}>
               <Ionicons name="pencil" size={15} color="#fff" />
             </TouchableOpacity>
@@ -519,7 +521,7 @@ export const SideDrawer = ({ navigation }: any) => {
           {/* Identity */}
           <View style={{ alignItems: 'center', marginTop: 8 }}>
             <View style={{ width: 86, height: 86 }}>
-              <Image source={{ uri: u?.avatar }} style={{ width: 86, height: 86, borderRadius: 43 }} />
+              <Avatar uri={u?.avatar} name={u?.firstName} size={86} />
               <TouchableOpacity onPress={() => go('EditProfile')} style={[st.drawerBadge, { borderColor: theme.card }]} activeOpacity={0.85}>
                 <Ionicons name="pencil" size={13} color="#fff" />
               </TouchableOpacity>
@@ -640,7 +642,6 @@ const st = StyleSheet.create({
   fieldRow: { flexDirection: 'row', gap: 12, marginBottom: 16 },
 
   // Profile
-  profileAvatar: { width: 140, height: 140, borderRadius: 70, alignSelf: 'center', marginTop: 16 },
   setStatus: { flexDirection: 'row', alignItems: 'center', gap: 8, alignSelf: 'center', marginTop: 12 },
   statusDot: { width: 8, height: 8, borderRadius: 4, backgroundColor: RED },
   statsRow: {
@@ -652,8 +653,7 @@ const st = StyleSheet.create({
     borderBottomWidth: StyleSheet.hairlineWidth,
   },
 
-  // EditProfile avatar
-  editAvatar: { width: 96, height: 96, borderRadius: 48 },
+  // EditProfile avatar badge
   editBadge: {
     position: 'absolute', right: -2, bottom: -2, width: 30, height: 30, borderRadius: 15,
     backgroundColor: RED, alignItems: 'center', justifyContent: 'center', borderWidth: 2,

@@ -175,6 +175,51 @@ test('any account can browse and fulfill others\' favors, but not their own', as
   assert.equal(bobAccept.status, 200);
 });
 
+test('password reset: forgot -> reset -> login with the new password', async () => {
+  const user = await makeUser('member');
+
+  const forgot = await api('/api/auth/forgot-password', { method: 'POST', body: { email: user.email } });
+  assert.equal(forgot.status, 200);
+  assert.ok(forgot.json.devCode, 'reset code issued for a verified account');
+
+  const reset = await api('/api/auth/reset-password', {
+    method: 'POST',
+    body: { email: user.email, code: forgot.json.devCode, password: 'NewPassword456' },
+  });
+  assert.equal(reset.status, 200);
+
+  // New password works…
+  const login = await api('/api/auth/login', { method: 'POST', body: { email: user.email, password: 'NewPassword456' } });
+  assert.equal(login.status, 200, 'login with the new password succeeds');
+  // …and the old one no longer does.
+  const old = await api('/api/auth/login', { method: 'POST', body: { email: user.email, password: 'Password123' } });
+  assert.equal(old.status, 401, 'old password is rejected after reset');
+});
+
+test('pal abandon: a released favor returns to the open board, member not stranded', async () => {
+  const member = await makeUser('member');
+  const pal = await makeUser('pal');
+  const create = await api('/api/favors', {
+    method: 'POST',
+    token: member.token,
+    body: { tier: 'tiny', description: 'Abandon test', location: { lat: 30, lng: -97, address: 'X' } },
+  });
+  const favorId = create.json.favor.id;
+  await api(`/api/favors/${favorId}/accept`, { method: 'POST', token: pal.token });
+
+  // Only the assigned pal can release; a stranger cannot.
+  const stranger = await makeUser('pal');
+  const bad = await api(`/api/favors/${favorId}/abandon`, { method: 'POST', token: stranger.token });
+  assert.equal(bad.status, 403);
+
+  const abandon = await api(`/api/favors/${favorId}/abandon`, { method: 'POST', token: pal.token });
+  assert.equal(abandon.status, 200);
+
+  // The favor is open again and re-appears on the board for another pal.
+  const incoming = await api('/api/favors/incoming', { token: stranger.token });
+  assert.ok(incoming.json.favors.some((f: any) => f.id === favorId), 'released favor is browseable again');
+});
+
 test('input validation: malformed id is rejected', async () => {
   const member = await makeUser('member');
   const res = await api('/api/favors/not-a-uuid', { token: member.token });

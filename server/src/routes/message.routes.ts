@@ -1,7 +1,7 @@
 import { Router } from 'express';
 import { z } from 'zod';
 import { prisma } from '../db';
-import { validate } from '../lib/validate';
+import { validate, validatedQuery } from '../lib/validate';
 import { asyncHandler, badRequest, forbidden, notFound } from '../lib/errors';
 import { authenticate } from '../middleware/authenticate';
 import { publicThread, publicMessage } from '../lib/serialize';
@@ -72,23 +72,47 @@ messageRouter.post(
 );
 
 // GET /api/messages/threads/:id/messages — participants only. Reading marks the
-// caller's side as read.
+// caller's side as read. Returns the NEWEST page (oldest->newest for display);
+// pass `?before=<messageId>` to page further back through history.
 messageRouter.get(
   '/threads/:id/messages',
-  validate({ params: z.object({ id: z.string().uuid() }) }),
+  validate({
+    params: z.object({ id: z.string().uuid() }),
+    // Optional message-id cursor for scrolling back through older history.
+    query: z.object({ before: z.string().uuid().optional() }),
+  }),
   asyncHandler(async (req, res) => {
     const me = req.user!.id;
+    const { before } = validatedQuery<{ before?: string }>(req);
     const thread = await loadThreadForViewer(req.params.id, me);
-    const messages = await prisma.message.findMany({
+
+    // Load the NEWEST slice, not the oldest: `asc + take` returns ancient
+    // history and would never surface new messages once a thread grows past the
+    // limit (the chat appears frozen). Fetch desc + take, then reverse to
+    // oldest->newest for the client. A `before` cursor pages further back.
+    const PAGE_SIZE = 50;
+    const page = await prisma.message.findMany({
       where: { threadId: thread.id },
-      orderBy: { createdAt: 'asc' },
-      take: 500,
+      orderBy: { createdAt: 'desc' },
+      take: PAGE_SIZE,
+      ...(before ? { cursor: { id: before }, skip: 1 } : {}),
     });
-    // Clear unread for the viewer's side.
-    await prisma.thread.update({
-      where: { id: thread.id },
-      data: thread.userAId === me ? { unreadForA: 0 } : { unreadForB: 0 },
-    });
+    const messages = page.reverse();
+
+    // Clear unread for the viewer's side. Use a raw UPDATE so this read-side
+    // write does NOT bump @updatedAt — the thread list is ordered by updatedAt,
+    // and only a NEW message should reorder a conversation, never merely opening
+    // one. Skip the write entirely when there is nothing to clear. Column names
+    // are fixed literals (no interpolation) so this stays injection-safe.
+    const unread = thread.userAId === me ? thread.unreadForA : thread.unreadForB;
+    if (unread > 0) {
+      if (thread.userAId === me) {
+        await prisma.$executeRaw`UPDATE "Thread" SET "unreadForA" = 0 WHERE "id" = ${thread.id}`;
+      } else {
+        await prisma.$executeRaw`UPDATE "Thread" SET "unreadForB" = 0 WHERE "id" = ${thread.id}`;
+      }
+    }
+
     res.json({ messages: messages.map((m) => publicMessage(m, me)) });
   }),
 );

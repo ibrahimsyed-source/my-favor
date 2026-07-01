@@ -1,7 +1,7 @@
 import React, { useCallback, useMemo, useState, useEffect } from 'react';
 import {
   View, Text, TextInput, TouchableOpacity, FlatList, StyleSheet,
-  KeyboardAvoidingView, Platform, Modal, ListRenderItemInfo,
+  KeyboardAvoidingView, Platform, Modal, ListRenderItemInfo, RefreshControl,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
@@ -33,12 +33,19 @@ export const Messages = ({ navigation }: any) => {
   const { theme } = useTheme();
   const s = useStore();
   const [onlyUnread, setOnlyUnread] = useState(false);
+  const [refreshing, setRefreshing] = useState(false);
 
   // Keep the conversation list (and unread counts) fresh on focus.
   useEffect(() => {
     const unsub = navigation.addListener('focus', () => { void s.refreshThreads(); });
     return unsub;
   }, [navigation]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Pull-to-refresh: users instinctively pull a message/inbox list.
+  const onRefresh = useCallback(async () => {
+    setRefreshing(true);
+    try { await s.refreshThreads(); } finally { setRefreshing(false); }
+  }, [s]);
 
   // Hide conversations with blocked users so a block has a visible effect.
   const threads = useMemo(() => {
@@ -89,6 +96,9 @@ export const Messages = ({ navigation }: any) => {
           renderItem={renderItem}
           contentContainerStyle={{ paddingBottom: tokens.spacing.xl, flexGrow: 1 }}
           keyboardShouldPersistTaps="handled"
+          refreshControl={
+            <RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={theme.primary} />
+          }
           ListEmptyComponent={
             <View style={{ paddingTop: 80, alignItems: 'center' }}>
               <Ionicons name="chatbubbles-outline" size={40} color={theme.textTertiary} />
@@ -202,6 +212,8 @@ export const MessageThread = ({ navigation, route }: any) => {
     },
     [reversed, myAvatar, theirAvatar]
   );
+
+  const canSend = text.trim().length > 0;
 
   const send = () => {
     const t = text.trim();
@@ -337,8 +349,16 @@ export const MessageThread = ({ navigation, route }: any) => {
             />
             <Ionicons name="happy-outline" size={24} color={C.placeholder} />
           </View>
-          <TouchableOpacity onPress={send} hitSlop={8} style={tstyles.sendBtn}>
-            <Ionicons name="send" size={22} color="#ED1C24" />
+          <TouchableOpacity
+            onPress={send}
+            hitSlop={8}
+            style={tstyles.sendBtn}
+            disabled={!canSend}
+            accessibilityRole="button"
+            accessibilityLabel="Send message"
+            accessibilityState={{ disabled: !canSend }}
+          >
+            <Ionicons name="send" size={22} color={canSend ? '#ED1C24' : C.placeholder} />
           </TouchableOpacity>
         </View>
       </View>

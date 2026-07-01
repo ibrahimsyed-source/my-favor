@@ -29,6 +29,12 @@ export const logoutApi = (refreshToken: string) =>
 export const changePasswordApi = (currentPassword: string, newPassword: string) =>
   apiRequest<{ ok: boolean }>('/api/auth/change-password', { method: 'POST', auth: true, body: { currentPassword, newPassword } });
 
+export const forgotPasswordApi = (email: string) =>
+  apiRequest<{ otpSent: boolean; devCode?: string }>('/api/auth/forgot-password', { method: 'POST', body: { email } });
+
+export const resetPasswordApi = (email: string, code: string, password: string) =>
+  apiRequest<{ ok: boolean }>('/api/auth/reset-password', { method: 'POST', body: { email, code, password } });
+
 export const deleteAccountApi = () =>
   apiRequest<{ ok: boolean }>('/api/auth/account', { method: 'DELETE', auth: true });
 
@@ -57,6 +63,7 @@ export const getIncomingApi = () => apiRequest<{ favors: Favor[] }>('/api/favors
 export const getFavorApi = (id: string) => apiRequest<{ favor: Favor }>(`/api/favors/${id}`, { auth: true });
 export const acceptFavorApi = (id: string) => apiRequest<{ favor: Favor }>(`/api/favors/${id}/accept`, { method: 'POST', auth: true });
 export const declineFavorApi = (id: string) => apiRequest<{ ok: boolean }>(`/api/favors/${id}/decline`, { method: 'POST', auth: true });
+export const abandonFavorApi = (id: string) => apiRequest<{ ok: boolean }>(`/api/favors/${id}/abandon`, { method: 'POST', auth: true });
 export const assignPalApi = (id: string, palId: string) => apiRequest<{ favor: Favor }>(`/api/favors/${id}/assign`, { method: 'POST', auth: true, body: { palId } });
 export const advanceFavorApi = (id: string, status: string) => apiRequest<{ favor: Favor }>(`/api/favors/${id}/advance`, { method: 'POST', auth: true, body: { status } });
 export const finishFavorApi = (id: string) => apiRequest<{ favor: Favor; payout: number }>(`/api/favors/${id}/finish`, { method: 'POST', auth: true });

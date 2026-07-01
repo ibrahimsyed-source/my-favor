@@ -11,6 +11,8 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 export const API_URL = (process.env.EXPO_PUBLIC_API_URL || 'http://localhost:4000').replace(/\/$/, '');
 
 const REFRESH_KEY = 'mf_refresh_token';
+const USER_KEY = 'mf_user';
+const REQUEST_TIMEOUT_MS = 15000;
 
 // Access token lives in memory only; the long-lived refresh token is persisted
 // so a session survives an app restart. (Production: prefer expo-secure-store
@@ -34,7 +36,7 @@ export async function setSession(tokens: { accessToken: string; refreshToken: st
 
 export async function clearSession() {
   accessToken = null;
-  await AsyncStorage.removeItem(REFRESH_KEY);
+  await AsyncStorage.multiRemove([REFRESH_KEY, USER_KEY]);
 }
 
 export function getAccessToken() {
@@ -45,28 +47,62 @@ export async function getStoredRefresh(): Promise<string | null> {
   return AsyncStorage.getItem(REFRESH_KEY);
 }
 
+// The last-known user is cached so a returning user sees the app instantly on a
+// cold start (before the network confirms), and a transient backend error (e.g.
+// a Render free-tier cold start) never forces a re-login.
+export async function setStoredUser(user: unknown) {
+  try { await AsyncStorage.setItem(USER_KEY, JSON.stringify(user)); } catch { /* ignore */ }
+}
+
+export async function getStoredUser<T = any>(): Promise<T | null> {
+  try {
+    const raw = await AsyncStorage.getItem(USER_KEY);
+    return raw ? (JSON.parse(raw) as T) : null;
+  } catch {
+    return null;
+  }
+}
+
 type ReqOpts = { method?: string; body?: unknown; auth?: boolean; _retried?: boolean };
 
 async function raw(path: string, opts: ReqOpts): Promise<Response> {
   const headers: Record<string, string> = { 'content-type': 'application/json' };
   if (opts.auth && accessToken) headers.authorization = `Bearer ${accessToken}`;
-  return fetch(`${API_URL}${path}`, {
-    method: opts.method ?? 'GET',
-    headers,
-    body: opts.body !== undefined ? JSON.stringify(opts.body) : undefined,
-  });
+  // Time out a hung connection so a stalled mobile network can't leave a request
+  // (or the app's session bootstrap) pending forever.
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
+  try {
+    return await fetch(`${API_URL}${path}`, {
+      method: opts.method ?? 'GET',
+      headers,
+      body: opts.body !== undefined ? JSON.stringify(opts.body) : undefined,
+      signal: controller.signal,
+    });
+  } finally {
+    clearTimeout(timer);
+  }
 }
 
 // Try to mint a new access token from the stored refresh token. Returns true on
-// success. Refresh-token rotation means we persist the new refresh token too.
+// success (rotation means we persist the new refresh token too). Crucially, the
+// session is only DESTROYED on a genuine auth failure (the refresh token itself
+// is rejected) — a network/timeout/5xx is transient, so we keep the session and
+// let the caller retry, instead of logging the user out on a flaky connection.
 async function tryRefresh(): Promise<boolean> {
   const refreshToken = await getStoredRefresh();
   if (!refreshToken) return false;
-  const res = await raw('/api/auth/refresh', { method: 'POST', body: { refreshToken } });
-  if (!res.ok) {
-    await clearSession();
+  let res: Response;
+  try {
+    res = await raw('/api/auth/refresh', { method: 'POST', body: { refreshToken } });
+  } catch {
+    return false; // network/timeout — keep the session, retry later
+  }
+  if (res.status === 401 || res.status === 403) {
+    await clearSession(); // the refresh token is invalid/expired — real logout
     return false;
   }
+  if (!res.ok) return false; // 5xx / transient — keep the session
   const data = await res.json();
   await setSession({ accessToken: data.accessToken, refreshToken: data.refreshToken });
   return true;

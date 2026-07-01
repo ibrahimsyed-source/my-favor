@@ -330,6 +330,17 @@ const bw = StyleSheet.create({
 export const PalFavorDetail = ({ navigation, route }: any) => {
   const s = useStore();
   const [expanded, setExpanded] = useState(false);
+  const [accepting, setAccepting] = useState(false);
+  const [acceptError, setAcceptError] = useState('');
+
+  const onAccept = async (favorId: string) => {
+    if (accepting) return;
+    setAccepting(true);
+    const res = await s.acceptFavor(favorId);
+    setAccepting(false);
+    if (res.ok) navigation.navigate('Navigation');
+    else setAcceptError(res.reason || 'This favor is no longer available.');
+  };
   // Bind strictly to the requested favor. Only fall back to the first open favor
   // when no id was passed (e.g. a bare deep-link) — never substitute a different
   // favor, or ACCEPT/DECLINE would silently act on the wrong one after a refresh.
@@ -417,13 +428,21 @@ export const PalFavorDetail = ({ navigation, route }: any) => {
         )}
 
         <TouchableOpacity
-          style={st.whiteBtn}
+          style={[st.whiteBtn, accepting && { opacity: 0.6 }]}
+          disabled={accepting}
           accessibilityRole="button"
           accessibilityLabel="Accept this favor"
-          onPress={() => { if (!favor) return; s.acceptFavor(favor.id); navigation.navigate('Navigation'); }}
+          onPress={() => { if (favor) void onAccept(favor.id); }}
         >
-          <Text style={st.whiteBtnTxt}>ACCEPT</Text>
+          <Text style={st.whiteBtnTxt}>{accepting ? 'ACCEPTING…' : 'ACCEPT'}</Text>
         </TouchableOpacity>
+        <InfoModal
+          visible={!!acceptError}
+          title="Can't accept this favor"
+          message={acceptError}
+          buttonLabel="OK"
+          onClose={() => setAcceptError('')}
+        />
         <TouchableOpacity
           onPress={() => { if (favor) s.declineFavor(favor.id); navigation.goBack(); }}
           style={{ alignSelf: 'center', marginTop: 14 }}
@@ -499,7 +518,7 @@ export const Navigation = ({ navigation }: any) => {
           style={st.blackBtn}
           accessibilityRole="button"
           accessibilityLabel="Cancel this favor"
-          onPress={() => { s.cancelFavor(); navigation.reset({ index: 0, routes: [{ name: 'Tabs' }] }); }}
+          onPress={() => { void s.abandonFavor(); navigation.reset({ index: 0, routes: [{ name: 'Tabs' }] }); }}
         >
           <Text style={{ color: TEXT, fontWeight: '700', letterSpacing: 0.5, fontFamily: fonts.bodySemiBold }}>CANCEL THIS FAVOR</Text>
         </TouchableOpacity>

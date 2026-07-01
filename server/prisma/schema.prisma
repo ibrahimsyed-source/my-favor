@@ -161,6 +161,9 @@ model Transaction {
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@index([userId])
+  @@index([payoutBatch]) // cashout reads/writes + payout.failed webhook filter by batch
+  @@index([favorId]) // payment_intent webhooks look up the txn by favor
+  @@index([userId, kind]) // ledger list endpoints split payments vs earnings per user
 }
 
 // ---------------------------------------------------------------------------
@@ -197,6 +200,8 @@ model Message {
   sender User   @relation(fields: [senderId], references: [id], onDelete: Cascade)
 
   @@index([threadId])
+  // Serves the newest-first paginated thread read (where threadId + orderBy createdAt desc + cursor).
+  @@index([threadId, createdAt])
 }
 
 // ---------------------------------------------------------------------------

@@ -1,4 +1,5 @@
 import React from 'react';
+import { View, ActivityIndicator } from 'react-native';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
 import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
 import { Ionicons } from '@expo/vector-icons';
@@ -35,8 +36,6 @@ const TAB_ICON: Record<keyof TabParamList, keyof typeof Ionicons.glyphMap> = {
 
 function Tabs() {
   const { theme, isDark } = useTheme();
-  const { user } = useStore();
-  const isPal = user?.role === 'pal';
   return (
     <Tab.Navigator
       screenOptions={({ route }) => ({
@@ -51,15 +50,27 @@ function Tabs() {
       <Tab.Screen name="Messages" component={Msg.Messages} />
       {/* Browse the board of open favors to do (everyone can fulfill favors). */}
       <Tab.Screen name="Browse" component={Pal.BrowseFavors} options={{ tabBarLabel: 'Browse' }} />
-      {/* Pals get a dedicated Earnings tab; members don't. */}
-      {isPal && <Tab.Screen name="Earnings" component={Payouts.Earnings} />}
+      {/* Any account can fulfill favors and earn, so Earnings/Payouts is available to everyone. */}
+      <Tab.Screen name="Earnings" component={Payouts.Earnings} />
       <Tab.Screen name="Profile" component={Prof.Profile} />
     </Tab.Navigator>
   );
 }
 
 export default function RootNavigator() {
-  const { isAuthenticated } = useStore();
+  const { isAuthenticated, restoring } = useStore();
+  const { theme } = useTheme();
+
+  // While restoring a saved session on cold start, show a splash instead of
+  // flashing the login/onboarding screens before the cached user loads.
+  if (restoring) {
+    return (
+      <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center', backgroundColor: theme.background }}>
+        <ActivityIndicator size="large" color={theme.primary} />
+      </View>
+    );
+  }
+
   return (
     <Stack.Navigator screenOptions={{ headerShown: false }}>
       {!isAuthenticated ? (
