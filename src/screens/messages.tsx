@@ -2,35 +2,73 @@ import React, { useCallback, useMemo, useState, useEffect } from 'react';
 import {
   View, Text, TextInput, TouchableOpacity, FlatList, StyleSheet,
   KeyboardAvoidingView, Platform, Modal, ListRenderItemInfo, RefreshControl,
+  StatusBar,
 } from 'react-native';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
+import { useFonts, Poppins_400Regular } from '@expo-google-fonts/poppins';
 import { Txt, Avatar, ConfirmModal, InfoModal } from '../components';
 import { useStore } from '../store';
 import { tokens } from '../theme';
 import { Message, Thread } from '../types';
 
 // ---------------------------------------------------------------------------
-// Dark "User App v.2" palette. These screens are intentionally DARK and do NOT
-// use the shared light useTheme() palette — colours/spacing match the v.2
-// reference (dark navy sheets, white text, red accents, white filled CTAs).
+// Inbox palette — the v.2 frames only define the detail view; the inbox list
+// keeps the current dark styling (per the build notes) so it stays consistent
+// with the dark map/dashboard surfaces it sits between.
 // ---------------------------------------------------------------------------
 const C = {
   bg: '#0C0C0C',                       // screen background
-  card: '#171922',                     // input bar surface
-  sheet: '#1B222C',                    // bottom sheet / incoming bubble
-  pill: '#1C2331',                     // raised field / input pill / filter chip
+  pill: '#1C2331',                     // filter chip
   border: 'rgba(255,255,255,0.10)',    // dividers / borders
   text: '#FFFFFF',                     // primary text / icons
   textSecondary: 'rgba(255,255,255,0.6)',
   textTertiary: 'rgba(255,255,255,0.4)',
-  placeholder: 'rgba(255,255,255,0.4)',
-  their: '#1B222C',                    // incoming bubble (dark navy)
-  mine: '#ED1C24',                     // outgoing bubble (brand red)
-  brand: '#ED1C24',                    // brand red accent
-  ctaBg: '#FFFFFF',                    // v.2 filled CTA background
-  ctaText: '#141414',                  // v.2 filled CTA text
+  ctaBg: '#FFFFFF',
+  ctaText: '#141414',
+  brand: '#ED1C24',
 } as const;
+
+// ---------------------------------------------------------------------------
+// "Messages - Detail View" (Figma v.2 frame 125:11582) — LIGHT chat screen.
+// Every value below is read straight off the frame's nodes:
+//   frame bg #FFFFFF; topbar H64, white, 1px #EEEEEE bottom line;
+//   back arrow 24px #0D0A0A at x16; avatar 40 at x64; name Poppins Medium 18
+//   #0D0A0A (x +14); ellipsis 24px #0D0A0A at right margin 16.
+//   Incoming bubble fill #D7D7D7, radius 8/8/8 with bottom-left 0; outgoing
+//   fill #EEEEEE, radius 8/8/8 with bottom-right 0; text Poppins Regular 14
+//   #0D0A0A, padding 16 h / 10 v (row H40); 24x24 round avatar sits 8px from
+//   the bubble on the outer side, bottom-aligned; bubble column starts 56px
+//   from the edge (24 margin + 24 avatar + 8 gap); 4px between bubbles of a
+//   run, 24px between runs; first bubble 24px under the topbar.
+//   Composer bar fill #EEEEEE (x0 w414, from y782 to the bottom, soft top
+//   shadow): 16px padding, white pill W~350 H48 radius 24 (text inset 16,
+//   placeholder "Type something…" Poppins Regular 16 #9E9E9E, 16px emoji
+//   outline glyph #0D0A0A inset 20 from the pill's right), then an 8px gap
+//   and the black (#0D0A0A) 16px send plane in a 24px box.
+// ---------------------------------------------------------------------------
+const L = {
+  bg: '#FFFFFF',
+  text: '#0D0A0A',
+  divider: '#EEEEEE',
+  bubbleIn: '#D7D7D7',
+  bubbleOut: '#EEEEEE',
+  composerBg: '#EEEEEE',
+  pillBg: '#FFFFFF',
+  placeholder: '#9E9E9E',
+  brand: '#ED1C24',
+  scrim: 'rgba(0,0,0,0.4)',
+} as const;
+
+const P_REGULAR = 'Poppins_400Regular'; // loaded locally (App.tsx has 500/600/700)
+const P_MEDIUM = 'Poppins_500Medium';   // registered app-wide in App.tsx
+
+// Poppins Regular isn't registered app-wide; expo-font caches globally so this
+// resolves instantly after the first mount anywhere in the app.
+function usePoppinsRegular() {
+  const [loaded] = useFonts({ Poppins_400Regular });
+  return loaded;
+}
 
 // Reference "now" that matches the seed data's NOW constant so the relative
 // timestamps on the list render sensible values (10m / 3h / 1d).
@@ -175,11 +213,12 @@ const ThreadRow = React.memo<{ thread: Thread; onPress: () => void }>(({ thread,
 });
 
 // ---------------------------------------------------------------------------
-// MessageThread — dark chat thread (v.2): navy incoming bubbles, red outgoing.
+// MessageThread — light v.2 chat thread ("Messages - Detail View" 125:11582).
 // ---------------------------------------------------------------------------
 export const MessageThread = ({ navigation, route }: any) => {
   const s = useStore();
   const insets = useSafeAreaInsets();
+  const fontsReady = usePoppinsRegular();
   const threadId: string = route?.params?.threadId ?? 's_threads_default';
   const thread = s.threads.find((t) => t.id === threadId);
   const messages = s.messagesFor(threadId);
@@ -211,10 +250,15 @@ export const MessageThread = ({ navigation, route }: any) => {
       // index, so a run's "tail" (the bubble that carries the avatar) is the
       // newest item or one whose later neighbour has a different sender.
       const tail = index === 0 || reversed[index - 1].fromMe !== item.fromMe;
+      // Chronologically-previous message is the NEXT index in the reversed
+      // list: 4px inside a same-sender run, 24px when the sender changes.
+      const last = index === reversed.length - 1;
+      const gapAbove = last ? 0 : (reversed[index + 1].fromMe === item.fromMe ? 4 : 24);
       return (
         <Bubble
           message={item}
           showAvatar={tail}
+          gapAbove={gapAbove}
           avatarUri={item.fromMe ? myAvatar : theirAvatar}
         />
       );
@@ -243,13 +287,16 @@ export const MessageThread = ({ navigation, route }: any) => {
     navigation.goBack();
   };
 
+  if (!fontsReady) return <View style={{ flex: 1, backgroundColor: L.bg }} />; // flash-guard
+
   return (
     <KeyboardAvoidingView
-      style={{ flex: 1, backgroundColor: C.bg }}
+      style={{ flex: 1, backgroundColor: L.bg }}
       behavior={Platform.OS === 'ios' ? 'padding' : undefined}
     >
-      <View style={{ flex: 1, backgroundColor: C.bg, paddingTop: insets.top }}>
-        {/* Custom dark header: back, avatar + name (left-aligned), more */}
+      <StatusBar barStyle="dark-content" />
+      <View style={{ flex: 1, backgroundColor: L.bg, paddingTop: insets.top }}>
+        {/* Topbar: back arrow, 40px avatar + name (left-aligned), ellipsis */}
         <View style={tstyles.header}>
           <TouchableOpacity
             onPress={() => navigation.goBack()}
@@ -257,9 +304,11 @@ export const MessageThread = ({ navigation, route }: any) => {
             accessibilityRole="button"
             accessibilityLabel="Go back"
           >
-            <Ionicons name="arrow-back" size={26} color={C.text} />
+            <Ionicons name="arrow-back" size={24} color={L.text} />
           </TouchableOpacity>
-          <Avatar uri={theirAvatar} size={40} name={title} />
+          <View style={{ marginLeft: 24 }}>
+            <Avatar uri={theirAvatar} size={40} name={title} />
+          </View>
           <Text style={tstyles.headerName} numberOfLines={1}>{title}</Text>
           <TouchableOpacity
             hitSlop={10}
@@ -268,7 +317,7 @@ export const MessageThread = ({ navigation, route }: any) => {
             accessibilityLabel={`More options for ${title}`}
             accessibilityState={{ expanded: menuOpen }}
           >
-            <Ionicons name="ellipsis-horizontal" size={24} color={C.text} />
+            <Ionicons name="ellipsis-horizontal" size={24} color={L.text} />
           </TouchableOpacity>
         </View>
 
@@ -278,7 +327,7 @@ export const MessageThread = ({ navigation, route }: any) => {
           keyExtractor={(m) => m.id}
           renderItem={renderItem}
           style={{ flex: 1 }}
-          contentContainerStyle={{ paddingVertical: 20, paddingHorizontal: 16 }}
+          contentContainerStyle={{ paddingVertical: 24, paddingHorizontal: 24 }}
           keyboardShouldPersistTaps="handled"
         />
 
@@ -301,7 +350,7 @@ export const MessageThread = ({ navigation, route }: any) => {
                 accessibilityRole="button"
                 accessibilityLabel={`Report ${title}`}
               >
-                <Ionicons name="flag-outline" size={22} color={C.text} />
+                <Ionicons name="flag-outline" size={22} color={L.text} />
                 <Text style={tstyles.sheetTxt}>Report user</Text>
               </TouchableOpacity>
               <TouchableOpacity
@@ -310,8 +359,8 @@ export const MessageThread = ({ navigation, route }: any) => {
                 accessibilityRole="button"
                 accessibilityLabel={`Block ${title}`}
               >
-                <Ionicons name="ban-outline" size={22} color={C.brand} />
-                <Text style={[tstyles.sheetTxt, { color: C.brand }]}>Block user</Text>
+                <Ionicons name="ban-outline" size={22} color={L.brand} />
+                <Text style={[tstyles.sheetTxt, { color: L.brand }]}>Block user</Text>
               </TouchableOpacity>
               <TouchableOpacity
                 style={[tstyles.sheetRow, tstyles.sheetCancel]}
@@ -319,7 +368,7 @@ export const MessageThread = ({ navigation, route }: any) => {
                 accessibilityRole="button"
                 accessibilityLabel="Cancel"
               >
-                <Text style={[tstyles.sheetTxt, { color: C.textSecondary }]}>Cancel</Text>
+                <Text style={[tstyles.sheetTxt, { color: L.placeholder }]}>Cancel</Text>
               </TouchableOpacity>
             </View>
           </TouchableOpacity>
@@ -344,19 +393,19 @@ export const MessageThread = ({ navigation, route }: any) => {
           onClose={() => setReportDone(false)}
         />
 
-        {/* Input bar */}
-        <View style={[tstyles.inputBar, { paddingBottom: insets.bottom + 14 }]}>
+        {/* Composer bar: white pill input + emoji glyph + black send plane */}
+        <View style={[tstyles.inputBar, { paddingBottom: insets.bottom + 16 }]}>
           <View style={tstyles.inputPill}>
             <TextInput
               style={tstyles.input}
               value={text}
               onChangeText={setText}
               placeholder="Type something…"
-              placeholderTextColor={C.placeholder}
+              placeholderTextColor={L.placeholder}
               multiline
               onSubmitEditing={send}
             />
-            <Ionicons name="happy-outline" size={24} color={C.placeholder} />
+            <Ionicons name="happy-outline" size={18} color={L.text} />
           </View>
           <TouchableOpacity
             onPress={send}
@@ -367,7 +416,9 @@ export const MessageThread = ({ navigation, route }: any) => {
             accessibilityLabel="Send message"
             accessibilityState={{ disabled: !canSend }}
           >
-            <Ionicons name="send" size={22} color={canSend ? C.brand : C.placeholder} />
+            {/* Frame's plane vector is 16x13.95; Ionicons' send glyph fills
+                ~93% of its box, so size 17 renders it 15.9x13.8. */}
+            <Ionicons name="send" size={17} color={L.text} />
           </TouchableOpacity>
         </View>
       </View>
@@ -375,22 +426,25 @@ export const MessageThread = ({ navigation, route }: any) => {
   );
 };
 
-const Bubble = React.memo<{ message: Message; showAvatar: boolean; avatarUri?: string }>(({
-  message,
-  showAvatar,
-  avatarUri,
-}) => {
+const Bubble = React.memo<{
+  message: Message;
+  showAvatar: boolean;
+  gapAbove: number;
+  avatarUri?: string;
+}>(({ message, showAvatar, gapAbove, avatarUri }) => {
   const mine = message.fromMe;
-  const avatarSlot = showAvatar ? (
-    <Avatar uri={avatarUri} size={28} />
-  ) : (
-    <View style={{ width: 28 }} />
+  // 24px avatar slot on the outer side; kept (empty) on non-tail rows so every
+  // bubble in a run lines up on the same column, exactly like the frame.
+  const avatarSlot = (
+    <View style={{ width: 24 }}>
+      {showAvatar && <Avatar uri={avatarUri} size={24} />}
+    </View>
   );
   return (
     <View
       style={[
         tstyles.bubbleRow,
-        { justifyContent: mine ? 'flex-end' : 'flex-start' },
+        { marginTop: gapAbove, justifyContent: mine ? 'flex-end' : 'flex-start' },
       ]}
     >
       {!mine && <View style={{ marginRight: 8 }}>{avatarSlot}</View>}
@@ -398,8 +452,8 @@ const Bubble = React.memo<{ message: Message; showAvatar: boolean; avatarUri?: s
         style={[
           tstyles.bubble,
           mine
-            ? { backgroundColor: C.mine, borderBottomRightRadius: 0 }
-            : { backgroundColor: C.their, borderBottomLeftRadius: 0 },
+            ? { backgroundColor: L.bubbleOut, borderBottomRightRadius: 0 }
+            : { backgroundColor: L.bubbleIn, borderBottomLeftRadius: 0 },
         ]}
       >
         <Text style={tstyles.bubbleTxt}>{message.text}</Text>
@@ -455,74 +509,83 @@ const tstyles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     paddingHorizontal: 16,
-    borderBottomWidth: StyleSheet.hairlineWidth,
-    borderBottomColor: C.border,
+    backgroundColor: L.bg,
+    borderBottomWidth: 1,
+    borderBottomColor: L.divider,
   },
   headerName: {
     flex: 1,
-    color: C.text,
-    fontFamily: tokens.typography.h4.fontFamily,
+    color: L.text,
+    fontFamily: P_MEDIUM,
     fontSize: 18,
-    marginLeft: 12,
+    lineHeight: 27,
+    marginLeft: 14,
   },
   bubbleRow: {
     flexDirection: 'row',
     alignItems: 'flex-end',
-    marginVertical: 4,
   },
   bubble: {
-    maxWidth: '76%',
-    paddingVertical: 10,
-    paddingHorizontal: 14,
-    borderRadius: 10,
+    maxWidth: '75%',
+    paddingHorizontal: 16,
+    paddingVertical: 9.5,
+    borderRadius: 8,
   },
   bubbleTxt: {
-    color: C.text,
-    fontFamily: tokens.typography.body.fontFamily,
-    fontSize: 16,
-    lineHeight: 22,
+    color: L.text,
+    fontFamily: P_REGULAR,
+    fontSize: 14,
+    lineHeight: 21,
   },
   inputBar: {
     flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: C.card,
+    alignItems: 'flex-end',
+    backgroundColor: L.composerBg,
     paddingHorizontal: 16,
-    paddingTop: 14,
+    paddingTop: 16,
+    // Composer bg drop shadow, read off node 125:11587: X0 Y-8, blur 16,
+    // spread 0, #000000 at 25%.
+    shadowColor: '#000000',
+    shadowOffset: { width: 0, height: -8 },
+    shadowOpacity: 0.25,
+    shadowRadius: 16,
+    elevation: 16,
   },
   inputPill: {
     flex: 1,
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: C.pill,
-    borderWidth: StyleSheet.hairlineWidth,
-    borderColor: C.border,
+    backgroundColor: L.pillBg,
     borderRadius: 24,
     minHeight: 48,
-    paddingHorizontal: 16,
+    paddingLeft: 16,
+    paddingRight: 20,
   },
   input: {
     flex: 1,
-    color: C.text,
-    fontFamily: tokens.typography.body.fontFamily,
+    color: L.text,
+    fontFamily: P_REGULAR,
     fontSize: 16,
-    paddingVertical: Platform.OS === 'ios' ? 12 : 8,
+    lineHeight: 24,
+    paddingVertical: 12,
     marginRight: 8,
     maxHeight: 100,
   },
   sendBtn: {
-    width: 40,
-    height: 40,
+    width: 24,
+    height: 24,
     alignItems: 'center',
     justifyContent: 'center',
     marginLeft: 8,
+    marginBottom: 12, // centers the 24px plane on the 48px pill row
   },
   sheetScrim: {
     flex: 1,
-    backgroundColor: 'rgba(0,0,0,0.5)',
+    backgroundColor: L.scrim,
     justifyContent: 'flex-end',
   },
   sheet: {
-    backgroundColor: C.sheet,
+    backgroundColor: L.bg,
     borderTopLeftRadius: 18,
     borderTopRightRadius: 18,
     paddingTop: 8,
@@ -534,16 +597,16 @@ const tstyles = StyleSheet.create({
     gap: 14,
     paddingVertical: 18,
     paddingHorizontal: 16,
-    borderBottomWidth: StyleSheet.hairlineWidth,
-    borderBottomColor: C.border,
+    borderBottomWidth: 1,
+    borderBottomColor: L.divider,
   },
   sheetCancel: {
     justifyContent: 'center',
     borderBottomWidth: 0,
   },
   sheetTxt: {
-    color: C.text,
-    fontFamily: tokens.typography.body.fontFamily,
+    color: L.text,
+    fontFamily: P_REGULAR,
     fontSize: 17,
   },
 });

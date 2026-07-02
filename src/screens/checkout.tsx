@@ -1,52 +1,67 @@
 import React, { useState, useEffect } from 'react';
 import {
-  View, Text, Image, ScrollView, TouchableOpacity, Pressable, StyleSheet, Dimensions, ActivityIndicator,
+  View, Text, Image, ScrollView, TouchableOpacity, Pressable, StyleSheet,
+  Dimensions, ActivityIndicator, Modal, ViewStyle,
 } from 'react-native';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
-import { Txt, Button, MapPlaceholder, InfoModal } from '../components';
-import { tokens } from '../theme';
+import { useFonts, Poppins_400Regular } from '@expo-google-fonts/poppins';
 import { useStore } from '../store';
-import { FAVOR_TIERS, computeFees, computePayout, FavorTier } from '../types';
+import { FAVOR_TIERS, computeFees, FavorTier } from '../types';
 
-// Tier illustrations (shared with the request flow) for the summary thumbnail.
-const TIER_IMAGES: Record<string, any> = {
-  tiny: require('../../assets/img/request/tier-tiny.png'),
-  small: require('../../assets/img/request/tier-small.png'),
-  big: require('../../assets/img/request/tier-big.png'),
-  huge: require('../../assets/img/request/tier-huge.png'),
-};
+// ---------------------------------------------------------------------------
+// Checkout flow — rebuilt to the User App v.2 Figma frames (light theme):
+//   Favor Summary Immediate #125:10996            -> FavorSummary
+//   Select your paymnet method #125:11045         -> SelectPayment (bottom sheet)
+//   Immediate Book Request Modal #125:10708       -> Searching (waiting modal)
+//   No Favor Pal Available Notification #125:11190-> no-pal failure modal
+// Colours / sizes / copy verified against the live Figma canvas:
+//   ink #0D0A0A · secondary #484747 · dividers #EEEEEE (368x1 @ x23)
+//   pay blue #2A7AFF · success green #34C45C · buttons 368x48 r8 (Poppins Medium 16)
+//   modals 351 wide r8 over rgba(0,0,0,0.5) scrim
+// ---------------------------------------------------------------------------
+const INK = '#0D0A0A';        // headings, black buttons, primary text
+const SUB = '#484747';        // secondary text (fees, bodies, "Edit")
+const DIVIDER = '#EEEEEE';    // 1px hairlines
+const BLUE = '#2A7AFF';       // Pay button
+const GREEN = '#34C45C';      // selected-card border + check badge
+const CIRCLE_GRAY = '#CECBCB';// "+" circle inside the Add tile
+const CLOSE_GRAY = '#9E9E9E'; // sheet close (×) ring + glyph
+const TILE_BG = '#EFEFEF';    // summary thumbnail backing
+const RED = '#D40000';        // map pins (v.2 map accent)
+const WHITE = '#FFFFFF';
+
+const P400 = 'Poppins_400Regular';
+const P500 = 'Poppins_500Medium';
+const P600 = 'Poppins_600SemiBold';
+
+// Poppins Regular isn't in the app-wide font load (App.tsx loads 500/600/700),
+// so this module loads it itself — expo caches globally, instant after first use.
+function usePoppins() {
+  const [loaded] = useFonts({ Poppins_400Regular });
+  return loaded;
+}
 
 const { width: SCREEN_W, height: SCREEN_H } = Dimensions.get('window');
 
-// ---------------------------------------------------------------------------
-// User App v.2 — the checkout / confirmation screens are DARK (matches
-// favor-confirmation-v2). The shared useTheme() is the light auth palette, so
-// these screens carry their own local dark tokens instead.
-// ---------------------------------------------------------------------------
-const DARK = {
-  bg: '#0C0C0C',           // screen background (near-black)
-  card: '#171922',         // dark navy card / bottom sheet
-  cardAlt: '#1B222C',      // raised sheet surface
-  field: '#1C2331',        // tiles / close button / thumbnail
-  fieldAlt: '#2E3A44',     // add-circle / raised pill
-  text: '#FFFFFF',
-  textSecondary: 'rgba(255,255,255,0.6)',
-  textTertiary: 'rgba(255,255,255,0.4)',
-  border: 'rgba(255,255,255,0.10)',
-  divider: 'rgba(255,255,255,0.10)',
-  brand: '#ED1C24',        // scarlet accent / map pins
-  star: '#FFBD00',
-  success: '#02CB00',
-  ctaBg: '#FFFFFF',        // v.2 filled CTA = white pill…
-  ctaText: '#141414',      // …with dark text
+// Tier illustrations (exported from Figma, shared with the request flow).
+// Each sits oversized inside a 75x75 rounded mask exactly like the frames.
+const TIER_ART: Record<string, { img: any; w: number; h: number; dx: number; dy: number }> = {
+  tiny: { img: require('../../assets/img/request/tier-tiny.png'), w: 94, h: 94, dx: -9, dy: -10 },
+  small: { img: require('../../assets/img/request/tier-small.png'), w: 94, h: 94, dx: -9, dy: -10 },
+  big: { img: require('../../assets/img/request/tier-big.png'), w: 78, h: 78, dx: -1, dy: -1 },
+  huge: { img: require('../../assets/img/request/tier-huge.png'), w: 79, h: 79, dx: -2, dy: -2 },
 };
+
+const MAP_IMG = require('../../assets/img/request/map-light.png');
 
 const FALLBACK_DESC = 'No description provided.';
 const FALLBACK_ADDRESS = '2099 Woodvine Rd, Lorman';
 
-// Schedule label: 'Now' for an immediate favor, otherwise the picked date/time
-// (same toLocaleString shape used on the Pal-side cards in pal.tsx).
+// Whole-dollar bases render like the frame ("$20"), odd amounts keep cents.
+const money = (n: number) => (Number.isInteger(n) ? `$${n}` : `$${n.toFixed(2)}`);
+
+// Schedule label for the (off-frame) scheduled-favor state on Searching.
 const formatSchedule = (ms?: number) =>
   ms != null
     ? new Date(ms).toLocaleString([], { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })
@@ -54,147 +69,159 @@ const formatSchedule = (ms?: number) =>
 
 // ---------------------------------------------------------------------------
 // Shared: derive the favor summary from the draft (defaults to Tiny / $20).
-// Fees come from computeFees(base) so the summary, the pay button and the
-// stored favor all agree.
+// Every displayed amount comes from the store via computeFees so the summary,
+// the Pay button and the stored favor all agree.
 // ---------------------------------------------------------------------------
 function useFavorSummary() {
   const { draftFavor } = useStore();
   const tier = (draftFavor?.tier ?? 'tiny') as FavorTier;
   const tierMeta = (FAVOR_TIERS as Record<string, { label: string; price: number }>)[tier];
   const base = draftFavor?.price ?? tierMeta?.price ?? FAVOR_TIERS.tiny.price;
-  const label = tierMeta?.label ?? 'Custom Favor';
+  // Negotiated favors label like the "Favor Summary Negotiate" frame: "2hrs x $50".
+  const label = draftFavor?.hours
+    ? `${draftFavor.hours}hrs x $${Math.round(base / draftFavor.hours)}`
+    : tierMeta?.label ?? 'Custom Favor';
   const fees = computeFees(base);
-  // Transparency split: what the member pays (fees.total) vs what the Pal
-  // actually receives after the platform commission.
-  const { payout } = computePayout(base);
   const description = draftFavor?.description || FALLBACK_DESC;
   const address = draftFavor?.location?.address || FALLBACK_ADDRESS;
   const image = draftFavor?.images?.[0];
-  const scheduledFor = draftFavor?.scheduledFor;
-  return { base, label, fees, payout, description, address, image, tier, scheduledFor };
+  return { base, label, fees, description, address, image, tier };
 }
 
 // ---------------------------------------------------------------------------
-// Shared header (large rounded title + back arrow + hairline)
+// Small shared pieces (local — v.2 checkout uses its own design language)
 // ---------------------------------------------------------------------------
-function CheckoutHeader({ title, onBack }: { title: string; onBack?: () => void }) {
-  return (
-    <View style={[styles.header, { borderBottomColor: DARK.border }]}>
-      <TouchableOpacity onPress={onBack} disabled={!onBack} hitSlop={10} style={{ width: 38 }}>
-        {onBack && <Ionicons name="arrow-back" size={26} color={DARK.text} />}
-      </TouchableOpacity>
-      <Txt variant="h3" color={DARK.text} numberOfLines={1} style={{ flex: 1, marginLeft: 6 }}>
-        {title}
-      </Txt>
+const Divider = ({ style }: { style?: ViewStyle }) => (
+  <View style={[{ height: 1, backgroundColor: DIVIDER, marginHorizontal: 23 }, style]} />
+);
+
+// btn/solid/2/black from the kit: 368x48, radius 8, Poppins Medium white text.
+const BlackButton = ({
+  title, onPress, style, textSize = 16,
+}: { title: string; onPress?: () => void; style?: ViewStyle; textSize?: number }) => (
+  <TouchableOpacity
+    activeOpacity={0.85}
+    onPress={onPress}
+    accessibilityRole="button"
+    accessibilityLabel={title}
+    style={[styles.blackBtn, style]}
+  >
+    <Text style={[styles.blackBtnText, { fontSize: textSize }]}>{title}</Text>
+  </TouchableOpacity>
+);
+
+// Section block: black icon + Poppins-Medium label, gray body (#484747 16/24).
+const Section = ({
+  icon, label, body,
+}: { icon: keyof typeof Ionicons.glyphMap; label: string; body: string }) => (
+  <>
+    <View style={styles.sectionHead}>
+      <Ionicons name={icon} size={22} color={INK} />
+      <Text style={styles.sectionLabel}>{label}</Text>
     </View>
-  );
-}
+    <Text style={styles.sectionBody}>{body}</Text>
+  </>
+);
 
-function CostRow({ left, right, bold }: { left: string; right: string; bold?: boolean }) {
-  const color = bold ? DARK.text : DARK.textSecondary;
-  return (
-    <View style={[styles.costRow, { marginBottom: bold ? 6 : 4 }]}>
-      <Txt variant={bold ? 'h3' : 'body'} color={color}>{left}</Txt>
-      <Txt variant={bold ? 'h3' : 'body'} color={color}>{right}</Txt>
+// Centered white alert card (351 wide, r8) over a 50% black scrim — the shape
+// shared by "No Favor Pal Available" #125:11190 and kin.
+const AlertModal = ({
+  visible, title, message, buttonLabel, onClose,
+}: { visible: boolean; title: string; message: string; buttonLabel: string; onClose: () => void }) => (
+  <Modal visible={visible} transparent animationType="fade" onRequestClose={onClose}>
+    <View style={styles.scrimCenter}>
+      <View style={styles.alertCard}>
+        <Text style={styles.alertTitle}>{title}</Text>
+        <Text style={styles.alertBody}>{message}</Text>
+        <BlackButton title={buttonLabel} onPress={onClose} style={{ marginTop: 28 }} />
+      </View>
     </View>
-  );
-}
+  </Modal>
+);
 
 // ---------------------------------------------------------------------------
-// Shared body of the Favor Summary (cost breakdown + description + address).
-// Reused (dimmed) behind the payment sheet.
+// Shared body of the Favor Summary (thumbnail + cost rows, Description,
+// Address). Reused as the backdrop behind the payment sheet.
 // ---------------------------------------------------------------------------
 function SummaryBody() {
-  const { base, label, fees, payout, description, address, image, tier, scheduledFor } = useFavorSummary();
-  const tierImage = TIER_IMAGES[tier as string];
+  const { base, label, fees, description, address, image, tier } = useFavorSummary();
+  const art = TIER_ART[tier as string] ?? TIER_ART.tiny;
   return (
-    <View style={styles.body}>
+    <View>
+      {/* Cost block — illustration in a 75x75 rounded mask, prices at right */}
       <View style={styles.costBlock}>
-        <View style={[styles.thumb, { backgroundColor: DARK.field }]}>
+        <View style={styles.thumbMask}>
           {image ? (
-            <Image source={{ uri: image }} style={{ width: '100%', height: '100%' }} />
-          ) : tierImage ? (
-            <Image source={tierImage} style={{ width: '100%', height: '100%' }} resizeMode="contain" />
+            <Image source={{ uri: image }} style={{ width: 75, height: 75 }} />
           ) : (
-            <Ionicons name="walk" size={34} color={DARK.textTertiary} />
+            <Image
+              source={art.img}
+              style={{ position: 'absolute', width: art.w, height: art.h, left: art.dx, top: art.dy }}
+              resizeMode="cover"
+            />
           )}
         </View>
-        <View style={{ flex: 1, marginLeft: 16 }}>
-          <CostRow left={label} right={`$${base.toFixed(2)}`} />
-          <CostRow left="Service Fee @ 2.9%" right={`$${fees.serviceFee.toFixed(2)}`} />
-          <CostRow left="Transaction Fee" right={`$${fees.transactionFee.toFixed(2)}`} />
-          {/* Emphasize the Total — this is the amount the member is actually charged. */}
-          <CostRow left="Total Cost" right={`$${fees.total.toFixed(2)}`} bold />
-          <CostRow left="Favor Pal receives" right={`$${payout.toFixed(2)}`} />
+        <View style={{ flex: 1, marginLeft: 34 }}>
+          <View style={styles.moneyRow}>
+            <Text style={styles.tierTitle}>{label}</Text>
+            <Text style={styles.tierPrice}>{money(base)}</Text>
+          </View>
+          <View style={[styles.moneyRow, { marginTop: 4 }]}>
+            <Text style={styles.feeLabel}>Service Fee @ 2.9%</Text>
+            <Text style={styles.feeLabel}>{`$${fees.serviceFee.toFixed(2)}`}</Text>
+          </View>
+          <View style={[styles.moneyRow, { marginTop: 4 }]}>
+            <Text style={styles.feeLabel}>Transaction Fee</Text>
+            <Text style={styles.feeLabel}>{`$${fees.transactionFee.toFixed(2)}`}</Text>
+          </View>
+          <View style={[styles.moneyRow, { marginTop: 4 }]}>
+            <Text style={styles.feeLabel}>Total Cost</Text>
+            <Text style={styles.feeLabel}>{`$${fees.total.toFixed(2)}`}</Text>
+          </View>
         </View>
       </View>
 
-      <View style={[styles.divider, { backgroundColor: DARK.divider }]} />
-
-      <View style={styles.sectionHead}>
-        <Ionicons name="time" size={22} color={DARK.text} />
-        <Txt variant="h4" color={DARK.text} style={{ marginLeft: 12 }}>When</Txt>
-      </View>
-      <Txt variant="body" color={DARK.textSecondary} style={{ marginTop: 10 }}>
-        {formatSchedule(scheduledFor)}
-      </Txt>
-
-      <View style={[styles.divider, { backgroundColor: DARK.divider }]} />
-
-      <View style={styles.sectionHead}>
-        <Ionicons name="document-text" size={22} color={DARK.text} />
-        <Txt variant="h4" color={DARK.text} style={{ marginLeft: 12 }}>Description</Txt>
-      </View>
-      <Txt variant="body" color={DARK.textSecondary} style={{ marginTop: 10 }}>
-        {description}
-      </Txt>
-
-      <View style={[styles.divider, { backgroundColor: DARK.divider }]} />
-
-      <View style={styles.sectionHead}>
-        <Ionicons name="location" size={22} color={DARK.text} />
-        <Txt variant="h4" color={DARK.text} style={{ marginLeft: 12 }}>Address</Txt>
-      </View>
-      <Txt variant="body" color={DARK.textSecondary} style={{ marginTop: 10 }}>
-        {address}
-      </Txt>
-
-      <View style={[styles.divider, { backgroundColor: DARK.divider }]} />
+      <Divider style={{ marginTop: 18 }} />
+      <Section icon="document-text" label="Description" body={description} />
+      <Divider style={{ marginTop: 16 }} />
+      <Section icon="location" label="Address" body={address} />
+      <Divider style={{ marginTop: 18 }} />
     </View>
   );
 }
 
 // ===========================================================================
-// 1. Favor Summary
+// 1. Favor Summary  (v.2 #125:10996 — no header bar; black REQUEST FAVOR NOW)
 // ===========================================================================
 export const FavorSummary = ({ navigation }: any) => {
+  const fontsReady = usePoppins();
   const insets = useSafeAreaInsets();
+  if (!fontsReady) return <View style={{ flex: 1, backgroundColor: WHITE }} />;
   return (
-    <SafeAreaView style={{ flex: 1, backgroundColor: DARK.bg }} edges={['top']}>
-      <CheckoutHeader title="Favor Summary Appointment" onBack={() => navigation.goBack()} />
-      <ScrollView contentContainerStyle={{ flexGrow: 1, paddingBottom: 16 }}>
+    <SafeAreaView style={{ flex: 1, backgroundColor: WHITE }} edges={['top']}>
+      <ScrollView contentContainerStyle={{ flexGrow: 1, paddingBottom: 16 }} showsVerticalScrollIndicator={false}>
         <SummaryBody />
       </ScrollView>
-      <View style={{ paddingHorizontal: 20, paddingTop: 8, paddingBottom: insets.bottom + 10 }}>
-        <Button title="PAY NOW" variant="white" onPress={() => navigation.navigate('SelectPayment')} />
+      <View style={{ paddingHorizontal: 23, paddingTop: 8, paddingBottom: Math.max(insets.bottom, 18) + 16 }}>
+        <BlackButton title="REQUEST FAVOR NOW" onPress={() => navigation.navigate('SelectPayment')} />
       </View>
     </SafeAreaView>
   );
 };
 
 // ===========================================================================
-// 2. Select Payment (bottom sheet over the dimmed summary)
+// 2. Select Payment  (v.2 #125:11045 — white sheet over the undimmed summary)
 // ===========================================================================
 export const SelectPayment = ({ navigation }: any) => {
+  const fontsReady = usePoppins();
   const insets = useSafeAreaInsets();
   const { cards, requestFavor, pals } = useStore();
   const { fees } = useFavorSummary();
   const [selected, setSelected] = useState<string | null>(cards[0]?.id ?? null);
   const [noPal, setNoPal] = useState(false);
-  const [notified, setNotified] = useState(false);
   // In-flight guard for the (money-sensitive) Pay call: blocks double-submit and
-  // drives the button's busy/spinner state. `payError` surfaces a failed charge
-  // instead of silently stranding the member on the sheet.
+  // drives the button's busy state. `payError` surfaces a failed charge instead
+  // of silently stranding the member on the sheet.
   const [paying, setPaying] = useState(false);
   const [payError, setPayError] = useState(false);
 
@@ -210,7 +237,7 @@ export const SelectPayment = ({ navigation }: any) => {
     // while the request is in flight would create a duplicate favor / double
     // charge). The disabled Pay button reflects both.
     if (!canPay || paying) return;
-    // No FavorPals available in the area → surface the recovery flow.
+    // No FavorPals available in the area → v.2 "No Favor Pal Available" alert.
     if (pals.length === 0) {
       setNoPal(true);
       return;
@@ -228,81 +255,78 @@ export const SelectPayment = ({ navigation }: any) => {
     }
   };
 
-  // Zero-supply recovery: instead of dead-ending the member on the payment
-  // sheet, register interest and return Home with their draft preserved so the
-  // favor can be retried once a Pal is available.
-  const onNotifyMe = () => {
-    setNoPal(false);
-    setNotified(true);
-  };
-  const onNotifiedClose = () => {
-    setNotified(false);
-    navigation.popToTop();
-  };
+  if (!fontsReady) return <View style={{ flex: 1, backgroundColor: WHITE }} />;
 
   return (
-    <View style={{ flex: 1, backgroundColor: DARK.bg }}>
-      {/* Dimmed summary behind the sheet */}
-      <View style={[StyleSheet.absoluteFill, { paddingTop: insets.top }]} pointerEvents="none">
-        <CheckoutHeader title="Favor Summary Appointment" onBack={() => {}} />
+    <View style={{ flex: 1, backgroundColor: WHITE }}>
+      {/* Summary behind the sheet — v.2 shows it undimmed */}
+      <SafeAreaView style={StyleSheet.absoluteFill} edges={['top']} pointerEvents="none">
         <SummaryBody />
-      </View>
+      </SafeAreaView>
 
-      {/* Scrim */}
+      {/* Tap outside the sheet to dismiss */}
       <Pressable
-        style={[StyleSheet.absoluteFill, { backgroundColor: 'rgba(0,0,0,0.6)' }]}
+        style={StyleSheet.absoluteFill}
         onPress={() => navigation.goBack()}
+        accessibilityLabel="Dismiss payment sheet"
       />
 
-      {/* Sheet */}
-      <View style={[styles.sheet, { backgroundColor: DARK.card, paddingBottom: insets.bottom + 16 }]}>
-        <View style={styles.sheetTop}>
-          <TouchableOpacity onPress={() => navigation.goBack()} style={[styles.closeBtn, { backgroundColor: DARK.field }]}>
-            <Ionicons name="close" size={20} color={DARK.textSecondary} />
+      {/* Bottom sheet */}
+      <View style={[styles.sheet, { paddingBottom: Math.max(insets.bottom, 12) + 12 }]}>
+        <View style={styles.sheetTopRow}>
+          <TouchableOpacity
+            onPress={() => navigation.goBack()}
+            accessibilityRole="button"
+            accessibilityLabel="Close"
+            style={styles.closeBtn}
+          >
+            <Ionicons name="close" size={16} color={CLOSE_GRAY} />
           </TouchableOpacity>
           <TouchableOpacity onPress={() => navigation.navigate('Payment')} hitSlop={10}>
-            <Txt variant="body" color={DARK.textSecondary}>Edit</Txt>
+            <Text style={styles.editText}>Edit</Text>
           </TouchableOpacity>
         </View>
 
-        <Txt variant="h2" color={DARK.text} style={{ marginTop: 14 }}>Select your payment method</Txt>
+        <Text style={styles.sheetHeading}>Select your payment method</Text>
 
-        <View style={styles.tiles}>
+        <View style={{ flexDirection: 'row', marginTop: 26 }}>
           {/* Add new card */}
-          <View style={styles.tileWrap}>
+          <View style={{ marginRight: 12 }}>
             <TouchableOpacity
               activeOpacity={0.85}
               onPress={() => navigation.navigate('AddCard')}
-              style={[styles.tile, { backgroundColor: DARK.field }]}
+              accessibilityRole="button"
+              accessibilityLabel="Add a new card"
+              style={styles.tile}
             >
-              <View style={[styles.addCircle, { backgroundColor: DARK.fieldAlt }]}>
-                <Ionicons name="add" size={26} color={DARK.text} />
+              <View style={styles.addCircle}>
+                <Ionicons name="add" size={22} color={INK} />
               </View>
             </TouchableOpacity>
-            <Txt variant="label" color={DARK.text} style={{ marginTop: 10 }}>+ Add</Txt>
+            <Text style={styles.tileLabel}>+ Add</Text>
           </View>
 
           {/* Saved cards */}
           {cards.map((c) => {
             const isSel = c.id === selected;
             return (
-              <View key={c.id} style={styles.tileWrap}>
+              <View key={c.id} style={{ marginRight: 12 }}>
                 <TouchableOpacity
                   activeOpacity={0.85}
                   onPress={() => setSelected(c.id)}
-                  style={[
-                    styles.tile,
-                    { backgroundColor: DARK.field, borderWidth: isSel ? 2 : 0, borderColor: DARK.success },
-                  ]}
+                  accessibilityRole="button"
+                  accessibilityState={{ selected: isSel }}
+                  accessibilityLabel={`${c.brand} ending ${c.last4}`}
+                  style={[styles.tile, isSel && { borderWidth: 1, borderColor: GREEN }]}
                 >
-                  <Text style={[styles.brandText, { color: DARK.text }]}>{c.brand.toUpperCase()}</Text>
+                  <Text style={styles.brandText}>{c.brand.toUpperCase()}</Text>
                   {isSel && (
-                    <View style={[styles.checkBadge, { backgroundColor: DARK.success, borderColor: DARK.card }]}>
-                      <Ionicons name="checkmark" size={15} color="#fff" />
+                    <View style={styles.checkBadge}>
+                      <Ionicons name="checkmark" size={13} color={WHITE} />
                     </View>
                   )}
                 </TouchableOpacity>
-                <Txt variant="label" color={DARK.text} style={{ marginTop: 10 }}>{`•••• ${c.last4}`}</Txt>
+                <Text style={styles.tileLabel}>{`•••• ${c.last4}`}</Text>
               </View>
             );
           })}
@@ -315,42 +339,33 @@ export const SelectPayment = ({ navigation }: any) => {
           accessibilityRole="button"
           accessibilityLabel={`Pay US$${fees.total.toFixed(2)}`}
           accessibilityState={{ disabled: !canPay || paying, busy: paying }}
-          style={[styles.payBtn, { backgroundColor: DARK.ctaBg, opacity: canPay && !paying ? 1 : 0.5 }]}
+          style={[styles.payBtn, { opacity: canPay && !paying ? 1 : 0.5 }]}
         >
           {paying ? (
-            <ActivityIndicator color={DARK.ctaText} />
+            <ActivityIndicator color={WHITE} />
           ) : (
             <>
-              <Txt variant="button" color={DARK.ctaText} style={{ fontSize: 18, lineHeight: 24 }}>
-                {`Pay US$${fees.total.toFixed(2)}`}
-              </Txt>
-              <Ionicons name="lock-closed" size={18} color={DARK.ctaText} style={{ position: 'absolute', right: 22 }} />
+              <Text style={styles.payBtnText}>{`Pay US$${fees.total.toFixed(2)}`}</Text>
+              <Ionicons name="lock-closed" size={17} color={WHITE} style={{ position: 'absolute', right: 20 }} />
             </>
           )}
         </TouchableOpacity>
       </View>
 
-      <InfoModal
+      {/* v.2 #125:11190 — No Favor Pal Available */}
+      <AlertModal
         visible={noPal}
-        title="NO FAVOR PAL AVAILABLE"
-        message="We're sorry — there are no Favor Pals in your area right now. We can let you know the moment one becomes available."
-        buttonLabel="Notify me when available"
-        onClose={onNotifyMe}
+        title="No Favor Pal Available"
+        message={'We are sorry that there are no FavorPals in your area at the moment.  Please try again later.'}
+        buttonLabel="CLOSE"
+        onClose={() => setNoPal(false)}
       />
 
-      <InfoModal
-        visible={notified}
-        title="WE'LL NOTIFY YOU"
-        message="Great — we'll send you a notification as soon as a Favor Pal is available in your area. Your favor details have been saved."
-        buttonLabel="Back to Home"
-        onClose={onNotifiedClose}
-      />
-
-      <InfoModal
+      <AlertModal
         visible={payError}
-        title="PAYMENT FAILED"
+        title="Payment Failed"
         message="We couldn't complete your payment. Please check your connection and try again — you have not been charged."
-        buttonLabel="Try again"
+        buttonLabel="TRY AGAIN"
         onClose={() => setPayError(false)}
       />
     </View>
@@ -358,9 +373,10 @@ export const SelectPayment = ({ navigation }: any) => {
 };
 
 // ===========================================================================
-// 3. Searching (centered modal over a map)
+// 3. Searching  (v.2 #125:10708 — white waiting modal over the dimmed map)
 // ===========================================================================
 export const Searching = ({ navigation }: any) => {
+  const fontsReady = usePoppins();
   const { pals, advanceFavor, assignPal, activeFavor } = useStore();
   const matchedPal = pals[0];
   const palName = matchedPal?.firstName ?? 'a Favor Pal';
@@ -385,57 +401,38 @@ export const Searching = ({ navigation }: any) => {
     return () => clearTimeout(t);
   }, [isScheduled, matchedPal, assignPal, advanceFavor, navigation]);
 
+  if (!fontsReady) return <View style={{ flex: 1, backgroundColor: WHITE }} />;
+
   return (
-    <View style={{ flex: 1, backgroundColor: DARK.bg }}>
-      <MapPlaceholder height={SCREEN_H} label="">
-        <View style={[styles.pin, { top: SCREEN_H * 0.30, left: SCREEN_W * 0.26 }]}>
-          <Ionicons name="location" size={42} color={DARK.brand} />
-        </View>
-        <View style={[styles.pin, { top: SCREEN_H * 0.20, left: SCREEN_W * 0.64 }]}>
-          <Ionicons name="location" size={42} color={DARK.brand} />
-        </View>
-      </MapPlaceholder>
+    <View style={{ flex: 1, backgroundColor: '#D8D8D8' }}>
+      {/* v.2 light map backdrop with red pins */}
+      <Image source={MAP_IMG} style={[StyleSheet.absoluteFill, { width: '100%', height: '100%' }]} resizeMode="cover" />
+      <Ionicons name="location" size={42} color={RED} style={[styles.pin, { top: SCREEN_H * 0.13, left: SCREEN_W * 0.2 }]} />
+      <Ionicons name="location" size={42} color={RED} style={[styles.pin, { top: SCREEN_H * 0.24, left: SCREEN_W * 0.6 }]} />
 
-      {/* Heavy dark scrim so the (shared, light) map placeholder reads as the
-          v.2 dark map behind the sheet. */}
-      <View style={[StyleSheet.absoluteFill, { backgroundColor: 'rgba(12,12,12,0.55)' }]} pointerEvents="none" />
+      {/* 50% scrim, then the centered alert card */}
+      <View style={[StyleSheet.absoluteFill, { backgroundColor: 'rgba(0,0,0,0.5)' }]} pointerEvents="none" />
 
-      <View style={[StyleSheet.absoluteFill, styles.modalWrap]}>
-        <View style={[styles.modalCard, { backgroundColor: DARK.card, borderColor: DARK.border }]}>
+      <View style={[StyleSheet.absoluteFill, styles.scrimCenter, { backgroundColor: 'transparent' }]}>
+        <View style={styles.alertCard}>
           {isScheduled ? (
             <>
-              <Ionicons
-                name="calendar"
-                size={40}
-                color={DARK.brand}
-                style={{ alignSelf: 'center', marginBottom: 12 }}
-              />
-              <Txt variant="h3" color={DARK.text} center>Favor scheduled</Txt>
-              <Txt variant="body" color={DARK.textSecondary} center style={{ marginTop: 12 }}>
+              <Text style={styles.alertTitle}>Favor scheduled</Text>
+              <Text style={styles.alertBody}>
                 {`We'll match you with a Favor Pal for ${formatSchedule(activeFavor?.scheduledFor)}.`}
-              </Txt>
-              <Button
-                title="BACK TO HOME"
-                variant="white"
-                onPress={() => navigation.popToTop()}
-                style={{ marginTop: 20 }}
-              />
+              </Text>
+              <BlackButton title="BACK TO HOME" onPress={() => navigation.popToTop()} style={{ marginTop: 20 }} />
             </>
           ) : (
             <>
-              <Txt variant="h3" color={DARK.text} center>{`You have asked a favor from ${palName}`}</Txt>
-              <ActivityIndicator color={DARK.brand} size="large" style={{ marginTop: 18 }} />
-              <Txt variant="body" color={DARK.textSecondary} center style={{ marginTop: 12 }}>
-                Please wait while we confirm.
-              </Txt>
-              <Txt variant="bodySm" color={DARK.textTertiary} center style={{ marginTop: 16 }}>
-                Taking too long?
-              </Txt>
-              <Button
+              <Text style={styles.alertTitle}>{`You have asked a favor from ${palName}`}</Text>
+              <Text style={styles.alertBody}>Please wait while we confirm.</Text>
+              <Text style={styles.tooLong}>Taking too long?</Text>
+              <BlackButton
                 title="CHOOSE ANOTHER FAVOR PAL"
-                variant="white"
+                textSize={14}
                 onPress={() => navigation.navigate('ProviderResults')}
-                style={{ marginTop: 16 }}
+                style={{ marginTop: 20 }}
               />
             </>
           )}
@@ -446,73 +443,141 @@ export const Searching = ({ navigation }: any) => {
 };
 
 const styles = StyleSheet.create({
-  header: {
-    height: 56,
+  // --- Favor Summary -------------------------------------------------------
+  costBlock: {
     flexDirection: 'row',
-    alignItems: 'center',
-    paddingHorizontal: 16,
-    borderBottomWidth: StyleSheet.hairlineWidth,
+    marginTop: 93, // content starts 93 below the status bar in the frame (y=137)
+    paddingLeft: 25,
+    paddingRight: 23,
   },
-  body: { paddingHorizontal: 20, paddingTop: 18 },
-  costBlock: { flexDirection: 'row', alignItems: 'center' },
-  thumb: {
-    width: 78,
-    height: 78,
-    borderRadius: 12,
-    alignItems: 'center',
-    justifyContent: 'center',
+  thumbMask: {
+    width: 75,
+    height: 75,
+    borderRadius: 5,
+    marginTop: 10,
+    backgroundColor: TILE_BG,
     overflow: 'hidden',
   },
-  costRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
-  divider: { height: 1, marginVertical: 18 },
-  sectionHead: { flexDirection: 'row', alignItems: 'center' },
+  moneyRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'baseline' },
+  tierTitle: { fontFamily: P500, fontSize: 18, lineHeight: 27, color: INK },
+  tierPrice: { fontFamily: P500, fontSize: 18, lineHeight: 27, color: INK },
+  feeLabel: { fontFamily: P400, fontSize: 12, lineHeight: 18, color: SUB },
+  sectionHead: { flexDirection: 'row', alignItems: 'center', marginTop: 28, paddingLeft: 33 },
+  sectionLabel: { fontFamily: P500, fontSize: 16, lineHeight: 24, color: INK, marginLeft: 8 },
+  sectionBody: { fontFamily: P400, fontSize: 16, lineHeight: 24, color: SUB, marginLeft: 63, marginRight: 25, marginTop: 4 },
+  blackBtn: {
+    height: 48,
+    borderRadius: 8,
+    backgroundColor: INK,
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: 16,
+  },
+  blackBtnText: { fontFamily: P500, fontSize: 16, color: WHITE, letterSpacing: 0.5 },
 
-  // Payment sheet
+  // --- Select Payment sheet ------------------------------------------------
   sheet: {
     position: 'absolute',
     left: 0,
     right: 0,
     bottom: 0,
-    borderTopLeftRadius: 28,
-    borderTopRightRadius: 28,
-    paddingHorizontal: 22,
-    paddingTop: 18,
+    backgroundColor: WHITE,
+    borderTopLeftRadius: 16,
+    borderTopRightRadius: 16,
+    paddingHorizontal: 23,
+    paddingTop: 20,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: -4 },
+    shadowOpacity: 0.15,
+    shadowRadius: 12,
+    elevation: 16,
   },
-  sheetTop: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
-  closeBtn: { width: 38, height: 38, borderRadius: 19, alignItems: 'center', justifyContent: 'center' },
-  tiles: { flexDirection: 'row', marginTop: 22 },
-  tileWrap: { alignItems: 'center', marginRight: 18 },
-  tile: {
-    width: 132,
-    height: 104,
-    borderRadius: 12,
+  sheetTopRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
+  closeBtn: {
+    width: 30,
+    height: 30,
+    borderRadius: 15,
+    borderWidth: 1,
+    borderColor: CLOSE_GRAY,
+    backgroundColor: WHITE,
     alignItems: 'center',
     justifyContent: 'center',
   },
-  addCircle: { width: 48, height: 48, borderRadius: 24, alignItems: 'center', justifyContent: 'center' },
-  brandText: { fontSize: 26, fontWeight: '800', fontStyle: 'italic', letterSpacing: 0.5 },
+  editText: { fontFamily: P400, fontSize: 16, color: SUB },
+  sheetHeading: { fontFamily: P600, fontSize: 24, lineHeight: 30, color: INK, marginTop: 24 },
+  tile: {
+    width: 113,
+    height: 71,
+    borderRadius: 8,
+    backgroundColor: WHITE,
+    alignItems: 'center',
+    justifyContent: 'center',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.15,
+    shadowRadius: 6,
+    elevation: 3,
+  },
+  addCircle: {
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    backgroundColor: CIRCLE_GRAY,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  brandText: { fontSize: 20, fontWeight: '800', fontStyle: 'italic', letterSpacing: 0.5, color: INK },
   checkBadge: {
     position: 'absolute',
-    right: -8,
-    bottom: -8,
-    width: 28,
-    height: 28,
-    borderRadius: 14,
+    right: -7,
+    bottom: -7,
+    width: 22,
+    height: 22,
+    borderRadius: 11,
+    backgroundColor: GREEN,
     borderWidth: 2,
+    borderColor: WHITE,
     alignItems: 'center',
     justifyContent: 'center',
   },
+  tileLabel: { fontFamily: P400, fontSize: 15, color: INK, marginTop: 12 },
   payBtn: {
-    height: 56,
-    borderRadius: 14,
+    height: 48,
+    borderRadius: 8,
+    backgroundColor: BLUE,
     marginTop: 26,
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
   },
+  payBtnText: { fontFamily: P500, fontSize: 16, color: WHITE },
 
-  // Searching modal
+  // --- Alert modals (No Favor Pal / Searching / errors) ---------------------
+  scrimCenter: {
+    flex: 1,
+    backgroundColor: 'rgba(0,0,0,0.5)',
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: 31,
+  },
+  alertCard: {
+    width: '100%',
+    maxWidth: 351,
+    borderRadius: 8,
+    backgroundColor: WHITE,
+    paddingTop: 32,
+    paddingHorizontal: 24,
+    paddingBottom: 24,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 8 },
+    shadowOpacity: 0.25,
+    shadowRadius: 20,
+    elevation: 12,
+  },
+  alertTitle: { fontFamily: P600, fontSize: 20, lineHeight: 30, color: INK, textAlign: 'center' },
+  alertBody: { fontFamily: P400, fontSize: 14, lineHeight: 22, color: SUB, textAlign: 'center', marginTop: 16 },
+  tooLong: { fontFamily: P500, fontSize: 14, lineHeight: 21, color: INK, textAlign: 'center', marginTop: 14 },
+
+  // --- Searching map -------------------------------------------------------
   pin: { position: 'absolute' },
-  modalWrap: { alignItems: 'center', justifyContent: 'center', paddingHorizontal: 28 },
-  modalCard: { width: '100%', borderRadius: 16, paddingVertical: 28, paddingHorizontal: 24, borderWidth: 1 },
 });

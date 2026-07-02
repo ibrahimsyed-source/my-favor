@@ -1,5 +1,7 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { View, Text, Image, TouchableOpacity, StyleSheet, ActivityIndicator } from 'react-native';
+import {
+  View, Text, Image, TouchableOpacity, StyleSheet, ActivityIndicator, Share, ViewStyle,
+} from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { Screen, Txt, Button, TopBar, InfoModal } from '../components';
 import { useTheme, fonts, tokens } from '../theme';
@@ -7,102 +9,163 @@ import { useStore } from '../store';
 
 // Assets ----------------------------------------------------------------------
 const logo = require('../../assets/img/logo.png');
-const launchPeople = require('../../assets/img/onboarding/launch-people.png');
+const personLeft = require('../../assets/img/onboarding/launch-person-left.png');
+const personRight = require('../../assets/img/onboarding/launch-person-right.png');
 const welcomeMower = require('../../assets/img/onboarding/welcome-mower.png');
 
-// 1. Launch — branded splash shown briefly on cold start, then auto-advances to
-//    the login / sign-up screen. (Tap anywhere to skip the short wait.)
+// ---------------------------------------------------------------------------
+// v.2 onboarding carousel — Launch / Welcome / SignupLogin are three routes
+// styled as one pager (white bg, page-dot row at the bottom of each page).
+// Dots are tappable so every page (incl. LOGIN on page 3) stays reachable.
+// ---------------------------------------------------------------------------
+const PAGE_ROUTES = ['Launch', 'Welcome', 'SignupLogin'] as const;
+
+// Frame-exact colors, measured from the color-calibrated #125 captures (the REST-
+// exported logo asset matches the capture pixels exactly, so hexes are document-true).
+const INK = '#0D0A0A'; // near-black used for text, black buttons, active dot
+const GRAY_BTN = '#E5E5E5'; // gray button fill
+const DOT_BORDER = '#838383'; // inactive page-dot ring
+// Buttons in all three frames: 48pt tall, 6pt corner radius.
+const BTN = { height: 48, borderRadius: 6 } as const;
+
+function Dots({ active, navigation, style }: { active: number; navigation: any; style?: ViewStyle }) {
+  return (
+    <View style={[{ flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8 }, style]}>
+      {PAGE_ROUTES.map((route, i) => (
+        <TouchableOpacity
+          key={route}
+          disabled={i === active}
+          onPress={() => navigation.navigate(route)}
+          hitSlop={10}
+          accessibilityRole="button"
+          accessibilityLabel={`Page ${i + 1} of 3`}
+          accessibilityState={{ selected: i === active }}
+        >
+          <View
+            style={{
+              width: 12,
+              height: 12,
+              borderRadius: 6,
+              backgroundColor: i === active ? INK : 'transparent',
+              borderWidth: i === active ? 0 : 2,
+              borderColor: DOT_BORDER,
+            }}
+          />
+        </TouchableOpacity>
+      ))}
+    </View>
+  );
+}
+
+// Wordmark — Poppins SemiBold ("My Favor"): 52pt on Launch, 48pt on Sign Up / Login.
+const WORDMARK = { fontFamily: fonts.displayMedium, fontSize: 52, lineHeight: 68, color: INK } as const;
+
+// 1. Launch (v.2 #125:8371) — page 1 of the carousel: red "f" logo card top-center,
+//    two illustrated people mid, "My Favor" wordmark near the bottom, dots ●○○.
+//    Auto-advances to page 2 after a beat; tap anywhere to skip the wait.
 export function Launch({ navigation }: any) {
   useEffect(() => {
-    const t = setTimeout(() => navigation.replace('SignupLogin'), 1400);
+    const t = setTimeout(() => navigation.replace('Welcome'), 1400);
     return () => clearTimeout(t);
   }, [navigation]);
   return (
     <Screen padded={false}>
       <TouchableOpacity
         activeOpacity={1}
-        onPress={() => navigation.replace('SignupLogin')}
+        onPress={() => navigation.replace('Welcome')}
         accessibilityRole="button"
         accessibilityLabel="Continue"
-        style={{ flex: 1, paddingHorizontal: 24, paddingBottom: 28, alignItems: 'center', justifyContent: 'center' }}
+        style={{ flex: 1, alignItems: 'center', paddingBottom: 73 }}
       >
-        <View style={{ flex: 1, width: '100%', alignItems: 'center', justifyContent: 'center' }}>
-          <Image source={logo} style={{ width: 150, height: 150, marginBottom: 28 }} resizeMode="contain" />
-          <Image
-            source={launchPeople}
-            style={{ width: 250, height: 290, marginBottom: 20 }}
-            resizeMode="contain"
-          />
-          <Txt variant="display" center style={{ fontSize: 44, lineHeight: 54 }}>
-            My Favor
-          </Txt>
+        <Image source={logo} style={{ width: 156, height: 156, marginTop: 68 }} resizeMode="contain" />
+        <View style={{ flex: 1, flexDirection: 'row', alignItems: 'flex-end', justifyContent: 'center' }}>
+          {/* Woman (thumbs-up) + man, feet aligned, 15pt apart (no overlap in the frame). */}
+          <Image source={personLeft} style={{ width: 131, height: 341 }} resizeMode="contain" />
+          <Image source={personRight} style={{ width: 160, height: 355, marginLeft: 15 }} resizeMode="contain" />
         </View>
+        <Txt center style={{ ...WORDMARK, marginTop: 44 }}>My Favor</Txt>
+        <Dots active={0} navigation={navigation} style={{ marginTop: 44 }} />
       </TouchableOpacity>
     </Screen>
   );
 }
 
-// 2. SignupLogin — the app's entry screen: log in or sign up. This is the first
-//    interactive screen (the splash auto-advances here).
-export function SignupLogin({ navigation }: any) {
+// 2. Welcome (v.2 #125:8386) — page 2: lawn-mowing illustration, the value-prop
+//    headline (bold "$$"), and the two paths side by side. Dots ○●○.
+export function Welcome({ navigation }: any) {
   return (
     <Screen padded={false}>
-      <View style={{ flex: 1, paddingHorizontal: 24, paddingBottom: 28, alignItems: 'center' }}>
-        <View style={{ flex: 1, width: '100%', alignItems: 'center', justifyContent: 'center' }}>
-          <Image source={logo} style={{ width: 150, height: 150, marginBottom: 24 }} resizeMode="contain" />
-          <Txt variant="display" center style={{ fontSize: 44, lineHeight: 54 }}>
-            My Favor
-          </Txt>
+      <View style={{ flex: 1, paddingHorizontal: 23, paddingBottom: 73 }}>
+        <Image
+          source={welcomeMower}
+          style={{ width: '100%', height: 349, marginTop: 46.5 }}
+          resizeMode="contain"
+        />
+        {/* Line breaks mirror the frame's 4-line rag; "$$" is the only bold run.
+            Poppins_500Medium is registered in App.tsx but not yet exposed on the
+            `fonts` token map (see foundationRequests) — literal until then. */}
+        <Txt center style={{ fontFamily: 'Poppins_500Medium', fontSize: 34, lineHeight: 48, color: INK, marginTop: 42 }}>
+          {'Ask for all the\nfavors you need, or\nearn '}
+          <Text style={{ fontFamily: fonts.display }}>$$</Text>
+          {' doing favors\nfor others.'}
+        </Txt>
+        <View style={{ flex: 1 }} />
+        <View style={{ flexDirection: 'row', gap: 8 }}>
+          <Button
+            title="ASK A FAVOR"
+            variant="primary"
+            onPress={() => navigation.navigate('Signup')}
+            style={{ ...BTN, flex: 1, paddingHorizontal: 0, backgroundColor: INK }}
+          />
+          <Button
+            title="BE A FAVOR PAL"
+            variant="secondary"
+            onPress={() => navigation.navigate('Signup')}
+            style={{ ...BTN, flex: 1, paddingHorizontal: 0, backgroundColor: GRAY_BTN }}
+          />
         </View>
-        <View style={{ width: '100%', gap: 14, marginBottom: 24 }}>
-          <Button title="LOGIN" variant="primary" onPress={() => navigation.navigate('Login')} />
-          <Button title="SIGNUP" variant="secondary" onPress={() => navigation.navigate('Welcome')} />
-        </View>
+        <Dots active={1} navigation={navigation} style={{ marginTop: 39 }} />
       </View>
     </Screen>
   );
 }
 
-// 3. Welcome — intro before sign-up. One universal account: every member can
-//    both request favors and earn by doing them, so there's no role to choose.
-export function Welcome({ navigation }: any) {
-  const { theme } = useTheme();
-
+// 3. SignupLogin (v.2 #125:8404) — page 3: logo card + wordmark up top, then the
+//    stacked SHARE THIS APP / SIGNUP / LOGIN buttons anchored at the bottom. Dots ○○●.
+export function SignupLogin({ navigation }: any) {
+  const onShare = () => {
+    Share.share({
+      message: 'Join me on My Favor — ask for all the favors you need, or earn $$ doing favors for others!',
+    }).catch(() => {});
+  };
   return (
     <Screen padded={false}>
-      <View style={{ flex: 1, paddingHorizontal: 24, paddingTop: 8, paddingBottom: 28 }}>
-        <TouchableOpacity
-          onPress={() => navigation.goBack()}
-          hitSlop={12}
-          accessibilityRole="button"
-          accessibilityLabel="Go back"
-          style={{ paddingVertical: 6, alignSelf: 'flex-start' }}
-        >
-          <Ionicons name="arrow-back" size={26} color={theme.text} />
-        </TouchableOpacity>
-        <Image
-          source={welcomeMower}
-          style={{ width: '100%', height: 280, marginTop: 4 }}
-          resizeMode="contain"
-        />
-        <View style={{ flex: 1, justifyContent: 'center' }}>
-          <Txt variant="body" center style={{ fontSize: 28, lineHeight: 40 }}>
-            Ask for all the favors you need, or earn{' '}
-            {/* Emphasis only via weight — the bright #02CB00 green failed contrast
-                (~2.2:1 on white) and isn't in the Figma, which shows a plain black
-                "$$". theme.text keeps it figma-faithful and high-contrast (~16:1). */}
-            <Text style={{ color: theme.text, fontFamily: fonts.bodyBold }}>$$</Text> doing favors for others.
-          </Txt>
-          <Txt variant="body" color={theme.textSecondary} center style={{ marginTop: 16 }}>
-            One account does it all — request favors and help your neighbors.
-          </Txt>
+      <View style={{ flex: 1, paddingHorizontal: 23, paddingBottom: 73 }}>
+        <View style={{ flex: 1, alignItems: 'center' }}>
+          <Image source={logo} style={{ width: 156, height: 156, marginTop: 85 }} resizeMode="contain" />
+          <Txt center style={{ ...WORDMARK, fontSize: 48, lineHeight: 63, marginTop: 43 }}>My Favor</Txt>
         </View>
-        <Button
-          title="GET STARTED"
-          variant="primary"
-          onPress={() => navigation.navigate('Signup')}
-          style={{ marginBottom: 24 }}
-        />
+        <View style={{ gap: 8 }}>
+          <Button
+            title="SHARE THIS APP"
+            variant="ghost"
+            onPress={onShare}
+            style={{ ...BTN, backgroundColor: '#FFFFFF', borderWidth: 1.5, borderColor: INK }}
+          />
+          <Button
+            title="SIGNUP"
+            variant="secondary"
+            onPress={() => navigation.navigate('Signup')}
+            style={{ ...BTN, backgroundColor: GRAY_BTN }}
+          />
+          <Button
+            title="LOGIN"
+            variant="primary"
+            onPress={() => navigation.navigate('Login')}
+            style={{ ...BTN, backgroundColor: INK }}
+          />
+        </View>
+        <Dots active={2} navigation={navigation} style={{ marginTop: 23 }} />
       </View>
     </Screen>
   );

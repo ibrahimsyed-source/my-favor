@@ -1,384 +1,418 @@
 import React, { useState } from 'react';
 import {
-  View, Image, ScrollView, TouchableOpacity, StyleSheet, Share,
-  TextInput, KeyboardAvoidingView, Platform,
+  View, Text, Image, ScrollView, TouchableOpacity, StyleSheet, StatusBar,
+  TextInput, KeyboardAvoidingView, Platform, Modal, Dimensions, Linking,
 } from 'react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
+import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
-import {
-  Txt, Button, Avatar, StarRating, InfoModal, ConfirmModal, StaticMap,
-} from '../components';
-import { tokens, palette } from '../theme';
+import { Avatar, StarRating, StaticMap } from '../components';
+import { tokens, fonts } from '../theme';
 import { useStore } from '../store';
-import {
-  computeFees, computePayout, computeCancellation, FAVOR_TIERS, MEMBER_STATUS_STEPS,
-} from '../types';
-
-// Brand + on-accent constants reused across this screen.
-const WHITE = palette.white;
-const RED = palette.brand;
+import { computeCancellation } from '../types';
 
 // ---------------------------------------------------------------------------
-// Local DARK v.2 palette. These screens are intentionally dark (the shared
-// useTheme() is light and used by the auth screens) — every colour below is
-// applied explicitly here so nothing falls back to the light theme.
+// User App v.2 — tracking module (light design over a light map).
+// Frames: Favor Booked Minimized/Expanded, Favor Arrived (+Message), Modal:
+// Favor Pal Arrived, Order Complete, Tip Other, Tip/Feedback Submitted,
+// Cancel Favor / Cancelled / Repost Favor modals.
 // ---------------------------------------------------------------------------
-const DARK = {
-  bg: '#0C0C0C', // content screen background
-  map: '#0C0C0C', // dark map backdrop
-  scrim: 'rgba(12,12,12,0.55)', // darkens the map peek
-  sheet: '#171922', // dark navy bottom sheet
-  card: '#1B222C', // feedback textarea / cards
-  raised: '#1C2331', // raised fields / pills / chips
-  text: '#FFFFFF',
-  textSecondary: 'rgba(255,255,255,0.6)',
-  textTertiary: 'rgba(255,255,255,0.4)',
-  border: 'rgba(255,255,255,0.10)',
-  ctaText: '#141414', // dark text on white primary buttons
-  star: '#FFBD00',
-} as const;
+const BLACK = '#141414';
+const WHITE = '#FFFFFF';
+const RED = '#ED1C24';
+const DIVIDER = '#EBEBEB';
+const CHIP_BG = '#EFEFEF';
+const GRAY = '#8A8A8A';
+const GREEN = '#5ABE64';
+const POPPINS_M = 'Poppins_500Medium';
+const POPPINS_SB = 'Poppins_600SemiBold';
 
-const MONTHS_FULL = [
-  'January', 'February', 'March', 'April', 'May', 'June',
-  'July', 'August', 'September', 'October', 'November', 'December',
-];
-// "16 February 2024, 1:00PM" — falls back to the design literal when no favor.
-const formatFavorDate = (ms?: number) => {
-  if (!ms) return '16 February 2023, 1:00PM';
-  const d = new Date(ms);
-  let h = d.getHours();
-  const m = d.getMinutes();
-  const ampm = h >= 12 ? 'PM' : 'AM';
-  h = h % 12 || 12;
-  return `${d.getDate()} ${MONTHS_FULL[d.getMonth()]} ${d.getFullYear()}, ${h}:${m < 10 ? `0${m}` : m}${ampm}`;
-};
+const WIN_H = Dimensions.get('window').height;
 
 // ---------------------------------------------------------------------------
-// 1) FavorTracking — "Favor Booked" dark map bottom sheet (MEMBER side).
-// Renders from the member's own activeFavor + the booked activePal; only falls
-// back to the Figma literals when there is no live favor (prototype/demo).
+// v.2 modal — white rounded card centered over a 50% black scrim.
+// (Cancel favor / Cancelled / Pal arrived / Repost / Tip success all share it.)
+// ---------------------------------------------------------------------------
+const V2Modal: React.FC<{
+  visible: boolean;
+  title: string;
+  body?: string;
+  buttons: { label: string; gray?: boolean; onPress: () => void }[];
+  onDismiss?: () => void; // tap-scrim / hardware back; omit to force a choice
+}> = ({ visible, title, body, buttons, onDismiss }) => (
+  <Modal visible={visible} transparent animationType="fade" onRequestClose={onDismiss ?? (() => {})}>
+    <TouchableOpacity activeOpacity={1} onPress={onDismiss} style={styles.scrim}>
+      <TouchableOpacity activeOpacity={1} style={styles.modalCard}>
+        <Text style={styles.modalTitle}>{title}</Text>
+        {body ? <Text style={styles.modalBody}>{body}</Text> : null}
+        {buttons.map((b) => (
+          <TouchableOpacity
+            key={b.label}
+            activeOpacity={0.85}
+            onPress={b.onPress}
+            style={[styles.modalBtn, b.gray && styles.modalBtnGray]}
+            accessibilityRole="button"
+            accessibilityLabel={b.label}
+          >
+            <Text style={styles.modalBtnText}>{b.label}</Text>
+          </TouchableOpacity>
+        ))}
+      </TouchableOpacity>
+    </TouchableOpacity>
+  </Modal>
+);
+
+// Small black map chip ("N Flagler Dr.", "13 mins ETA", "2nd St.").
+const MapChip: React.FC<{ label: string; top: string; left: string }> = ({ label, top, left }) => (
+  <View style={[styles.mapChip, { top: top as any, left: left as any }]}>
+    <Text style={styles.mapChipText}>{label}</Text>
+  </View>
+);
+
+// ---------------------------------------------------------------------------
+// 1) FavorTracking — the light-map screen with the white bottom sheet.
+//    Minimized <-> Expanded (tap the handle); Arrived states; overlay modals.
 // ---------------------------------------------------------------------------
 export const FavorTracking = ({ navigation }: any) => {
   const s = useStore();
+  const insets = useSafeAreaInsets();
   const fav = s.activeFavor;
   const pal = s.activePal;
+
+  const [expanded, setExpanded] = useState(false);
   const [callVisible, setCallVisible] = useState(false);
   const [cancelVisible, setCancelVisible] = useState(false);
+  // Set after WE cancel: { charged } drives "Cancelled." with/without the
+  // "Your account has been charged." line (w-o charge = reblast frame 149:10128).
+  const [cancelled, setCancelled] = useState<null | { charged: boolean }>(null);
+  const [arrivedSeen, setArrivedSeen] = useState(false);
+  const [repostDismissed, setRepostDismissed] = useState(false);
 
-  // Resolve display values from real state, with design-literal fallbacks.
-  const palName = pal ? `${pal.firstName} ${pal.lastName}` : 'Aditya Patil';
-  const palAvatar = pal?.avatar ?? 'https://i.pravatar.cc/150?img=33';
-  const description = (fav?.description && fav.description.trim())
-    || 'Pick up package from Amazon Hub Lockers';
-  const dateLabel = formatFavorDate(fav?.scheduledFor ?? fav?.createdAt);
-  const etaWindow = fav?.etaWindow ?? '11:50AM - 12:10PM';
-  const address = fav?.location?.address ?? '2099 Woodvine Rd, Lorman';
-  const tierLabel = fav && fav.tier in FAVOR_TIERS
-    ? FAVOR_TIERS[fav.tier as keyof typeof FAVOR_TIERS].label
-    : 'Tiny Favor';
+  // Display values from live state, with the Figma literals as fallbacks.
+  const palName = pal ? `${pal.firstName} ${pal.lastName}` : 'Fabrizio L.';
+  const palAvatar = pal?.avatar ?? 'https://i.pravatar.cc/150?img=12';
+  const palRating = (pal?.rating ?? 4.9).toFixed(1);
+  const etaShort = fav?.etaWindow ?? '11:50 - 12:10';
+  const etaLong = fav?.etaWindow ?? '11:50 - 12:10PM';
 
-  // Money: the MEMBER sees what THEY paid (computeFees), plus a transparency split.
-  const base = fav?.price ?? 20;
-  const fees = computeFees(base);
-  const totalPaid = fav?.total ?? fees.total;
-  const { payout } = computePayout(base);
+  const status = fav?.status ?? 'matched';
+  const arrived = status === 'arrived' || status === 'in_progress';
+  const completed = status === 'completed';
+  const cancelledByPal = status === 'cancelled'; // our own cancel nulls activeFavor
+  const distanceLabel = arrived || completed ? '0 miles away' : '1 mile away';
 
-  // Member-facing status timeline (Pal accepted -> ... -> Completed).
-  const currentStep = MEMBER_STATUS_STEPS.findIndex((st) => st.status === fav?.status);
-  const statusLabel = currentStep >= 0 ? MEMBER_STATUS_STEPS[currentStep].label : 'Finding your Pal…';
-  const isCompleted = fav?.status === 'completed';
+  // Unread messages from this Pal → red "Message your Favor Pal" row + badge.
+  const thread = pal ? s.threads.find((t) => t.withUser.id === pal.id) : undefined;
+  const unread = thread?.unread ?? 0;
 
-  // Cancelling a committed favor forfeits a fee and refunds the rest, per the
-  // shared cancellation policy — surface that via ConfirmModal before doing
-  // anything irreversible so the member isn't charged silently.
-  const cancelInfo = fav ? computeCancellation(fav) : null;
-  const cancelMessage = cancelInfo
-    ? (cancelInfo.fee > 0
-      ? `You'll be refunded $${cancelInfo.refund.toFixed(2)}. A $${cancelInfo.fee.toFixed(2)} cancellation fee applies because your Pal is already committed.`
-      : `You'll be refunded $${cancelInfo.refund.toFixed(2)} in full.`)
-    : 'Are you sure you want to cancel this favor?';
+  const openThread = async () => {
+    if (pal) {
+      const threadId = await s.openThreadWith(pal.id);
+      if (threadId) {
+        navigation.navigate('MessageThread', { threadId });
+        return;
+      }
+    }
+    navigation.navigate('Tabs', { screen: 'Messages' });
+  };
 
-  const onCancel = () => setCancelVisible(true);
-  // On confirm, unwind the whole checkout stack back to Home via popToTop()
-  // instead of goBack() — the underlying SelectPayment draft was already
-  // cleared by requestFavor(), so returning there shows a stale payment sheet.
+  const callPal = () => {
+    const phone = pal?.phone;
+    if (phone) {
+      Linking.openURL(`tel:${phone}`).catch(() => setCallVisible(true));
+    } else {
+      setCallVisible(true);
+    }
+  };
+
+  // Capture the fee BEFORE cancelFavor() nulls the favor.
   const confirmCancel = () => {
+    const charged = fav ? computeCancellation(fav).fee > 0 : true;
     setCancelVisible(false);
     s.cancelFavor();
-    navigation.popToTop();
+    setCancelled({ charged });
   };
 
-  // SHARE doubles as share-trip (live status/ETA) + a referral growth loop.
-  const onShare = () => {
-    Share.share({
-      message:
-        `I just booked a ${tierLabel} on My Favor! My Pal ${palName} is arriving ${etaWindow}. `
-        + `Join me and get $10 off your first favor: https://myfavor.app/r/${s.user?.id ?? 'invite'}`,
-    }).catch(() => {});
+  const requestAnother = () => {
+    setCancelled(null);
+    navigation.popToTop();
+    navigation.navigate('SelectFavor');
   };
+
+  // Pal cancelled → seed the draft from the dead favor so REPOST works.
+  const repostFavor = () => {
+    if (fav) {
+      s.setDraft({
+        tier: fav.tier,
+        price: fav.price,
+        description: fav.description,
+        images: fav.images,
+        location: fav.location,
+        ...(fav.scheduledFor != null ? { scheduledFor: fav.scheduledFor } : {}),
+      });
+    }
+    setRepostDismissed(true);
+    navigation.navigate('FavorSummary');
+  };
+
+  // Sheet body -------------------------------------------------------------
+  const profileCol = (
+    <View style={{ marginLeft: 14 }}>
+      <Text style={styles.palName}>{palName}</Text>
+      <View style={styles.starRow}>
+        <Ionicons name="star" size={13} color="#FFBD00" />
+        <Text style={styles.ratingText}>{palRating}</Text>
+      </View>
+      <Text style={styles.distanceText}>{distanceLabel}</Text>
+    </View>
+  );
+
+  const actionRow = (
+    label: string,
+    icon: keyof typeof Ionicons.glyphMap,
+    onPress: () => void,
+    red?: boolean,
+  ) => (
+    <TouchableOpacity
+      style={styles.actionRow}
+      activeOpacity={0.7}
+      onPress={onPress}
+      accessibilityRole="button"
+      accessibilityLabel={label}
+    >
+      <Ionicons name={icon} size={19} color={red ? RED : BLACK} />
+      <Text style={[styles.actionText, red && { color: RED }]}>{label}</Text>
+      <Ionicons name="chevron-forward" size={18} color={red ? RED : BLACK} />
+    </TouchableOpacity>
+  );
 
   return (
-    <SafeAreaView style={{ flex: 1, backgroundColor: DARK.bg }} edges={['top', 'bottom']}>
-      {/* Live-tracking map backdrop. StaticMap renders the real Google Static
-          Map when a key + coords are present and falls back to the styled
-          MapPlaceholder grid otherwise; a dark scrim keeps the peek reading as
-          a night/dark map to match the v.2 reference. */}
-      <View style={{ position: 'absolute', top: 0, left: 0, right: 0, height: 440, backgroundColor: DARK.map }} pointerEvents="none">
-        <StaticMap lat={fav?.location?.lat} lng={fav?.location?.lng} height={440} zoom={14} />
-        <View style={[StyleSheet.absoluteFill, { backgroundColor: DARK.scrim }]} />
-      </View>
-      {/* Top nav banner over the map */}
-      <View style={styles.navRow}>
-        <TouchableOpacity
-          style={[styles.menuBtn, { backgroundColor: WHITE }, tokens.shadow.card]}
-          activeOpacity={0.8}
-          onPress={() => navigation.navigate('SideDrawer')}
-          accessibilityRole="button"
-          accessibilityLabel="Open menu"
-        >
-          <Ionicons name="menu" size={22} color={DARK.ctaText} />
-        </TouchableOpacity>
-      </View>
+    <View style={{ flex: 1, backgroundColor: '#E9EEF3' }}>
+      <StatusBar barStyle="dark-content" />
 
-      {/* small peek of the dark map */}
-      <View style={{ height: 52 }} />
-
-      {/* Dark navy bottom sheet */}
-      <View style={[styles.sheet, { backgroundColor: DARK.sheet, borderTopWidth: StyleSheet.hairlineWidth, borderColor: DARK.border }, tokens.shadow.card]}>
-        <ScrollView
-          showsVerticalScrollIndicator={false}
-          contentContainerStyle={{ padding: tokens.spacing.lg, paddingBottom: tokens.spacing.xl }}
-        >
-          <View style={styles.handle} />
-          <Txt variant="h3" center color={DARK.text}>Favor Booked</Txt>
-
-          <View style={[styles.divider, { backgroundColor: DARK.border }]} />
-
-          {/* Pal / favor profile row */}
-          <View style={styles.profileRow}>
-            <View>
-              <Avatar uri={palAvatar} size={56} />
-              <View style={[styles.badge, { borderColor: DARK.sheet }]} />
-            </View>
-            <View style={{ flex: 1, marginLeft: 14 }}>
-              <Txt variant="label" color={DARK.text}>{palName}</Txt>
-              {pal ? (
-                <View style={styles.ratingRow} accessibilityLabel={`Pal rated ${pal.rating.toFixed(1)} out of 5`}>
-                  <StarRating value={pal.rating} size={12} />
-                  <Txt variant="caption" color={DARK.textSecondary} style={{ marginLeft: 6 }}>
-                    {pal.rating.toFixed(1)}
-                  </Txt>
+      {/* Light map backdrop (StaticMap → MapPlaceholder fallback), full-bleed. */}
+      <View style={{ position: 'absolute', top: -16, left: -16, right: -16, bottom: -16 }} pointerEvents="none">
+        <StaticMap lat={fav?.location?.lat} lng={fav?.location?.lng} height={WIN_H + 32} zoom={15} label="">
+          <View style={StyleSheet.absoluteFill}>
+            {arrived || completed ? (
+              // Pal + car together at the member's pin.
+              <View style={[styles.mapMarkerRow, { top: '42%', left: '42%' }]}>
+                <View style={styles.palPin}>
+                  <Avatar uri={palAvatar} size={30} />
                 </View>
-              ) : null}
-              <Txt variant="caption" color={DARK.textSecondary} numberOfLines={2} style={{ marginTop: 2 }}>
-                {description}
-              </Txt>
-              <Txt variant="caption" color={DARK.textSecondary} style={{ marginTop: 2 }}>
-                {dateLabel}
-              </Txt>
-              {fav ? (
-                <TouchableOpacity
-                  activeOpacity={0.7}
-                  onPress={() => navigation.navigate('FavorHistoryDetail', { favorId: fav.id })}
-                  accessibilityRole="button"
-                  accessibilityLabel="View favor details"
-                >
-                  <Txt variant="caption" color={DARK.text} style={{ marginTop: 4 }}>View More</Txt>
-                </TouchableOpacity>
-              ) : null}
-            </View>
-          </View>
-
-          {/* Arrival window */}
-          <Txt variant="h2" center color={DARK.text} style={{ marginTop: tokens.spacing.lg }}>
-            {etaWindow}
-          </Txt>
-
-          {/* Member status timeline driven by activeFavor.status */}
-          <View
-            style={styles.timeline}
-            accessibilityRole="progressbar"
-            accessibilityLabel={`Favor status: ${statusLabel}`}
-          >
-            {MEMBER_STATUS_STEPS.map((step, i) => {
-              const done = i <= currentStep;
-              const isCurrent = i === currentStep;
-              return (
-                <React.Fragment key={step.status}>
-                  {i > 0 && (
-                    <View style={[styles.timelineBar, { backgroundColor: i <= currentStep ? RED : DARK.border }]} />
-                  )}
-                  <View
-                    style={[
-                      styles.timelineDot,
-                      {
-                        backgroundColor: done ? RED : DARK.raised,
-                        borderColor: isCurrent ? DARK.text : done ? RED : DARK.border,
-                      },
-                    ]}
-                  />
-                </React.Fragment>
-              );
-            })}
-          </View>
-          <Txt variant="caption" center color={DARK.textSecondary} style={{ marginTop: 6 }}>
-            {statusLabel}
-          </Txt>
-
-          {/* Cancel is only valid while the favor is still in progress — once it
-              is completed the action flips to "RATE YOUR PAL", so hide the pill
-              to avoid pushing a phantom 'cancelled' duplicate into History. */}
-          {!isCompleted ? (
-            <TouchableOpacity
-              style={[styles.cancelPill, { backgroundColor: DARK.raised, borderColor: DARK.border }]}
-              activeOpacity={0.8}
-              onPress={onCancel}
-              accessibilityRole="button"
-              accessibilityLabel="Cancel favor"
-            >
-              <Txt variant="button" color={DARK.text}>CANCEL FAVOR</Txt>
-            </TouchableOpacity>
-          ) : null}
-
-          <View style={[styles.divider, { backgroundColor: DARK.border }]} />
-
-          {/* Favor / total-paid row */}
-          <View style={styles.favorRow}>
-            <View style={[styles.favorIcon, { backgroundColor: WHITE }]}>
-              <Ionicons name="cube" size={20} color={RED} />
-            </View>
-            <View style={{ flex: 1, marginLeft: 14 }}>
-              <Txt variant="label" color={DARK.text}>{tierLabel}</Txt>
-              <Txt variant="caption" color={DARK.textSecondary} style={{ marginTop: 2 }}>Total paid</Txt>
-            </View>
-            <Txt variant="label" color={DARK.text}>${totalPaid.toFixed(2)}</Txt>
-          </View>
-          {/* Transparency: what the member paid vs what the Pal actually receives */}
-          <Txt variant="caption" color={DARK.textSecondary} style={{ marginTop: 6, marginLeft: 58 }}>
-            Pal receives ${payout.toFixed(2)} · Service fee ${fees.serviceFee.toFixed(2)}
-          </Txt>
-
-          {/* Description */}
-          <View style={styles.metaLabel}>
-            <Ionicons name="document-text-outline" size={16} color={DARK.text} />
-            <Txt variant="label" color={DARK.text} style={{ marginLeft: 8 }}>Description</Txt>
-          </View>
-          <Txt variant="bodySm" color={DARK.textSecondary} style={{ marginTop: 4, marginLeft: 24 }}>
-            {description}
-          </Txt>
-
-          {/* Address */}
-          <View style={[styles.metaLabel, { marginTop: tokens.spacing.base }]}>
-            <Ionicons name="location-outline" size={16} color={DARK.text} />
-            <Txt variant="label" color={DARK.text} style={{ marginLeft: 8 }}>Address</Txt>
-          </View>
-          <Txt variant="bodySm" color={DARK.textSecondary} style={{ marginTop: 4, marginLeft: 24 }}>
-            {address}
-          </Txt>
-
-          {/* Actions — member-voiced. The member never self-completes; rating is
-              gated behind a real pal-driven 'completed' status. Left = dark pill
-              (call), right = white primary (v.2 filled button). */}
-          <View style={styles.actionRow}>
-            <TouchableOpacity
-              style={[styles.darkBtn, { backgroundColor: DARK.raised, borderColor: DARK.border }]}
-              activeOpacity={0.85}
-              onPress={() => setCallVisible(true)}
-              accessibilityRole="button"
-              accessibilityLabel="Call your pal"
-            >
-              <Txt variant="button" color={DARK.text}>CALL YOUR PAL</Txt>
-            </TouchableOpacity>
-            {isCompleted ? (
-              <Button
-                title="RATE YOUR PAL"
-                variant="white"
-                style={{ flex: 1 }}
-                onPress={() => navigation.navigate('OrderComplete')}
-              />
+                <Ionicons name="car-sport" size={24} color={RED} style={{ marginLeft: 2 }} />
+              </View>
             ) : (
-              <Button
-                title="MESSAGE PAL"
-                variant="white"
-                style={{ flex: 1 }}
-                onPress={async () => {
-                  // Open the direct thread with this Pal when possible; fall
-                  // back to the Messages list only if there's no pal/thread.
-                  if (pal) {
-                    const threadId = await s.openThreadWith(pal.id);
-                    if (threadId) {
-                      navigation.navigate('MessageThread', { threadId });
-                      return;
-                    }
-                  }
-                  navigation.navigate('Tabs', { screen: 'Messages' });
-                }}
-              />
+              <>
+                {/* red route: car (pal) → member pin */}
+                <Ionicons name="car-sport" size={24} color={RED} style={{ position: 'absolute', top: '19%', left: '53%' }} />
+                <MapChip label="N Flagler Dr." top="24%" left="56%" />
+                <View style={[styles.routeV, { top: '23%', left: '52%', height: '29%' }]} />
+                <MapChip label="13 mins ETA" top="40%" left="55%" />
+                <View style={[styles.routeH, { top: '52%', left: '45%', width: '8%' }]} />
+                <View style={[styles.palPin, { position: 'absolute', top: '49.5%', left: '38%' }]}>
+                  <Avatar uri={palAvatar} size={30} />
+                </View>
+                <MapChip label="2nd St." top="56%" left="35%" />
+              </>
             )}
           </View>
-        </ScrollView>
-
-        {/* Bottom tab bar (visual, matches reference) — now wired */}
-        <View style={[styles.tabBar, { backgroundColor: DARK.bg, borderTopColor: DARK.border }]}>
-          <TouchableOpacity
-            style={styles.tabItem}
-            activeOpacity={0.7}
-            onPress={onShare}
-            accessibilityRole="button"
-            accessibilityLabel="Share favor status and invite a friend"
-          >
-            <Ionicons name="share-social-outline" size={22} color={DARK.textSecondary} />
-            <Txt variant="tab" color={DARK.textSecondary} style={{ marginTop: 4 }}>SHARE</Txt>
-          </TouchableOpacity>
-          <TouchableOpacity
-            style={styles.tabItem}
-            activeOpacity={0.85}
-            onPress={() => navigation.navigate('Tabs')}
-            accessibilityRole="button"
-            accessibilityLabel="Home"
-          >
-            <View style={styles.homeBtn}>
-              <Ionicons name="home" size={22} color={WHITE} />
-            </View>
-            <Txt variant="tab" color={RED} style={{ marginTop: 4 }}>HOME</Txt>
-          </TouchableOpacity>
-          <TouchableOpacity
-            style={styles.tabItem}
-            activeOpacity={0.7}
-            onPress={() => navigation.navigate('Tabs', { screen: 'History' })}
-            accessibilityRole="button"
-            accessibilityLabel="Activity history"
-          >
-            <Ionicons name="time-outline" size={22} color={DARK.textSecondary} />
-            <Txt variant="tab" color={DARK.textSecondary} style={{ marginTop: 4 }}>ACTIVITY</Txt>
-          </TouchableOpacity>
-        </View>
+        </StaticMap>
       </View>
 
-      <InfoModal
-        visible={callVisible}
-        title="Connecting call"
-        message={`We're connecting you with ${palName} through a private number to keep both phone numbers protected.`}
-        buttonLabel="OK"
-        onClose={() => setCallVisible(false)}
+      {/* Header: black menu square + white "Switch to be a favor pal" pill */}
+      <SafeAreaView edges={['top']} style={{ backgroundColor: 'transparent' }}>
+        <View style={styles.headerRow}>
+          <TouchableOpacity
+            style={[styles.menuBtn, tokens.shadow.card]}
+            activeOpacity={0.85}
+            onPress={() => navigation.navigate('SideDrawer')}
+            accessibilityRole="button"
+            accessibilityLabel="Open menu"
+          >
+            <Ionicons name="menu" size={24} color={WHITE} />
+          </TouchableOpacity>
+          <View style={{ flex: 1 }} />
+          <TouchableOpacity
+            style={[styles.rolePill, tokens.shadow.card]}
+            activeOpacity={0.85}
+            onPress={() => {
+              s.setRole('pal');
+              navigation.navigate('Tabs');
+            }}
+            accessibilityRole="switch"
+            accessibilityState={{ checked: false }}
+            accessibilityLabel="Switch to be a favor pal"
+          >
+            <Text style={styles.rolePillText}>Switch to be a favor pal</Text>
+            <View style={styles.toggleTrack}>
+              <View style={styles.toggleKnob} />
+            </View>
+          </TouchableOpacity>
+        </View>
+      </SafeAreaView>
+
+      <View style={{ flex: 1 }} />
+
+      {/* White bottom sheet */}
+      <View style={[styles.sheet, { paddingBottom: Math.max(insets.bottom, 12) }, tokens.shadow.card]}>
+        <TouchableOpacity
+          activeOpacity={0.8}
+          onPress={() => setExpanded((e) => !e)}
+          accessibilityRole="button"
+          accessibilityLabel={expanded ? 'Collapse favor details' : 'Expand favor details'}
+          style={{ alignSelf: 'stretch', alignItems: 'center', paddingTop: 10, paddingBottom: 4 }}
+        >
+          <View style={styles.handle} />
+        </TouchableOpacity>
+
+        {arrived || completed ? (
+          // ------------------- Favor Arrived (#125:9610 / #125:9354) -------------------
+          <View>
+            <Text style={styles.sheetTitle}>
+              {completed ? 'Your Favor Pal has completed the favor.' : 'Your Favor Pal has arrived.'}
+            </Text>
+            <View style={styles.divider} />
+            <View style={styles.arrivedProfileRow}>
+              <View>
+                <Avatar uri={palAvatar} size={64} />
+                {unread > 0 ? (
+                  <View style={styles.unreadBadge}>
+                    <Text style={styles.unreadBadgeText}>{unread}</Text>
+                  </View>
+                ) : null}
+              </View>
+              {profileCol}
+            </View>
+            <View style={styles.divider} />
+            {completed ? (
+              <TouchableOpacity
+                style={styles.blackBtn}
+                activeOpacity={0.85}
+                onPress={() => navigation.navigate('OrderComplete')}
+                accessibilityRole="button"
+                accessibilityLabel="Rate your Favor Pal"
+              >
+                <Text style={styles.blackBtnText}>RATE YOUR FAVOR PAL</Text>
+              </TouchableOpacity>
+            ) : (
+              <>
+                {actionRow('Call your Favor Pal', 'call', callPal)}
+                <View style={styles.divider} />
+                {actionRow('Message your Favor Pal', 'chatbox', openThread, unread > 0)}
+              </>
+            )}
+          </View>
+        ) : expanded ? (
+          // ------------------- Favor Booked - Expanded (#125:8968) -------------------
+          <View>
+            <Text style={styles.sheetTitle}>Favor Booked</Text>
+            <View style={styles.divider} />
+            <View style={styles.expandedProfileRow}>
+              <Avatar uri={palAvatar} size={64} />
+              {profileCol}
+            </View>
+            <Text style={styles.etaBig}>{etaLong}</Text>
+            <View style={styles.arrivalPill}>
+              <Text style={styles.arrivalPillText}>Arrival Window</Text>
+            </View>
+            <View style={[styles.divider, { marginTop: 20 }]} />
+            <View style={styles.notifyRow}>
+              <Ionicons name="notifications-outline" size={20} color={BLACK} />
+              <Text style={styles.notifyText}>You'll be notified when your{'\n'}favor pal is on the way</Text>
+            </View>
+            <View style={styles.divider} />
+            {actionRow('Call your Favor Pal', 'call', callPal)}
+            <View style={styles.divider} />
+            {actionRow('Message your Favor Pal', 'chatbox', openThread, unread > 0)}
+            <TouchableOpacity
+              style={styles.blackBtn}
+              activeOpacity={0.85}
+              onPress={() => setCancelVisible(true)}
+              accessibilityRole="button"
+              accessibilityLabel="Cancel this favor"
+            >
+              <Text style={styles.blackBtnText}>CANCEL THIS FAVOR</Text>
+            </TouchableOpacity>
+          </View>
+        ) : (
+          // ------------------- Favor Booked - Minimized (#125:8826) -------------------
+          <TouchableOpacity activeOpacity={0.85} onPress={() => setExpanded(true)}>
+            <View style={styles.minRow}>
+              <Avatar uri={palAvatar} size={48} />
+              <View style={{ flex: 1, marginLeft: 12 }}>
+                <Text style={styles.palName}>{palName}</Text>
+                <View style={styles.starRow}>
+                  <Ionicons name="star" size={13} color="#FFBD00" />
+                  <Text style={styles.ratingText}>{palRating}</Text>
+                </View>
+              </View>
+              <View style={{ alignItems: 'flex-end' }}>
+                <Text style={styles.etaSmall}>{etaShort}</Text>
+                <Text style={styles.distanceText}>1 mile away</Text>
+              </View>
+            </View>
+          </TouchableOpacity>
+        )}
+      </View>
+
+      {/* Modal: Favor Pal Arrived (#125:10406) */}
+      <V2Modal
+        visible={arrived && !arrivedSeen}
+        title={'Your Favor Pal\nhas arrived.'}
+        buttons={[{ label: 'OK', onPress: () => setArrivedSeen(true) }]}
+        onDismiss={() => setArrivedSeen(true)}
       />
 
-      <ConfirmModal
+      {/* Cancel Favor Modal (#125:10014) */}
+      <V2Modal
         visible={cancelVisible}
-        title="Cancel this favor?"
-        message={cancelMessage}
-        confirmLabel="Cancel favor"
-        cancelLabel="Keep favor"
-        destructive
-        onConfirm={confirmCancel}
-        onCancel={() => setCancelVisible(false)}
+        title="Are you sure you want to cancel?"
+        body="You will be charged the full amount if you cancel this favor."
+        buttons={[{ label: 'CANCEL FAVOR', onPress: confirmCancel }]}
+        onDismiss={() => setCancelVisible(false)}
       />
-    </SafeAreaView>
+
+      {/* Cancelled Modal — with charge (#125:10210) / without charge (#149:10128) */}
+      <V2Modal
+        visible={cancelled != null}
+        title="Cancelled."
+        body={cancelled?.charged ? 'Your account has been charged.' : undefined}
+        buttons={[{ label: 'REQUEST ANOTHER FAVOR', onPress: requestAnother }]}
+      />
+
+      {/* Repost Favor Modal (#125:10601) — the Pal cancelled on us */}
+      <V2Modal
+        visible={cancelledByPal && !repostDismissed && cancelled == null}
+        title={'Your Favor has been cancelled by\nyour favor pal.'}
+        buttons={[
+          { label: 'REPOST FAVOR', onPress: repostFavor },
+          {
+            label: 'CLOSE',
+            gray: true,
+            onPress: () => {
+              setRepostDismissed(true);
+              navigation.popToTop();
+            },
+          },
+        ]}
+      />
+
+      {/* Call fallback (web / no dialer) — styled like the v.2 alert modals */}
+      <V2Modal
+        visible={callVisible}
+        title="Connecting call"
+        body={`We're connecting you with ${palName} through a private number to keep both phone numbers protected.`}
+        buttons={[{ label: 'OK', onPress: () => setCallVisible(false) }]}
+        onDismiss={() => setCallVisible(false)}
+      />
+    </View>
   );
 };
 
 // ---------------------------------------------------------------------------
-// 2) OrderComplete — Thank you + rating + tip + feedback (dark v.2).
+// 2) OrderComplete — "Thank You!" + rating + tip + feedback (#125:9770),
+//    Tip Other (#125:9841), Tip Submitted Success (#125:9917) and
+//    Feedback Submitted Success (#125:9999).
 // ---------------------------------------------------------------------------
 const TIPS = [
   { key: '2', label: '$2.00', value: 2 },
@@ -393,285 +427,501 @@ export const OrderComplete = ({ navigation }: any) => {
   const [feedback, setFeedback] = useState('');
   const [tipKey, setTipKey] = useState<string | null>(null);
   const [customTip, setCustomTip] = useState('');
-  const [confirmVisible, setConfirmVisible] = useState(false);
+  const [tipSuccessVisible, setTipSuccessVisible] = useState(false);
+  const [done, setDone] = useState(false);
 
-  // "Other" accepts a real numeric amount; presets map to their fixed value.
+  // "Other" needs a real numeric amount; presets carry their fixed value.
   const isOther = tipKey === 'other';
   const presetTip = TIPS.find((t) => t.key === tipKey)?.value;
   const parsedCustom = Math.round(parseFloat(customTip) * 100) / 100;
   const customValid = isOther && !Number.isNaN(parsedCustom) && parsedCustom > 0;
   const tip = isOther ? (customValid ? parsedCustom : undefined) : presetTip;
-
-  // Block submit until rated, and until "Other" has a valid amount.
   const canSubmit = rating > 0 && (!isOther || customValid);
 
-  const doSubmit = () => {
-    s.rateFavor(rating, feedback, tip);
-    navigation.navigate('Tabs');
-  };
-
-  // A tip is an additional post-payment charge — confirm it explicitly first.
   const onSubmit = () => {
-    if (tip && tip > 0) setConfirmVisible(true);
-    else doSubmit();
+    s.rateFavor(rating, feedback, tip);
+    if (tip && tip > 0) setTipSuccessVisible(true);
+    else setDone(true);
   };
 
-  const hr = <View style={[styles.hr, { backgroundColor: DARK.border }]} />;
+  // ---------------- Feedback Submitted Success (#125:9999) ----------------
+  if (done) {
+    return (
+      <SafeAreaView style={{ flex: 1, backgroundColor: WHITE }} edges={['top', 'bottom']}>
+        <StatusBar barStyle="dark-content" />
+        <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 36 }}>
+          <View style={styles.successRing}>
+            <Ionicons name="checkmark-sharp" size={58} color={GREEN} />
+          </View>
+          <Text style={styles.successText}>You've succesfully submitted your feedback!</Text>
+        </View>
+        <TouchableOpacity
+          style={[styles.blackBtn, { marginBottom: 8 }]}
+          activeOpacity={0.85}
+          onPress={() => navigation.navigate('Tabs')}
+          accessibilityRole="button"
+          accessibilityLabel="Continue"
+        >
+          <Text style={styles.blackBtnText}>CONTINUE</Text>
+        </TouchableOpacity>
+      </SafeAreaView>
+    );
+  }
 
   return (
-    <SafeAreaView style={{ flex: 1, backgroundColor: DARK.bg }} edges={['top', 'bottom']}>
+    <SafeAreaView style={{ flex: 1, backgroundColor: WHITE }} edges={['top', 'bottom']}>
+      <StatusBar barStyle="dark-content" />
       <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
-        <ScrollView contentContainerStyle={{ flexGrow: 1, padding: tokens.spacing.lg }} keyboardShouldPersistTaps="handled">
-          <Txt variant="display" center color={DARK.text}>Thank You!</Txt>
-          <Txt variant="h4" center color={DARK.textSecondary} style={{ marginTop: tokens.spacing.base }}>
-            Favor Pal has completed your favor.
-          </Txt>
+        <ScrollView contentContainerStyle={{ paddingBottom: 24 }} keyboardShouldPersistTaps="handled">
+          <Text style={styles.thankYou}>Thank You!</Text>
+          {/* Copy matches the Figma text layer exactly (missing space included). */}
+          <Text style={styles.completedSub}>Favor Pal has completedyour favor.</Text>
 
           <Image
             source={require('../../assets/img/tracking/celebration.png')}
-            style={{ width: '100%', height: 300, resizeMode: 'contain', marginTop: tokens.spacing.lg }}
+            style={styles.celebration}
+            accessibilityIgnoresInvertColors
           />
 
-          {hr}
+          <View style={styles.hr} />
 
           {/* Rating */}
           <View style={styles.ratingRow}>
-            <Txt variant="h4" color={DARK.text}>Rating</Txt>
-            <StarRating value={rating} size={28} onChange={setRating} />
+            <Text style={styles.sectionLabel}>Rating</Text>
+            <View style={{ marginLeft: 28 }}>
+              <StarRating value={rating} size={22} onChange={setRating} />
+            </View>
           </View>
 
-          {hr}
+          <View style={styles.hr} />
 
           {/* Tip */}
-          <Txt variant="h4" color={DARK.text}>Great Pal? Consider giving a tip!</Txt>
+          <Text style={[styles.sectionLabel, { paddingHorizontal: 20, paddingTop: 18 }]}>
+            Great Pal? Consider giving a tip!
+          </Text>
           <View style={styles.tipRow}>
             {TIPS.map((t) => {
               const active = tipKey === t.key;
+              const muted = tipKey != null && !active;
               return (
                 <TouchableOpacity
                   key={t.key}
                   activeOpacity={0.8}
-                  onPress={() => { setTipKey(t.key); if (t.key !== 'other') setCustomTip(''); }}
-                  style={[styles.tipChip, { backgroundColor: active ? WHITE : DARK.raised }]}
+                  onPress={() => {
+                    setTipKey(t.key);
+                    if (t.key !== 'other') setCustomTip('');
+                  }}
+                  style={[
+                    styles.tipChip,
+                    active && { backgroundColor: '#E4E4E4' },
+                    muted && { backgroundColor: '#F5F5F5' },
+                  ]}
                   accessibilityRole="button"
                   accessibilityState={{ selected: active }}
                   accessibilityLabel={t.key === 'other' ? 'Other tip amount' : `Tip ${t.label}`}
                 >
-                  <Txt variant="body" color={active ? DARK.ctaText : DARK.text}>{t.label}</Txt>
+                  <Text style={[styles.tipChipText, muted && { color: '#BEBEBE' }]}>{t.label}</Text>
                 </TouchableOpacity>
               );
             })}
           </View>
 
+          {/* Tip Other (#125:9841): outlined field, right-aligned "$ Other…" */}
           {isOther ? (
-            <View style={{ marginTop: tokens.spacing.base }}>
-              <View style={[styles.darkField, { backgroundColor: DARK.raised, borderColor: DARK.border }]}>
-                <Ionicons name="cash-outline" size={18} color={DARK.textTertiary} style={{ marginRight: 8 }} />
-                <TextInput
-                  style={{ flex: 1, color: DARK.text, fontSize: 16 }}
-                  value={customTip}
-                  onChangeText={setCustomTip}
-                  placeholder="Enter tip amount (e.g. 8)"
-                  placeholderTextColor={DARK.textTertiary}
-                  keyboardType="decimal-pad"
-                />
-              </View>
-              {customTip.length > 0 && !customValid ? (
-                <Txt variant="caption" color={RED} style={{ marginTop: 6 }}>
-                  Enter a tip amount greater than $0.
-                </Txt>
-              ) : null}
+            <View style={styles.otherField}>
+              <TextInput
+                style={styles.otherInput}
+                value={customTip}
+                onChangeText={setCustomTip}
+                placeholder="$ Other…"
+                placeholderTextColor="#9E9E9E"
+                keyboardType="decimal-pad"
+                accessibilityLabel="Enter tip amount"
+              />
             </View>
           ) : null}
 
-          {hr}
+          <View style={[styles.hr, { marginTop: 18 }]} />
 
           {/* Feedback */}
-          <Txt variant="h4" color={DARK.text} style={{ marginBottom: tokens.spacing.md }}>
-            Tell us about your experience
-          </Txt>
-          <View style={[styles.darkTextarea, { backgroundColor: DARK.card, borderColor: DARK.border }]}>
+          <Text style={[styles.sectionLabel, { paddingHorizontal: 20, paddingTop: 18 }]}>Feedback</Text>
+          <View style={styles.textarea}>
             <TextInput
               style={styles.textareaInput}
               value={feedback}
               onChangeText={setFeedback}
               placeholder="Please tell us about your experience"
-              placeholderTextColor={DARK.textTertiary}
+              placeholderTextColor="#9E9E9E"
               multiline
               maxLength={700}
+              accessibilityLabel="Feedback"
             />
           </View>
-          <Txt variant="caption" color={DARK.textSecondary} style={{ textAlign: 'right', marginTop: 6 }}>
-            700 characters max.
-          </Txt>
+          <Text style={styles.charMax}>700 characters max.</Text>
 
-          <Button
-            title="SUBMIT FEEDBACK"
-            variant="white"
+          <TouchableOpacity
+            style={[styles.blackBtn, !canSubmit && { backgroundColor: '#C4C4C4' }]}
+            activeOpacity={0.85}
             disabled={!canSubmit}
             onPress={onSubmit}
-            style={{ marginTop: tokens.spacing.lg }}
-          />
-
-          {/* Rating is optional — never trap the member on this screen. Mirrors the
-              pal-side "Maybe later" skip so either party can leave without rating. */}
-          <TouchableOpacity
-            onPress={() => navigation.navigate('Tabs')}
-            style={{ alignSelf: 'center', marginTop: tokens.spacing.md, paddingVertical: 6 }}
             accessibilityRole="button"
-            accessibilityLabel="Skip rating and return home"
+            accessibilityState={{ disabled: !canSubmit }}
+            accessibilityLabel="Submit feedback"
           >
-            <Txt variant="button" color={DARK.textSecondary}>Maybe later</Txt>
+            <Text style={styles.blackBtnText}>SUBMIT FEEDBACK</Text>
           </TouchableOpacity>
         </ScrollView>
       </KeyboardAvoidingView>
 
-      <ConfirmModal
-        visible={confirmVisible}
-        title="Add tip?"
-        message={`You'll be charged an additional $${(tip ?? 0).toFixed(2)}, which goes entirely to your Pal.`}
-        confirmLabel="Confirm tip"
-        cancelLabel="Not now"
-        onConfirm={() => { setConfirmVisible(false); doSubmit(); }}
-        onCancel={() => setConfirmVisible(false)}
+      {/* Tip Submitted Success (#125:9917) */}
+      <V2Modal
+        visible={tipSuccessVisible}
+        title="Success!"
+        body="You have successfully tipped your Favor Pal!"
+        buttons={[
+          {
+            label: 'OK',
+            onPress: () => {
+              setTipSuccessVisible(false);
+              setDone(true);
+            },
+          },
+        ]}
       />
     </SafeAreaView>
   );
 };
 
 const styles = StyleSheet.create({
-  // FavorTracking
-  navRow: {
+  // ----- map + header -----
+  headerRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    paddingHorizontal: tokens.spacing.base,
-    paddingTop: tokens.spacing.sm,
-    gap: tokens.spacing.md,
+    paddingHorizontal: 16,
+    paddingTop: 8,
   },
   menuBtn: {
     width: 44,
     height: 44,
-    borderRadius: tokens.radius.md,
+    borderRadius: 10,
+    backgroundColor: BLACK,
     alignItems: 'center',
     justifyContent: 'center',
   },
-  sheet: {
-    flex: 1,
-    borderTopLeftRadius: 28,
-    borderTopRightRadius: 28,
+  rolePill: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: WHITE,
+    borderRadius: 999,
+    height: 40,
+    paddingLeft: 16,
+    paddingRight: 8,
+  },
+  rolePillText: { fontFamily: POPPINS_M, fontSize: 12, color: BLACK },
+  toggleTrack: {
+    width: 36,
+    height: 20,
+    borderRadius: 10,
+    backgroundColor: '#E4E4E4',
+    marginLeft: 10,
+    justifyContent: 'center',
+    paddingHorizontal: 2,
+  },
+  toggleKnob: {
+    width: 16,
+    height: 16,
+    borderRadius: 8,
+    backgroundColor: WHITE,
+    ...tokens.shadow.card,
+  },
+  mapChip: {
+    position: 'absolute',
+    backgroundColor: BLACK,
+    borderRadius: 6,
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+  },
+  mapChipText: { fontFamily: fonts.robotoRegular, fontSize: 11, color: WHITE },
+  routeV: { position: 'absolute', width: 5, borderRadius: 3, backgroundColor: RED },
+  routeH: { position: 'absolute', height: 5, borderRadius: 3, backgroundColor: RED },
+  mapMarkerRow: { position: 'absolute', flexDirection: 'row', alignItems: 'center' },
+  palPin: {
+    width: 34,
+    height: 34,
+    borderRadius: 17,
+    backgroundColor: WHITE,
+    borderWidth: 2,
+    borderColor: RED,
+    alignItems: 'center',
+    justifyContent: 'center',
     overflow: 'hidden',
   },
+
+  // ----- bottom sheet -----
+  sheet: {
+    backgroundColor: WHITE,
+    borderTopLeftRadius: 24,
+    borderTopRightRadius: 24,
+  },
   handle: {
-    alignSelf: 'center',
-    width: 40,
+    width: 60,
     height: 5,
     borderRadius: 3,
-    backgroundColor: 'rgba(255,255,255,0.25)',
-    marginBottom: 12,
+    backgroundColor: BLACK,
   },
-  divider: {
-    height: StyleSheet.hairlineWidth,
-    marginVertical: tokens.spacing.base,
+  sheetTitle: {
+    fontFamily: POPPINS_M,
+    fontSize: 16,
+    color: BLACK,
+    textAlign: 'center',
+    marginTop: 12,
+    marginBottom: 16,
   },
-  profileRow: { flexDirection: 'row', alignItems: 'center' },
-  badge: {
-    position: 'absolute',
-    right: -2,
-    top: -2,
-    width: 20,
-    height: 20,
-    borderRadius: 6,
-    backgroundColor: RED,
-    borderWidth: 2,
+  divider: { height: 1, backgroundColor: DIVIDER, marginHorizontal: 20 },
+  minRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 24,
+    paddingTop: 14,
+    paddingBottom: 18,
   },
-  timeline: {
+  expandedProfileRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 24,
+    paddingVertical: 18,
+  },
+  arrivedProfileRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    alignSelf: 'center',
+    paddingVertical: 18,
+  },
+  palName: { fontFamily: POPPINS_M, fontSize: 16, color: BLACK },
+  starRow: { flexDirection: 'row', alignItems: 'center', marginTop: 3 },
+  ratingText: { fontFamily: fonts.bodyRegular, fontSize: 13, color: BLACK, marginLeft: 5 },
+  distanceText: { fontFamily: fonts.bodyRegular, fontSize: 12, color: GRAY, marginTop: 3 },
+  etaSmall: { fontFamily: POPPINS_M, fontSize: 16, color: BLACK },
+  etaBig: {
+    fontFamily: POPPINS_M,
+    fontSize: 24,
+    color: BLACK,
+    textAlign: 'center',
+    marginTop: 6,
+  },
+  arrivalPill: {
+    alignSelf: 'center',
+    backgroundColor: CHIP_BG,
+    borderRadius: 999,
+    paddingHorizontal: 14,
+    paddingVertical: 7,
+    marginTop: 10,
+  },
+  arrivalPillText: { fontFamily: POPPINS_M, fontSize: 12, color: '#5B5B5B' },
+  notifyRow: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
-    marginTop: tokens.spacing.md,
+    paddingVertical: 16,
   },
-  timelineDot: {
-    width: 12,
-    height: 12,
-    borderRadius: 6,
-    borderWidth: 2,
+  notifyText: {
+    fontFamily: POPPINS_M,
+    fontSize: 13,
+    lineHeight: 19,
+    color: BLACK,
+    marginLeft: 12,
   },
-  timelineBar: {
-    width: 28,
-    height: 2,
-    marginHorizontal: 2,
+  actionRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 24,
+    paddingVertical: 17,
   },
-  cancelPill: {
-    alignSelf: 'center',
-    marginTop: tokens.spacing.md,
-    paddingHorizontal: tokens.spacing.xl,
-    paddingVertical: tokens.spacing.sm,
-    borderRadius: tokens.radius.pill,
-    borderWidth: 1,
+  actionText: { flex: 1, fontFamily: POPPINS_M, fontSize: 15, color: BLACK, marginLeft: 14 },
+  unreadBadge: {
+    position: 'absolute',
+    top: -4,
+    right: -4,
+    minWidth: 20,
+    height: 18,
+    borderRadius: 5,
+    backgroundColor: RED,
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: 4,
   },
-  favorRow: { flexDirection: 'row', alignItems: 'center' },
-  favorIcon: {
-    width: 44,
-    height: 44,
-    borderRadius: tokens.radius.md,
+  unreadBadgeText: { fontFamily: fonts.bodySemiBold, fontSize: 11, color: WHITE },
+  blackBtn: {
+    marginHorizontal: 20,
+    marginTop: 16,
+    marginBottom: 4,
+    height: 50,
+    borderRadius: 12,
+    backgroundColor: BLACK,
     alignItems: 'center',
     justifyContent: 'center',
   },
-  metaLabel: { flexDirection: 'row', alignItems: 'center', marginTop: tokens.spacing.base },
-  actionRow: { flexDirection: 'row', gap: tokens.spacing.md, marginTop: tokens.spacing.xl },
-  darkBtn: {
+  blackBtnText: {
+    fontFamily: POPPINS_M,
+    fontSize: 14,
+    color: WHITE,
+    letterSpacing: 0.8,
+    textTransform: 'uppercase',
+  },
+
+  // ----- v.2 modal -----
+  scrim: {
     flex: 1,
-    height: 54,
-    borderRadius: tokens.radius.md,
+    backgroundColor: 'rgba(0,0,0,0.5)',
     alignItems: 'center',
     justifyContent: 'center',
-    borderWidth: 1,
+    paddingHorizontal: 24,
+  },
+  modalCard: {
+    width: '100%',
+    backgroundColor: WHITE,
+    borderRadius: 16,
+    paddingVertical: 28,
     paddingHorizontal: 20,
   },
-  tabBar: {
-    flexDirection: 'row',
-    borderTopWidth: StyleSheet.hairlineWidth,
-    paddingTop: tokens.spacing.sm,
-    paddingBottom: tokens.spacing.xs,
+  modalTitle: {
+    fontFamily: POPPINS_M,
+    fontSize: 20,
+    lineHeight: 30,
+    color: BLACK,
+    textAlign: 'center',
   },
-  tabItem: { flex: 1, alignItems: 'center' },
-  homeBtn: {
-    width: 48,
-    height: 48,
-    borderRadius: tokens.radius.md,
-    backgroundColor: RED,
+  modalBody: {
+    fontFamily: POPPINS_M,
+    fontSize: 14,
+    lineHeight: 21,
+    color: '#2E2E2E',
+    textAlign: 'center',
+    marginTop: 14,
+  },
+  modalBtn: {
+    marginTop: 20,
+    height: 47,
+    borderRadius: 10,
+    backgroundColor: BLACK,
     alignItems: 'center',
     justifyContent: 'center',
-    marginTop: -2,
   },
-  // OrderComplete
-  hr: { height: StyleSheet.hairlineWidth, marginVertical: tokens.spacing.lg },
-  ratingRow: { flexDirection: 'row', alignItems: 'center', gap: tokens.spacing.base },
-  tipRow: { flexDirection: 'row', flexWrap: 'wrap', gap: tokens.spacing.md, marginTop: tokens.spacing.base },
-  tipChip: {
-    paddingHorizontal: tokens.spacing.xl,
-    paddingVertical: tokens.spacing.md,
-    borderRadius: tokens.radius.pill,
+  modalBtnGray: { marginTop: 10, backgroundColor: '#A5A5A5' },
+  modalBtnText: {
+    fontFamily: POPPINS_M,
+    fontSize: 13,
+    color: WHITE,
+    letterSpacing: 0.6,
+    textTransform: 'uppercase',
   },
-  darkField: {
+
+  // ----- OrderComplete -----
+  thankYou: {
+    fontFamily: POPPINS_SB,
+    fontSize: 24,
+    color: BLACK,
+    textAlign: 'center',
+    marginTop: 24,
+  },
+  completedSub: {
+    fontFamily: POPPINS_M,
+    fontSize: 14,
+    color: BLACK,
+    textAlign: 'center',
+    marginTop: 8,
+  },
+  celebration: {
+    alignSelf: 'center',
+    width: '70%',
+    height: 235,
+    resizeMode: 'contain',
+    marginTop: 22,
+  },
+  hr: { height: 1, backgroundColor: DIVIDER, marginTop: 22 },
+  ratingRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    borderRadius: tokens.radius.md,
-    borderWidth: 1,
-    paddingHorizontal: 16,
-    minHeight: 56,
+    paddingHorizontal: 20,
+    paddingVertical: 16,
+    marginTop: 2,
   },
-  darkTextarea: {
-    borderRadius: tokens.radius.md,
-    borderWidth: 1,
+  sectionLabel: { fontFamily: POPPINS_SB, fontSize: 15, color: BLACK },
+  tipRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 10,
+    paddingHorizontal: 20,
+    marginTop: 14,
+  },
+  tipChip: {
+    backgroundColor: CHIP_BG,
+    borderRadius: 999,
+    height: 36,
     paddingHorizontal: 16,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  tipChipText: { fontFamily: fonts.bodyRegular, fontSize: 13, color: BLACK },
+  otherField: {
+    marginHorizontal: 20,
+    marginTop: 16,
+    height: 46,
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: '#DFDFDF',
+    backgroundColor: WHITE,
+    paddingHorizontal: 14,
+    justifyContent: 'center',
+  },
+  otherInput: {
+    fontFamily: fonts.bodyRegular,
+    fontSize: 15,
+    color: BLACK,
+    textAlign: 'right',
+    padding: 0,
+  },
+  textarea: {
+    marginHorizontal: 20,
+    marginTop: 12,
+    backgroundColor: CHIP_BG,
+    borderRadius: 10,
+    paddingHorizontal: 14,
     paddingVertical: 12,
   },
   textareaInput: {
-    color: DARK.text,
-    fontSize: 16,
-    minHeight: 140,
+    fontFamily: fonts.bodyRegular,
+    fontSize: 15,
+    color: BLACK,
+    minHeight: 96,
     textAlignVertical: 'top',
     padding: 0,
+  },
+  charMax: {
+    fontFamily: fonts.bodyRegular,
+    fontSize: 11,
+    color: GRAY,
+    alignSelf: 'flex-end',
+    marginRight: 20,
+    marginTop: 8,
+  },
+
+  // ----- Feedback Submitted Success -----
+  successRing: {
+    width: 116,
+    height: 116,
+    borderRadius: 58,
+    borderWidth: 9,
+    borderColor: GREEN,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginBottom: 36,
+  },
+  successText: {
+    fontFamily: POPPINS_M,
+    fontSize: 24,
+    lineHeight: 34,
+    color: BLACK,
+    textAlign: 'center',
   },
 });

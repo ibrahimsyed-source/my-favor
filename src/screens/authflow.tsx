@@ -5,42 +5,96 @@ import {
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
-import { Screen, TopBar, Txt, Button, Field } from '../components';
+import * as ImagePicker from 'expo-image-picker';
+import { Screen, TopBar, Txt, Button, InfoModal } from '../components';
 import { useTheme, tokens, fonts } from '../theme';
 import { useStore } from '../store';
-import { resendOtpApi, forgotPasswordApi, resetPasswordApi } from '../api/endpoints';
-
-const logo = require('../../assets/img/logo.png');
-
-// Mask a phone/email destination so the OTP screen can show where the code went
-// without exposing the full value (e.g. "j•••@gmail.com" / "••• ••• ••89").
-const maskDestination = (d?: string): string => {
-  if (!d) return '';
-  if (d.includes('@')) {
-    const [local, domain] = d.split('@');
-    return `${local.slice(0, 1)}${'•'.repeat(Math.max(local.length - 1, 2))}@${domain}`;
-  }
-  const digits = d.replace(/\D/g, '');
-  return digits.length >= 2 ? `••• ••• ••${digits.slice(-2)}` : '•••';
-};
+import { verifyOtpApi, resendOtpApi, forgotPasswordApi, resetPasswordApi } from '../api/endpoints';
 
 // ---------------------------------------------------------------------------
-// Shared building blocks (match the auth-form language: bold label above a
-// filled light-gray box with ~12px radius, gray placeholder text).
+// User App v.2 auth flow.
+//
+// Frames: Login #125:11391 (+ Filled #125:11413), Sign Up - Empty #125:8421
+// (+ Filled #125:8550, Terms Filled #125:8593), Sign Up - Verification Code
+// #125:8471 (+ Success #125:8517), Forgot Password #125:11435 (+ filled
+// #125:11445), Enter Code #125:11525 (+ Filled #125:11542), New Password
+// #125:11455 (+ Filled #125:11490), Reset Password Success #125:11567.
+//
+// The v.2 form language (measured off the frame renders — the #125 frames are
+// verified same-named duplicates of the rendered #100 canvas frames): back-arrow
+// top bar with a centered title, a centered ~18pt Poppins heading, ~14pt Poppins
+// field labels over filled light-gray rounded inputs (#EFEFEF, ~8 radius, 48
+// tall, ~17pt text), and a black 48pt / 6-radius CTA anchored at the bottom.
+// The CTA is BLACK even on the empty frames (forgot-password / new-password /
+// signup renders all show a solid black button over placeholder-only fields),
+// so buttons stay enabled and validation happens on press with inline errors.
 // ---------------------------------------------------------------------------
-const FieldBox: React.FC<{ label?: string; children: React.ReactNode; style?: ViewStyle }> = ({
+
+// Poppins Medium is registered in App.tsx but not yet exposed on the theme's
+// `fonts` map (see foundationRequests) — literal until then.
+const P_MEDIUM = 'Poppins_500Medium';
+
+const PX = 24; // v.2 screen gutter (frame boxes sit 23–24 from each edge)
+const INPUT_FONT = { fontFamily: P_MEDIUM, fontSize: 17 } as const; // input/placeholder ≈17pt in the frames
+// v.2 CTA: 48pt tall, 6pt corner radius (measured on SUBMIT/SIGNUP/VERIFY and
+// confirmed by the onboarding module's node data).
+const BTN = { height: 48, borderRadius: 6 } as const;
+
+// ---------------------------------------------------------------------------
+// Shared v.2 form building blocks
+// ---------------------------------------------------------------------------
+
+// Centered screen heading, e.g. "Enter Email to reset password" — ~18pt
+// (cap-height-matched to the renders; same size as the top-bar title), sitting
+// ~48 below the top-bar divider with ~44 to the first field label.
+const FormHeading: React.FC<{ children: React.ReactNode }> = ({ children }) => (
+  <Txt center style={{ fontFamily: P_MEDIUM, fontSize: 18, lineHeight: 28, marginTop: 48, marginBottom: 44 }}>
+    {children}
+  </Txt>
+);
+
+// Poppins label over a filled light-gray rounded box.
+const FieldShell: React.FC<{ label?: string; children: React.ReactNode; style?: ViewStyle }> = ({
   label, children, style,
 }) => {
   const { theme } = useTheme();
   return (
-    <View style={{ marginBottom: tokens.spacing.base }}>
-      {label ? <Txt variant="label" style={{ marginBottom: 8 }}>{label}</Txt> : null}
-      <View style={[styles.box, { backgroundColor: theme.inputBg }, style]}>{children}</View>
+    <View style={{ marginBottom: tokens.spacing.lg }}>
+      {label ? (
+        <Txt style={{ fontFamily: P_MEDIUM, fontSize: 14, lineHeight: 20, marginBottom: 8 }}>{label}</Txt>
+      ) : null}
+      <View style={[styles.inputBox, { backgroundColor: theme.inputBg }, style]}>{children}</View>
     </View>
   );
 };
 
-// Filled field with an eye toggle on the right (password inputs).
+// Plain labelled text input.
+const LabeledInput: React.FC<{
+  label?: string;
+  value: string;
+  onChangeText: (t: string) => void;
+  placeholder?: string;
+  keyboardType?: any;
+  autoCapitalize?: any;
+}> = ({ label, value, onChangeText, placeholder, keyboardType, autoCapitalize }) => {
+  const { theme } = useTheme();
+  return (
+    <FieldShell label={label}>
+      <TextInput
+        style={[{ flex: 1, color: theme.text, paddingVertical: 0 }, INPUT_FONT]}
+        value={value}
+        onChangeText={onChangeText}
+        placeholder={placeholder}
+        placeholderTextColor={theme.textTertiary}
+        keyboardType={keyboardType}
+        autoCapitalize={autoCapitalize}
+        autoCorrect={false}
+      />
+    </FieldShell>
+  );
+};
+
+// Labelled password input with the right-aligned eye toggle from the frames.
 const PasswordField: React.FC<{
   label?: string;
   value: string;
@@ -50,9 +104,9 @@ const PasswordField: React.FC<{
   const { theme } = useTheme();
   const [show, setShow] = useState(false);
   return (
-    <FieldBox label={label}>
+    <FieldShell label={label}>
       <TextInput
-        style={{ flex: 1, color: theme.text, fontSize: 16 }}
+        style={[{ flex: 1, color: theme.text, paddingVertical: 0 }, INPUT_FONT]}
         value={value}
         onChangeText={onChangeText}
         placeholder={placeholder}
@@ -61,17 +115,96 @@ const PasswordField: React.FC<{
         autoCapitalize="none"
         autoCorrect={false}
       />
-      <TouchableOpacity onPress={() => setShow((v) => !v)} hitSlop={10}>
+      <TouchableOpacity
+        onPress={() => setShow((v) => !v)}
+        hitSlop={10}
+        accessibilityRole="button"
+        accessibilityLabel={show ? 'Hide password' : 'Show password'}
+      >
         <Ionicons name={show ? 'eye-off' : 'eye'} size={20} color={theme.text} />
       </TouchableOpacity>
-    </FieldBox>
+    </FieldShell>
+  );
+};
+
+// Static US flag (stripes + canton) — the phone prefix in the Sign Up frame
+// shows the actual flag raster; drawn with views so it's crisp on every DPI
+// (the regional-indicator emoji renders as bare letters on Windows/web).
+const UsFlag: React.FC = () => (
+  <View
+    accessibilityElementsHidden
+    importantForAccessibility="no"
+    style={{
+      width: 28, height: 18, borderRadius: 2, overflow: 'hidden',
+      borderWidth: StyleSheet.hairlineWidth, borderColor: '#C8C8C8',
+    }}
+  >
+    {[0, 1, 2, 3, 4, 5, 6].map((i) => (
+      <View key={i} style={{ flex: 1, backgroundColor: i % 2 === 0 ? '#B22234' : '#FFFFFF' }} />
+    ))}
+    <View style={{ position: 'absolute', top: 0, left: 0, width: 12, height: 10, backgroundColor: '#3C3B6E' }} />
+  </View>
+);
+
+// v.2 square checkbox: 2px dark outline, ~5 radius; filled black w/ white check
+// when selected (Signup - Terms Filled frame).
+const CheckBox: React.FC<{ checked: boolean }> = ({ checked }) => {
+  const { theme } = useTheme();
+  return (
+    <View
+      style={{
+        width: 24, height: 24, borderRadius: 5, borderWidth: 2, borderColor: theme.cta,
+        alignItems: 'center', justifyContent: 'center',
+        backgroundColor: checked ? theme.cta : 'transparent',
+      }}
+    >
+      {checked ? <Ionicons name="checkmark" size={16} color={theme.ctaText} /> : null}
+    </View>
+  );
+};
+
+// Row of six single-digit code boxes (server codes are 6 digits — the design
+// mock shows 4; six are kept so real verification works).
+const CodeBoxes: React.FC<{
+  code: string[];
+  inputs: React.MutableRefObject<Array<TextInput | null>>;
+  onDigit: (i: number, v: string) => void;
+  onKeyPress: (i: number, e: any) => void;
+  size?: number;
+  error?: boolean;
+}> = ({ code, inputs, onDigit, onKeyPress, size = 43, error }) => {
+  const { theme } = useTheme();
+  return (
+    <View style={{ flexDirection: 'row', justifyContent: 'center', gap: tokens.spacing.sm }}>
+      {[0, 1, 2, 3, 4, 5].map((i) => (
+        <TextInput
+          key={i}
+          ref={(el) => { inputs.current[i] = el; }}
+          value={code[i]}
+          onChangeText={(v) => onDigit(i, v)}
+          onKeyPress={(e) => onKeyPress(i, e)}
+          keyboardType="number-pad"
+          maxLength={1}
+          accessibilityLabel={`Code digit ${i + 1}`}
+          style={[
+            styles.codeBox,
+            {
+              // Near-square boxes: the frame's boxes measure 70w x 75.5h (8 gap).
+              width: size, height: Math.round(size * 1.08),
+              backgroundColor: theme.inputBg, color: theme.text,
+            },
+            error ? { borderWidth: 1, borderColor: theme.danger } : null,
+          ]}
+        />
+      ))}
+    </View>
   );
 };
 
 // ---------------------------------------------------------------------------
-// 1. Login — credential form reached from the onboarding "SignupLogin" screen.
-//    (The figma "Login" frame duplicates the welcome splash; the real login
-//    form is described by the spec: email + password + forgot-password link.)
+// 1. Login (#125:11391 / Filled #125:11413) — centered heading, Email Address +
+//    Password fields, right-aligned "Forgot Password?", black LOGIN pill at the
+//    bottom (gray/disabled until both fields are filled, per the empty frame).
 // ---------------------------------------------------------------------------
 export const Login = ({ navigation }: any) => {
   const { theme } = useTheme();
@@ -92,9 +225,9 @@ export const Login = ({ navigation }: any) => {
       const r = await s.login(email, password);
       if (r === 'unverified') {
         // Correct password but the account was never verified — route the user
-        // to OTP (same param shape the signup flow uses) instead of falsely
-        // claiming bad credentials.
-        navigation.navigate('OtpVerify', { destination: email.trim().toLowerCase() });
+        // to OTP. The password rides along so the success step can complete
+        // the login after the code is confirmed.
+        navigation.navigate('OtpVerify', { destination: email.trim().toLowerCase(), password });
       } else if (r === 'invalid') {
         setError('Invalid email or password.');
       }
@@ -109,58 +242,59 @@ export const Login = ({ navigation }: any) => {
     <Screen padded={false}>
       <TopBar title="Login" onBack={navigation.canGoBack() ? navigation.goBack : undefined} />
       <ScrollView
-        contentContainerStyle={{ flexGrow: 1, padding: tokens.spacing.lg, paddingBottom: tokens.spacing.xl }}
+        contentContainerStyle={{ flexGrow: 1, paddingHorizontal: PX, paddingBottom: PX }}
         keyboardShouldPersistTaps="handled"
       >
-        <View style={{ alignItems: 'center', marginTop: tokens.spacing.sm, marginBottom: tokens.spacing.lg }}>
-          <Image source={logo} style={{ width: 88, height: 88 }} resizeMode="contain" />
-        </View>
-        <Txt variant="h3" center style={{ marginBottom: tokens.spacing.xl }}>
-          Login to your account
-        </Txt>
+        <FormHeading>Login to your account</FormHeading>
 
-        <Field
+        <LabeledInput
           label="Email Address"
           value={email}
-          onChangeText={setEmail}
+          onChangeText={(t) => { setEmail(t); setError(''); }}
           placeholder="Email Address"
           keyboardType="email-address"
           autoCapitalize="none"
         />
-        <PasswordField label="Password" value={password} onChangeText={setPassword} placeholder="Password" />
+        <PasswordField
+          label="Password"
+          value={password}
+          onChangeText={(t) => { setPassword(t); setError(''); }}
+          placeholder="Password"
+        />
 
         <TouchableOpacity
           onPress={() => navigation.navigate('ForgotPassword')}
-          style={{ alignSelf: 'flex-end', marginTop: 2, marginBottom: tokens.spacing.sm }}
+          style={{ alignSelf: 'flex-end', marginTop: 2 }}
           hitSlop={8}
+          accessibilityRole="link"
+          accessibilityLabel="Forgot Password"
         >
-          <Txt variant="bodySm" color={theme.link} style={{ fontFamily: fonts.bodySemiBold }}>
-            Forgot Password?
-          </Txt>
+          <Txt style={{ fontFamily: fonts.displayMedium, fontSize: 15 }}>Forgot Password?</Txt>
         </TouchableOpacity>
 
         {error ? (
-          <Txt variant="bodySm" color={theme.danger} style={{ marginTop: tokens.spacing.sm }}>
+          <Txt variant="bodySm" color={theme.danger} style={{ marginTop: tokens.spacing.md }}>
             {error}
           </Txt>
         ) : null}
 
-        <Button title="LOGIN" variant="primary" onPress={onLogin} loading={submitting} disabled={submitting} style={{ marginTop: tokens.spacing.base }} />
-
         <View style={{ flex: 1 }} />
-        <View style={{ flexDirection: 'row', justifyContent: 'center', marginTop: tokens.spacing.xl }}>
-          <Txt variant="body" color={theme.textSecondary}>Don't have an account? </Txt>
-          <TouchableOpacity onPress={() => navigation.navigate('Welcome')} hitSlop={8}>
-            <Txt variant="body" color={theme.link} style={{ fontFamily: fonts.bodyBold }}>Sign Up</Txt>
-          </TouchableOpacity>
-        </View>
+        <Button
+          title="LOGIN"
+          variant="primary"
+          onPress={onLogin}
+          loading={submitting}
+          disabled={!email.trim() || !password}
+          style={{ height: 50, marginTop: tokens.spacing.xl }}
+        />
       </ScrollView>
     </Screen>
   );
 };
 
 // ---------------------------------------------------------------------------
-// 2. Forgot Password — single email field, black SUBMIT.
+// 2. Forgot Password (#125:11435 / filled #125:11445) — "Enter Email to reset
+//    password", single Email Address field, black SUBMIT anchored bottom.
 // ---------------------------------------------------------------------------
 export const ForgotPassword = ({ navigation }: any) => {
   const { theme } = useTheme();
@@ -189,16 +323,11 @@ export const ForgotPassword = ({ navigation }: any) => {
     <Screen padded={false}>
       <TopBar title="Forgot Password" onBack={navigation.canGoBack() ? navigation.goBack : undefined} />
       <ScrollView
-        contentContainerStyle={{ flexGrow: 1, padding: tokens.spacing.lg, paddingBottom: tokens.spacing.xl }}
+        contentContainerStyle={{ flexGrow: 1, paddingHorizontal: PX, paddingBottom: PX }}
         keyboardShouldPersistTaps="handled"
       >
-        <Txt variant="h4" center style={{ fontSize: 22, lineHeight: 30, marginTop: tokens.spacing.lg, marginBottom: tokens.spacing.md }}>
-          Enter Email to reset password
-        </Txt>
-        <Txt variant="bodySm" color={theme.textSecondary} center style={{ marginBottom: tokens.spacing.xl }}>
-          We'll send a 6-digit code to reset your password.
-        </Txt>
-        <Field
+        <FormHeading>Enter Email to reset password</FormHeading>
+        <LabeledInput
           label="Email Address"
           value={email}
           onChangeText={(t) => { setEmail(t); setError(''); }}
@@ -210,14 +339,24 @@ export const ForgotPassword = ({ navigation }: any) => {
           <Txt variant="bodySm" color={theme.danger} style={{ marginTop: tokens.spacing.sm }}>{error}</Txt>
         ) : null}
         <View style={{ flex: 1 }} />
-        <Button title={busy ? 'SENDING…' : 'SUBMIT'} variant="primary" disabled={busy} onPress={onSubmit} />
+        <Button
+          title="SUBMIT"
+          variant="primary"
+          onPress={onSubmit}
+          loading={busy}
+          disabled={!email.trim()}
+          style={{ height: 50 }}
+        />
       </ScrollView>
     </Screen>
   );
 };
 
 // ---------------------------------------------------------------------------
-// 3. New Password — new + confirm password (eye toggles), black SUBMIT.
+// 3. New Password (#125:11455 / Filled #125:11490) + Reset Password Success
+//    (#125:11567) — new + confirm password with eye toggles, black SUBMIT;
+//    success raises the white "Password Reset" card whose LOGIN button returns
+//    to the Login screen.
 // ---------------------------------------------------------------------------
 export const NewPassword = ({ navigation, route }: any) => {
   const { theme } = useTheme();
@@ -225,11 +364,12 @@ export const NewPassword = ({ navigation, route }: any) => {
   const [confirm, setConfirm] = useState('');
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
+  const [done, setDone] = useState(false);
   const email: string | undefined = route?.params?.email;
   const code: string | undefined = route?.params?.code;
 
   // Verify the reset code + set the new password on the server (min length 8 to
-  // match the API). Previously SUBMIT navigated to Login without changing anything.
+  // match the API), then show the Reset Password Success card.
   const onSubmit = async () => {
     if (!pw || !confirm) { setError('Please enter and confirm your new password.'); return; }
     if (pw.length < 8) { setError('Password must be at least 8 characters.'); return; }
@@ -240,7 +380,7 @@ export const NewPassword = ({ navigation, route }: any) => {
     setError('');
     try {
       await resetPasswordApi(email, code, pw);
-      navigation.reset({ index: 0, routes: [{ name: 'Login' }] });
+      setDone(true);
     } catch (e: any) {
       setError(e?.message || 'Could not reset your password. The code may have expired.');
     } finally {
@@ -248,33 +388,64 @@ export const NewPassword = ({ navigation, route }: any) => {
     }
   };
 
+  const toLogin = () => {
+    setDone(false);
+    navigation.reset({ index: 0, routes: [{ name: 'Login' }] });
+  };
+
   return (
     <Screen padded={false}>
       <TopBar title="New Password" onBack={navigation.canGoBack() ? navigation.goBack : undefined} />
       <ScrollView
-        contentContainerStyle={{ flexGrow: 1, padding: tokens.spacing.lg, paddingBottom: tokens.spacing.xl }}
+        contentContainerStyle={{ flexGrow: 1, paddingHorizontal: PX, paddingBottom: PX }}
         keyboardShouldPersistTaps="handled"
       >
-        <Txt variant="h4" center style={{ fontSize: 22, lineHeight: 30, marginTop: tokens.spacing.lg, marginBottom: tokens.spacing.xxl }}>
-          Enter your new password
-        </Txt>
-        <PasswordField label="New Password" value={pw} onChangeText={(t) => { setPw(t); setError(''); }} placeholder="Enter New Password" />
-        <PasswordField label="Confirm New Password" value={confirm} onChangeText={(t) => { setConfirm(t); setError(''); }} placeholder="Confirm New Password" />
+        <FormHeading>Enter your new password</FormHeading>
+        <PasswordField
+          label="New Password"
+          value={pw}
+          onChangeText={(t) => { setPw(t); setError(''); }}
+          placeholder="Enter New Password"
+        />
+        <PasswordField
+          label="Confirm New Password"
+          value={confirm}
+          onChangeText={(t) => { setConfirm(t); setError(''); }}
+          placeholder="Confirm New Password"
+        />
         {error ? (
           <Txt variant="bodySm" color={theme.danger} style={{ marginTop: tokens.spacing.sm }}>
             {error}
           </Txt>
         ) : null}
         <View style={{ flex: 1 }} />
-        <Button title={busy ? 'SAVING…' : 'SUBMIT'} variant="primary" disabled={busy} onPress={onSubmit} />
+        <Button
+          title="SUBMIT"
+          variant="primary"
+          onPress={onSubmit}
+          loading={busy}
+          disabled={!pw || !confirm}
+          style={{ height: 50 }}
+        />
       </ScrollView>
+
+      {/* Reset Password Success (#125:11567) */}
+      <InfoModal
+        visible={done}
+        title="Password Reset"
+        message="You have successfully reset your password."
+        buttonLabel="LOGIN"
+        onClose={toLogin}
+      />
     </Screen>
   );
 };
 
 // ---------------------------------------------------------------------------
-// 4. Signup — avatar w/ red plus badge, name row, email, phone, password,
-//    terms checkbox, black SIGNUP.
+// 4. Signup (#125:8421 Empty / #125:8550 Filled / #125:8593 Terms Filled) —
+//    avatar-upload circle with the red "+" badge, First/Last Name side by side,
+//    Email, Phone (US flag + +1 prefix), Set Password, the Liability-Waiver and
+//    SMS-consent checkboxes, black SIGNUP.
 // ---------------------------------------------------------------------------
 export const Signup = ({ navigation, route }: any) => {
   const { theme } = useTheme();
@@ -282,26 +453,49 @@ export const Signup = ({ navigation, route }: any) => {
   // Role chosen on the preceding Welcome screen (member vs pal), carried through
   // so the account is created with the role the user actually picked.
   const role = route?.params?.role;
+  const [avatar, setAvatar] = useState<string | undefined>(undefined);
   const [firstName, setFirstName] = useState('');
   const [lastName, setLastName] = useState('');
   const [email, setEmail] = useState('');
   const [phone, setPhone] = useState('');
   const [password, setPassword] = useState('');
-  const [agree, setAgree] = useState(false);
+  const [agreeTerms, setAgreeTerms] = useState(false);
+  const [agreeSms, setAgreeSms] = useState(false); // consent kept client-side; no API field yet
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState('');
 
-  // SIGNUP is gated on `agree`; this guard also blocks double-taps from firing
-  // signup() + navigate twice. The verification code is sent to the email, so
-  // OtpVerify masks that destination. A failed signup (e.g. email already in
-  // use) surfaces an inline error.
+  // Avatar upload — same picker pattern as EditProfile. The picked image only
+  // previews locally (the signup API has no avatar field yet).
+  const pickAvatar = async () => {
+    try {
+      const perm = await ImagePicker.requestMediaLibraryPermissionsAsync();
+      if (!perm.granted) return;
+      const res = await ImagePicker.launchImageLibraryAsync({ allowsEditing: true, quality: 0.8 });
+      if (!res.canceled && res.assets && res.assets[0]) setAvatar(res.assets[0].uri);
+    } catch {
+      /* picker unavailable — non-fatal */
+    }
+  };
+
+  // The SIGNUP button stays black (per the empty frame); agreement is enforced
+  // here with an inline message. Also blocks double-taps from firing signup()
+  // + navigate twice. The verification code goes to the email; the password
+  // rides along so the OTP success step can finish the login.
   const onSignup = async () => {
-    if (submitting || !agree) return;
+    if (submitting) return;
+    if (!agreeTerms) {
+      setError('Please agree to MyFavor’s Liability Waiver, Privacy Policy, and Terms & Conditions to continue.');
+      return;
+    }
     setSubmitting(true);
     setError('');
     try {
-      await s.signup({ firstName, lastName, email, phone, password, ...(role ? { role } : {}) });
-      navigation.navigate('OtpVerify', { destination: email });
+      await s.signup({
+        firstName, lastName, email, phone, password,
+        ...(avatar ? { avatar } : {}),
+        ...(role ? { role } : {}),
+      });
+      navigation.navigate('OtpVerify', { destination: email.trim().toLowerCase(), password });
     } catch (e: any) {
       setError(e?.message || 'Could not sign up. Please try again.');
     } finally {
@@ -309,38 +503,67 @@ export const Signup = ({ navigation, route }: any) => {
     }
   };
 
+  const legalLink = (label: string, doc: 'terms' | 'privacy') => (
+    <Text
+      style={{ fontFamily: fonts.displayMedium, color: theme.text }}
+      onPress={(e) => { e.stopPropagation?.(); navigation.navigate('Legal', { doc }); }}
+      accessibilityRole="link"
+      accessibilityLabel={`View ${label}`}
+    >
+      {label}
+    </Text>
+  );
+
   return (
     <Screen padded={false}>
       <TopBar title="Signup" onBack={navigation.canGoBack() ? navigation.goBack : undefined} />
       <ScrollView
-        contentContainerStyle={{ padding: tokens.spacing.lg, paddingBottom: tokens.spacing.xxl }}
+        contentContainerStyle={{ paddingHorizontal: PX, paddingBottom: tokens.spacing.xxl }}
         keyboardShouldPersistTaps="handled"
       >
-        {/* Avatar placeholder. Photo-at-signup is out of scope (no picker wired
-            here), so we render a plain, non-interactive placeholder rather than a
-            fake tappable "+" badge that did nothing. */}
-        <View style={{ alignItems: 'center', marginTop: tokens.spacing.sm, marginBottom: tokens.spacing.xl }}>
-          <View
-            style={{
-              width: 140, height: 140, borderRadius: 70, backgroundColor: theme.surfaceAlt,
-              alignItems: 'center', justifyContent: 'center',
-            }}
+        {/* Avatar upload circle with the red "+" badge (bottom-right). */}
+        <View style={{ alignItems: 'center', marginTop: tokens.spacing.lg, marginBottom: tokens.spacing.xl }}>
+          <TouchableOpacity
+            onPress={pickAvatar}
+            activeOpacity={0.8}
+            accessibilityRole="button"
+            accessibilityLabel="Add profile photo"
+            style={{ width: 132, height: 132 }}
           >
-            <Ionicons name="person" size={62} color="#B7B7B7" />
-          </View>
+            <View
+              style={{
+                width: 132, height: 132, borderRadius: 66, backgroundColor: theme.inputBg,
+                alignItems: 'center', justifyContent: 'center', overflow: 'hidden',
+              }}
+            >
+              {avatar ? (
+                <Image source={{ uri: avatar }} style={{ width: 132, height: 132 }} />
+              ) : (
+                <Ionicons name="person-outline" size={60} color="#ABABAB" />
+              )}
+            </View>
+            <View
+              style={{
+                position: 'absolute', right: 2, bottom: 2, width: 38, height: 38, borderRadius: 19,
+                backgroundColor: theme.primary, alignItems: 'center', justifyContent: 'center',
+              }}
+            >
+              <Ionicons name="add" size={26} color="#FFFFFF" />
+            </View>
+          </TouchableOpacity>
         </View>
 
         {/* First + Last name side by side */}
         <View style={{ flexDirection: 'row', gap: tokens.spacing.base }}>
           <View style={{ flex: 1 }}>
-            <Field label="First Name" value={firstName} onChangeText={setFirstName} placeholder="First Name" autoCapitalize="words" />
+            <LabeledInput label="First Name" value={firstName} onChangeText={setFirstName} placeholder="First Name" autoCapitalize="words" />
           </View>
           <View style={{ flex: 1 }}>
-            <Field label="Last Name" value={lastName} onChangeText={setLastName} placeholder="Last Name" autoCapitalize="words" />
+            <LabeledInput label="Last Name" value={lastName} onChangeText={setLastName} placeholder="Last Name" autoCapitalize="words" />
           </View>
         </View>
 
-        <Field
+        <LabeledInput
           label="Email Address"
           value={email}
           onChangeText={setEmail}
@@ -349,70 +572,62 @@ export const Signup = ({ navigation, route }: any) => {
           autoCapitalize="none"
         />
 
-        {/* Phone with a fixed US +1 prefix. Non-interactive (there's no country
-            picker), and uses plain "US" rather than the regional-indicator flag
-            emoji, which degrades to bare letters on Windows/web and to tofu boxes
-            on some Android builds — matching profile.tsx's PhoneField. */}
-        <FieldBox label="Phone Number">
+        {/* Phone with the static US-flag +1 prefix (no country picker). */}
+        <FieldShell label="Phone Number">
           <View
             style={{ flexDirection: 'row', alignItems: 'center' }}
             accessibilityLabel="Country code, United States, plus 1"
           >
-            <Txt color={theme.text} style={{ fontSize: 13, fontFamily: fonts.bodyBold }}>US</Txt>
-            <Txt color={theme.text} style={{ fontSize: 16, marginLeft: 8, marginRight: 4 }}>+1</Txt>
-            <Ionicons name="chevron-down" size={16} color={theme.textSecondary} />
-            <View style={{ width: 1, height: 24, backgroundColor: theme.divider, marginHorizontal: 12 }} />
+            <UsFlag />
+            <Txt style={{ ...INPUT_FONT, marginLeft: 10 }}>+1</Txt>
+            <Ionicons name="caret-down" size={12} color={theme.text} style={{ marginLeft: 6 }} />
           </View>
           <TextInput
-            style={{ flex: 1, color: theme.text, fontSize: 16 }}
+            style={[{ flex: 1, color: theme.text, paddingVertical: 0, marginLeft: 14 }, INPUT_FONT]}
             value={phone}
             onChangeText={setPhone}
             placeholder="0000 - 000 - 000"
             placeholderTextColor={theme.textTertiary}
             keyboardType="phone-pad"
           />
-        </FieldBox>
+        </FieldShell>
 
         <PasswordField label="Set Password" value={password} onChangeText={setPassword} placeholder="Set Password" />
 
-        {/* Terms checkbox — SIGNUP is gated on this. The "Terms & Conditions"
-            span itself opens a plain-language summary. */}
+        {/* Liability Waiver / Privacy Policy / Terms & Conditions agreement.
+            Copy (incl. the space before the comma) matches the frame exactly. */}
         <TouchableOpacity
-          onPress={() => setAgree((v) => !v)}
+          onPress={() => { setAgreeTerms((v) => !v); setError(''); }}
           activeOpacity={0.7}
           accessibilityRole="checkbox"
-          accessibilityState={{ checked: agree }}
-          accessibilityLabel="I agree to Terms and Conditions"
-          style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'center', marginTop: tokens.spacing.sm, marginBottom: tokens.spacing.lg }}
+          accessibilityState={{ checked: agreeTerms }}
+          accessibilityLabel="I agree to MyFavor's Liability Waiver, Privacy Policy, and Terms and Conditions"
+          style={styles.checkRow}
         >
-          <View
-            style={{
-              width: 24, height: 24, borderRadius: 5, borderWidth: 2, borderColor: theme.cta,
-              alignItems: 'center', justifyContent: 'center', marginRight: tokens.spacing.md,
-              backgroundColor: agree ? theme.cta : 'transparent',
-            }}
-          >
-            {agree ? <Ionicons name="checkmark" size={16} color={theme.ctaText} /> : null}
-          </View>
-          <Txt variant="body">
-            I agree to the{' '}
-            <Text
-              style={{ fontFamily: fonts.bodyBold, color: theme.text }}
-              onPress={(e) => { e.stopPropagation?.(); navigation.navigate('Legal', { doc: 'terms' }); }}
-              accessibilityRole="link"
-              accessibilityLabel="View Terms of Service"
-            >
-              Terms
-            </Text>
-            {' '}&amp;{' '}
-            <Text
-              style={{ fontFamily: fonts.bodyBold, color: theme.text }}
-              onPress={(e) => { e.stopPropagation?.(); navigation.navigate('Legal', { doc: 'privacy' }); }}
-              accessibilityRole="link"
-              accessibilityLabel="View Privacy Policy"
-            >
-              Privacy Policy
-            </Text>
+          <CheckBox checked={agreeTerms} />
+          <Txt style={{ flex: 1, fontFamily: P_MEDIUM, fontSize: 15, lineHeight: 22 }}>
+            {'I agree to MyFavor’s '}
+            {legalLink('Liability Waiver', 'terms')}
+            {', '}
+            {legalLink('Privacy Policy', 'privacy')}
+            {' , and '}
+            {legalLink('Terms & Conditions', 'terms')}
+            {'.'}
+          </Txt>
+        </TouchableOpacity>
+
+        {/* SMS notifications consent. */}
+        <TouchableOpacity
+          onPress={() => setAgreeSms((v) => !v)}
+          activeOpacity={0.7}
+          accessibilityRole="checkbox"
+          accessibilityState={{ checked: agreeSms }}
+          accessibilityLabel="I agree to allow MyFavor app to send me SMS notifications"
+          style={styles.checkRow}
+        >
+          <CheckBox checked={agreeSms} />
+          <Txt style={{ flex: 1, fontFamily: P_MEDIUM, fontSize: 15, lineHeight: 22 }}>
+            I agree to allow MyFavor app to send me SMS notifications.
           </Txt>
         </TouchableOpacity>
 
@@ -427,7 +642,7 @@ export const Signup = ({ navigation, route }: any) => {
           variant="primary"
           onPress={onSignup}
           loading={submitting}
-          disabled={!agree || submitting}
+          style={{ height: 50, marginTop: tokens.spacing.sm }}
         />
       </ScrollView>
     </Screen>
@@ -435,8 +650,12 @@ export const Signup = ({ navigation, route }: any) => {
 };
 
 // ---------------------------------------------------------------------------
-// 5. OtpVerify — centered white modal card over a dim background. Four
-//    auto-advancing single-digit boxes, Resend, black VERIFY.
+// 5. OtpVerify — two v.2 layouts in one route:
+//    • signup (default): the centered white "Verification" card over a dim
+//      scrim (#125:8471), flipping to the Success card (#125:8517) once the
+//      code checks out; CONTINUE completes the login.
+//    • reset: the full-screen "Enter Code" step of the password-reset flow
+//      (#125:11525 / Filled #125:11542), whose SUBMIT moves to New Password.
 // ---------------------------------------------------------------------------
 const OTP_SECONDS = 43;
 
@@ -447,15 +666,18 @@ export const OtpVerify = ({ navigation, route }: any) => {
   const [error, setError] = useState('');
   const [notice, setNotice] = useState('');
   const [submitting, setSubmitting] = useState(false);
+  const [continuing, setContinuing] = useState(false);
   const [resending, setResending] = useState(false);
+  const [verified, setVerified] = useState(false);
   const [seconds, setSeconds] = useState(OTP_SECONDS);
   const inputs = useRef<Array<TextInput | null>>([]);
   const dest: string | undefined = route?.params?.destination;
+  // Password from Signup/Login so the Success step can complete the login
+  // after verification (held in memory only, never persisted).
+  const password: string | undefined = route?.params?.password;
   const isReset = route?.params?.context === 'reset';
-  const maskedDest = maskDestination(dest);
 
-  // Real countdown (was a frozen "00:43" string). Ticks down to 0, then stops
-  // and unlocks Resend.
+  // Live "Code expires in 00:43" countdown; Resend unlocks at zero.
   useEffect(() => {
     if (seconds <= 0) return;
     const id = setTimeout(() => setSeconds((sec) => sec - 1), 1000);
@@ -481,19 +703,16 @@ export const OtpVerify = ({ navigation, route }: any) => {
     if (e.nativeEvent.key === 'Backspace' && !code[i] && i > 0) inputs.current[i - 1]?.focus();
   };
 
-  // Branch on verifyOtp's boolean: a wrong/short code returns false -> inline
-  // error (no dead-end). On success the store sets the user, which swaps the
-  // navigator to Tabs automatically, so no explicit navigate is needed. Also
-  // guards double-taps.
+  const full = code.join('');
+
   const onVerify = async () => {
     if (submitting) return;
-    const full = code.join('');
     if (full.length < 6) {
       setError('Please enter the full 6-digit code.');
       return;
     }
-    // Password reset: the code is verified server-side by reset-password (with the
-    // new password), so here we just carry the code forward to the next step.
+    // Password reset: the code is verified server-side by reset-password (with
+    // the new password), so here we just carry the code forward.
     if (isReset) {
       navigation.navigate('NewPassword', { email: dest, code: full });
       return;
@@ -502,22 +721,45 @@ export const OtpVerify = ({ navigation, route }: any) => {
     setError('');
     setNotice('');
     try {
-      const ok = await s.verifyOtp(full);
-      if (!ok) {
-        setError('Incorrect or expired code. Please enter the full 6-digit code.');
-        return;
+      if (dest && password) {
+        // Verify the code first so the Success card can show before the login
+        // flips the navigator into the app.
+        await verifyOtpApi(dest, full);
+        setVerified(true);
+      } else {
+        // No password on hand (defensive fallback) — verify and enter directly.
+        const ok = await s.verifyOtp(full);
+        if (!ok) setError('Incorrect or expired code. Please enter the full 6-digit code.');
       }
-    } catch (e) {
-      setError('Something went wrong. Please try again.');
+    } catch (e: any) {
+      setError(e?.message || 'Incorrect or expired code. Please try again.');
     } finally {
       setSubmitting(false);
     }
   };
 
-  // Working Resend: actually requests a fresh code from the backend (so an
-  // expired code is replaced), then clears the boxes, restarts the countdown,
-  // and surfaces a brief "code sent" confirmation. Disabled until the current
-  // code expires.
+  // Success card CONTINUE: the account is verified — log in to enter the app
+  // (the store flip swaps the navigator to Tabs).
+  const onContinue = async () => {
+    if (continuing) return;
+    if (!dest || !password) {
+      navigation.reset({ index: 0, routes: [{ name: 'Login' }] });
+      return;
+    }
+    setContinuing(true);
+    try {
+      const r = await s.login(dest, password);
+      if (r !== 'ok') navigation.reset({ index: 0, routes: [{ name: 'Login' }] });
+    } catch {
+      navigation.reset({ index: 0, routes: [{ name: 'Login' }] });
+    } finally {
+      setContinuing(false);
+    }
+  };
+
+  // Working Resend: requests a fresh code from the backend (so an expired code
+  // is replaced), clears the boxes, restarts the countdown, and confirms.
+  // Disabled until the current code expires.
   const onResend = async () => {
     if (seconds > 0 || resending) return;
     setResending(true);
@@ -540,6 +782,66 @@ export const OtpVerify = ({ navigation, route }: any) => {
     if (navigation.canGoBack()) navigation.goBack();
   };
 
+  const resendBlocked = seconds > 0 || resending;
+
+  // ----- reset context: full-screen "Enter Code" (#125:11525) -----
+  if (isReset) {
+    return (
+      <Screen padded={false}>
+        <TopBar title="Enter Code" onBack={navigation.canGoBack() ? navigation.goBack : undefined} />
+        <ScrollView
+          contentContainerStyle={{ flexGrow: 1, paddingHorizontal: PX, paddingBottom: PX }}
+          keyboardShouldPersistTaps="handled"
+        >
+          <FormHeading>Enter the code sent to your email</FormHeading>
+
+          <CodeBoxes code={code} inputs={inputs} onDigit={setDigit} onKeyPress={onKeyPress} size={48} error={!!error} />
+
+          {error ? (
+            <Txt variant="bodySm" center color={theme.danger} style={{ marginTop: tokens.spacing.md }}>
+              {error}
+            </Txt>
+          ) : null}
+
+          <View style={{ flexDirection: 'row', justifyContent: 'center', marginTop: tokens.spacing.xl }}>
+            <Txt style={{ fontFamily: P_MEDIUM, fontSize: 15 }}>Didn’t receive a code? </Txt>
+            <TouchableOpacity
+              onPress={onResend}
+              disabled={resendBlocked}
+              hitSlop={8}
+              accessibilityRole="button"
+              accessibilityLabel="Resend code"
+              accessibilityState={{ disabled: resendBlocked }}
+            >
+              <Txt
+                color={resendBlocked ? theme.textTertiary : theme.text}
+                style={{ fontFamily: fonts.displayMedium, fontSize: 15 }}
+              >
+                {resending ? 'Sending…' : seconds > 0 ? `Resend in ${fmt(seconds)}` : 'Resend'}
+              </Txt>
+            </TouchableOpacity>
+          </View>
+
+          {notice ? (
+            <Txt variant="bodySm" center color={theme.success} style={{ marginTop: tokens.spacing.sm }}>
+              {notice}
+            </Txt>
+          ) : null}
+
+          <View style={{ flex: 1 }} />
+          <Button
+            title="SUBMIT"
+            variant="primary"
+            onPress={onVerify}
+            disabled={full.length < 6}
+            style={{ height: 50 }}
+          />
+        </ScrollView>
+      </Screen>
+    );
+  }
+
+  // ----- signup context: "Verification" modal card (#125:8471) + Success (#125:8517) -----
   return (
     <KeyboardAvoidingView
       style={styles.overlay}
@@ -554,90 +856,94 @@ export const OtpVerify = ({ navigation, route }: any) => {
           keyboardShouldPersistTaps="handled"
           showsVerticalScrollIndicator={false}
         >
+          {/* Tap outside the card to dismiss (no explicit close in the frame);
+              locked once the account is verified. */}
+          <TouchableOpacity
+            style={StyleSheet.absoluteFill}
+            activeOpacity={1}
+            onPress={verified ? undefined : onClose}
+            accessibilityRole="button"
+            accessibilityLabel="Dismiss verification"
+            disabled={verified}
+          />
+
           <View style={[styles.modalCard, { backgroundColor: theme.card }]}>
-            {/* Close affordance so the screen isn't a dead-end. */}
-        <TouchableOpacity
-          onPress={onClose}
-          hitSlop={10}
-          accessibilityRole="button"
-          accessibilityLabel="Close verification"
-          style={{ position: 'absolute', top: tokens.spacing.md, right: tokens.spacing.md, zIndex: 1, padding: 4 }}
-        >
-          <Ionicons name="close" size={24} color={theme.textSecondary} />
-        </TouchableOpacity>
+            {verified ? (
+              <>
+                {/* Success (#125:8517) */}
+                <Ionicons
+                  name="checkmark-circle"
+                  size={72}
+                  color={theme.success}
+                  style={{ alignSelf: 'center', marginBottom: tokens.spacing.md }}
+                />
+                <Txt variant="h1" center style={{ marginBottom: tokens.spacing.base }}>Success!</Txt>
+                <Txt center style={{ fontFamily: P_MEDIUM, fontSize: 16, lineHeight: 24 }} color={theme.textSecondary}>
+                  Your account has been verified successfully.
+                </Txt>
+                <Button
+                  title="CONTINUE"
+                  variant="primary"
+                  onPress={onContinue}
+                  loading={continuing}
+                  style={{ height: 50, marginTop: tokens.spacing.xl }}
+                />
+              </>
+            ) : (
+              <>
+                <Txt variant="h1" center style={{ marginBottom: tokens.spacing.base }}>Verification</Txt>
+                <Txt center style={{ fontFamily: P_MEDIUM, fontSize: 16, lineHeight: 24 }}>
+                  Please enter 6 digit code to verify your account.
+                </Txt>
+                <Txt center style={{ fontFamily: P_MEDIUM, fontSize: 15, marginTop: tokens.spacing.base }}>
+                  {seconds > 0 ? `Code expires in ${fmt(seconds)}` : 'Code expired'}
+                </Txt>
 
-        <Txt variant="h1" center style={{ marginBottom: tokens.spacing.base }}>Verification</Txt>
-        <Txt variant="body" center color={theme.textSecondary}>
-          {isReset
-            ? 'Enter the 6-digit code we sent to reset your password.'
-            : 'Please enter the 6 digit code to verify your account.'}
-        </Txt>
-        {maskedDest ? (
-          <Txt variant="bodySm" center color={theme.textSecondary} style={{ marginTop: 4 }}>
-            Sent to {maskedDest}
-          </Txt>
-        ) : null}
-        <Txt variant="body" center style={{ marginTop: tokens.spacing.base }}>
-          {seconds > 0 ? `You can resend a code in ${fmt(seconds)}` : 'You can resend a code now'}
-        </Txt>
+                <View style={{ marginTop: tokens.spacing.xl }}>
+                  <CodeBoxes code={code} inputs={inputs} onDigit={setDigit} onKeyPress={onKeyPress} error={!!error} />
+                </View>
 
-        <View style={{ flexDirection: 'row', justifyContent: 'center', gap: tokens.spacing.sm, marginTop: tokens.spacing.xl }}>
-          {[0, 1, 2, 3, 4, 5].map((i) => (
-            <TextInput
-              key={i}
-              ref={(el) => { inputs.current[i] = el; }}
-              value={code[i]}
-              onChangeText={(v) => setDigit(i, v)}
-              onKeyPress={(e) => onKeyPress(i, e)}
-              keyboardType="number-pad"
-              maxLength={1}
-              accessibilityLabel={`Verification code digit ${i + 1}`}
-              style={[
-                styles.otpBox,
-                { backgroundColor: theme.inputBg, color: theme.text },
-                error ? { borderWidth: 1, borderColor: theme.danger } : null,
-              ]}
-            />
-          ))}
-        </View>
+                {error ? (
+                  <Txt variant="bodySm" center color={theme.danger} style={{ marginTop: tokens.spacing.md }}>
+                    {error}
+                  </Txt>
+                ) : null}
 
-        {error ? (
-          <Txt variant="bodySm" center color={theme.danger} style={{ marginTop: tokens.spacing.md }}>
-            {error}
-          </Txt>
-        ) : null}
+                <Txt center style={{ fontFamily: P_MEDIUM, fontSize: 15, marginTop: tokens.spacing.xl }}>
+                  Didn’t receive a code?
+                </Txt>
+                <TouchableOpacity
+                  onPress={onResend}
+                  disabled={resendBlocked}
+                  hitSlop={8}
+                  style={{ alignSelf: 'center', marginTop: tokens.spacing.sm }}
+                  accessibilityRole="button"
+                  accessibilityLabel="Resend code"
+                  accessibilityState={{ disabled: resendBlocked }}
+                >
+                  <Txt
+                    color={resendBlocked ? theme.textTertiary : theme.text}
+                    style={{ fontFamily: fonts.displayMedium, fontSize: 16 }}
+                  >
+                    {resending ? 'Sending…' : 'Resend'}
+                  </Txt>
+                </TouchableOpacity>
 
-        <Txt variant="body" center color={theme.textSecondary} style={{ marginTop: tokens.spacing.xl }}>
-          Didn't receive a code?
-        </Txt>
-        <TouchableOpacity
-          onPress={onResend}
-          disabled={seconds > 0 || resending}
-          hitSlop={8}
-          style={{ alignSelf: 'center', marginTop: 4 }}
-          accessibilityRole="button"
-          accessibilityLabel="Resend code"
-          accessibilityState={{ disabled: seconds > 0 || resending }}
-        >
-          <Txt variant="body" color={seconds > 0 || resending ? theme.textTertiary : theme.text} style={{ fontFamily: fonts.bodyBold }}>
-            {resending ? 'Sending…' : 'Resend'}
-          </Txt>
-        </TouchableOpacity>
+                {notice ? (
+                  <Txt variant="bodySm" center color={theme.success} style={{ marginTop: tokens.spacing.sm }}>
+                    {notice}
+                  </Txt>
+                ) : null}
 
-        {notice ? (
-          <Txt variant="bodySm" center color={theme.success} style={{ marginTop: tokens.spacing.sm }}>
-            {notice}
-          </Txt>
-        ) : null}
-
-            <Button
-              title="VERIFY"
-              variant="primary"
-              onPress={onVerify}
-              loading={submitting}
-              disabled={submitting}
-              style={{ marginTop: tokens.spacing.lg }}
-            />
+                <Button
+                  title="VERIFY"
+                  variant="primary"
+                  onPress={onVerify}
+                  loading={submitting}
+                  style={{ height: 50, marginTop: tokens.spacing.lg }}
+                />
+              </>
+            )}
           </View>
         </ScrollView>
       </SafeAreaView>
@@ -646,12 +952,18 @@ export const OtpVerify = ({ navigation, route }: any) => {
 };
 
 const styles = StyleSheet.create({
-  box: {
+  inputBox: {
     flexDirection: 'row',
     alignItems: 'center',
     borderRadius: tokens.radius.md,
     paddingHorizontal: 16,
-    minHeight: 56,
+    minHeight: 50,
+  },
+  checkRow: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: tokens.spacing.md,
+    marginBottom: tokens.spacing.base,
   },
   overlay: {
     flex: 1,
@@ -667,12 +979,10 @@ const styles = StyleSheet.create({
     paddingVertical: tokens.spacing.xl,
     paddingHorizontal: tokens.spacing.xl,
   },
-  otpBox: {
-    width: 48,
-    height: 58,
-    borderRadius: tokens.radius.md,
+  codeBox: {
+    borderRadius: 10,
     textAlign: 'center',
-    fontSize: 24,
-    fontFamily: fonts.bodyBold,
+    fontSize: 22,
+    fontFamily: fonts.displayMedium,
   },
 });

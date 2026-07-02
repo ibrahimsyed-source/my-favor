@@ -1,58 +1,58 @@
 import React, { useState } from 'react';
 import {
-  View, TextInput, TouchableOpacity, Pressable, ScrollView, Switch,
-  StyleSheet, KeyboardAvoidingView, Platform,
+  View, TextInput, TouchableOpacity, Pressable, ScrollView, StyleSheet,
+  KeyboardAvoidingView, Platform, Modal, ActivityIndicator,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { Ionicons } from '@expo/vector-icons';
+import { Ionicons, MaterialIcons } from '@expo/vector-icons';
+import Svg, { Circle, Path } from 'react-native-svg';
 import * as ImagePicker from 'expo-image-picker';
-import { Txt, Button, InfoModal, ConfirmModal, Avatar } from '../components';
+import { Txt, Avatar } from '../components';
 import { fonts } from '../theme';
 import { useStore } from '../store';
 
 // ---------------------------------------------------------------------------
-// Module palette — these screens are intentionally DARK ("User App v.2").
-// The shared useTheme() is a single light theme (used by auth/onboarding), so
-// it is NOT consulted here; instead every surface/text/border uses the local
-// dark tokens below so the look matches the v.2 reference exactly.
+// User App v.2 (Figma "Mockup" canvas, #125) — these account screens are LIGHT.
+// Frames: Side Drawer #125:7342 · Edit Profile #125:7568 · Edit Profile -
+// Success Modal #125:7632 · Settings - Revised #125:7465 · Settings - Delete
+// account #1196:18885 · Help #125:7401 · Help - Success #125:7430.
+// The shared <Button>/<Field>/<TopBar> render the v1 kit (54px pills etc.), so
+// local v.2 building blocks below reproduce the exact frame metrics instead.
 // ---------------------------------------------------------------------------
-const RED = '#ED1C24';
-const STAR = '#FFBD00';
-const GREEN = '#02CB00';
-
-const DARK = {
-  bg: '#0C0C0C', // near-black content-screen background
-  card: '#1B222C', // side drawer / bottom-sheet navy
-  field: '#1C2331', // raised input / field navy
-  text: '#FFFFFF',
-  textSecondary: 'rgba(255,255,255,0.6)',
-  textTertiary: 'rgba(255,255,255,0.4)',
-  border: 'rgba(255,255,255,0.10)',
-  divider: 'rgba(255,255,255,0.10)',
-  ctaBg: '#FFFFFF', // v.2 filled CTA is white-on-dark
-  ctaText: '#141414',
-  switchTrack: '#39404B',
+const L = {
+  bg: '#FFFFFF',
+  text: '#1A1A1A',
+  sub: '#767676', // gray body / row subtitles
+  placeholder: '#9A9A9A',
+  divider: '#ECECEC',
+  input: '#EFEFEF',
+  cta: '#141414', // black CTA bars
+  red: '#ED1C24',
+  star: '#FFBD00',
+  green: '#4CAF50', // Help-Success check
+  toggleOff: '#E4E4E6',
 } as const;
 
+const POPPINS_MEDIUM = 'Poppins_500Medium'; // registered in App.tsx
+
 // ---------------------------------------------------------------------------
-// Shared dark-surface building blocks
+// v.2 light building blocks
 // ---------------------------------------------------------------------------
-function DarkHeader({ title, onBack, rightIcon, onRight }: any) {
+function LightHeader({ title, onBack, onEdit }: { title: string; onBack?: () => void; onEdit?: () => void }) {
   return (
-    <View style={[st.darkHeader, { backgroundColor: DARK.bg, borderBottomColor: DARK.border }]}>
-      {/* Root tab screens (Profile) pass no onBack, so no back chevron renders. */}
-      <View style={{ width: 40 }}>
+    <View style={st.header}>
+      <View style={{ width: 44 }}>
         {onBack ? (
-          <TouchableOpacity onPress={onBack} hitSlop={10} accessibilityRole="button" accessibilityLabel="Go back">
-            <Ionicons name="chevron-back" size={26} color={DARK.text} />
+          <TouchableOpacity onPress={onBack} hitSlop={12} accessibilityRole="button" accessibilityLabel="Go back">
+            <Ionicons name="arrow-back" size={24} color={L.text} />
           </TouchableOpacity>
         ) : null}
       </View>
-      <Txt variant="h6" color={DARK.text}>{title}</Txt>
-      <View style={{ width: 40, alignItems: 'flex-end' }}>
-        {rightIcon ? (
-          <TouchableOpacity onPress={onRight} hitSlop={10} accessibilityRole="button" accessibilityLabel="Edit profile">
-            <Ionicons name={rightIcon} size={22} color={DARK.text} />
+      <Txt style={st.headerTitle} center>{title}</Txt>
+      <View style={{ width: 44, alignItems: 'flex-end' }}>
+        {onEdit ? (
+          <TouchableOpacity onPress={onEdit} hitSlop={12} accessibilityRole="button" accessibilityLabel="Edit profile">
+            <Ionicons name="pencil" size={20} color={L.text} />
           </TouchableOpacity>
         ) : null}
       </View>
@@ -60,21 +60,55 @@ function DarkHeader({ title, onBack, rightIcon, onRight }: any) {
   );
 }
 
-function DarkField({
-  label, value, onChangeText, placeholder, secureTextEntry, keyboardType,
-  multiline, maxLength, autoCapitalize,
-}: any) {
+// Black CTA bar (SAVE / SUBMIT / CONTINUE / DELETE MY ACCOUNT) — 46px, r10.
+function Cta({ title, onPress, disabled, loading, style }: {
+  title: string; onPress?: () => void; disabled?: boolean; loading?: boolean; style?: any;
+}) {
+  return (
+    <TouchableOpacity
+      activeOpacity={0.85}
+      disabled={!!disabled || !!loading}
+      onPress={onPress}
+      accessibilityRole="button"
+      accessibilityLabel={title}
+      accessibilityState={{ disabled: !!disabled || !!loading, busy: !!loading }}
+      style={[st.cta, disabled && { opacity: 0.4 }, style]}
+    >
+      {loading ? <ActivityIndicator color="#FFFFFF" /> : <Txt style={st.ctaText}>{title}</Txt>}
+    </TouchableOpacity>
+  );
+}
+
+// Centered white alert card (Edit Profile - Success Modal #125:7632).
+function LightModal({ visible, title, message, buttonLabel, onClose }: {
+  visible: boolean; title: string; message: string; buttonLabel: string; onClose: () => void;
+}) {
+  return (
+    <Modal visible={visible} transparent animationType="fade" onRequestClose={onClose}>
+      <Pressable style={st.scrim} onPress={onClose}>
+        <Pressable style={st.alertCard} onPress={() => {}}>
+          <Txt style={st.alertTitle} center>{title}</Txt>
+          <Txt style={st.alertMsg} center>{message}</Txt>
+          <Cta title={buttonLabel} onPress={onClose} style={{ height: 40, marginTop: 18 }} />
+        </Pressable>
+      </Pressable>
+    </Modal>
+  );
+}
+
+// Gray filled input with a light label above (Edit Profile #125:7568).
+function LightField({ label, value, onChangeText, placeholder, secureTextEntry, keyboardType, multiline, maxLength, autoCapitalize }: any) {
   const [hide, setHide] = useState(!!secureTextEntry);
   return (
     <View style={{ flex: 1 }}>
-      {label ? <Txt variant="label" color={DARK.text} style={{ marginBottom: 8 }}>{label}</Txt> : null}
-      <View style={[st.darkInput, { backgroundColor: DARK.field }, multiline && { height: 120, alignItems: 'flex-start' }]}>
+      {label ? <Txt style={st.fieldLabel}>{label}</Txt> : null}
+      <View style={[st.fieldBox, multiline && st.fieldBoxMulti]}>
         <TextInput
-          style={{ flex: 1, color: DARK.text, fontSize: 16, paddingVertical: multiline ? 10 : 0 }}
+          style={[st.fieldInput, multiline && { paddingVertical: 0, height: '100%' }]}
           value={value}
           onChangeText={onChangeText}
           placeholder={placeholder}
-          placeholderTextColor={DARK.textTertiary}
+          placeholderTextColor={L.placeholder}
           secureTextEntry={hide}
           keyboardType={keyboardType}
           multiline={multiline}
@@ -83,8 +117,8 @@ function DarkField({
           textAlignVertical={multiline ? 'top' : 'center'}
         />
         {secureTextEntry ? (
-          <TouchableOpacity onPress={() => setHide((h) => !h)} hitSlop={8}>
-            <Ionicons name={hide ? 'eye-off' : 'eye'} size={20} color={DARK.textSecondary} />
+          <TouchableOpacity onPress={() => setHide((h: boolean) => !h)} hitSlop={8} accessibilityRole="button" accessibilityLabel={hide ? 'Show password' : 'Hide password'}>
+            <Ionicons name={hide ? 'eye' : 'eye-off'} size={18} color={L.text} />
           </TouchableOpacity>
         ) : null}
       </View>
@@ -92,23 +126,32 @@ function DarkField({
   );
 }
 
+// Tiny US flag (drawn — the emoji degrades on Windows/web and some Androids).
+function USFlag() {
+  return (
+    <View style={st.flag}>
+      {[0, 1, 2, 3, 4, 5, 6].map((i) => (
+        <View key={i} style={{ flex: 1, backgroundColor: i % 2 === 0 ? '#B22234' : '#FFFFFF' }} />
+      ))}
+      <View style={st.flagCanton} />
+    </View>
+  );
+}
+
 function PhoneField({ value, onChangeText }: any) {
   return (
     <View>
-      <Txt variant="label" color={DARK.text} style={{ marginBottom: 8 }}>Phone Number</Txt>
-      <View style={[st.darkInput, { backgroundColor: DARK.field }]} accessibilityLabel="Country code, United States, plus 1">
-        {/* Plain text rather than the regional-indicator flag emoji, which degrades
-            to bare letters on Windows/web and to tofu boxes on some Android builds. */}
-        <Txt color={DARK.text} style={{ fontSize: 13, fontFamily: fonts.bodyBold }}>US</Txt>
-        <Txt color={DARK.text} style={{ fontSize: 16, marginLeft: 8, marginRight: 4 }}>+1</Txt>
-        <Ionicons name="chevron-down" size={16} color={DARK.textSecondary} />
-        <View style={{ width: 1, height: 24, backgroundColor: DARK.divider, marginHorizontal: 12 }} />
+      <Txt style={st.fieldLabel}>Phone Number</Txt>
+      <View style={st.fieldBox} accessibilityLabel="Country code, United States, plus 1">
+        <USFlag />
+        <Txt style={{ fontFamily: POPPINS_MEDIUM, fontSize: 14, color: L.text, marginLeft: 7, marginRight: 3 }}>+1</Txt>
+        <Ionicons name="chevron-down" size={13} color={L.text} />
         <TextInput
-          style={{ flex: 1, color: DARK.text, fontSize: 16 }}
+          style={[st.fieldInput, { marginLeft: 14 }]}
           value={value}
           onChangeText={onChangeText}
           placeholder="8000 - 000 - 000"
-          placeholderTextColor={DARK.textTertiary}
+          placeholderTextColor={L.placeholder}
           keyboardType="phone-pad"
         />
       </View>
@@ -116,113 +159,164 @@ function PhoneField({ value, onChangeText }: any) {
   );
 }
 
+// Small pill toggle used in "Switch to be a favor pal" (custom — RN Switch
+// renders at platform-fixed sizes that don't match the 38x22 mock).
+function TinyToggle({ value, onChange }: { value: boolean; onChange: (v: boolean) => void }) {
+  return (
+    <Pressable
+      onPress={() => onChange(!value)}
+      accessibilityRole="switch"
+      accessibilityState={{ checked: value }}
+      style={[st.toggleTrack, { backgroundColor: value ? L.red : L.toggleOff }]}
+    >
+      <View style={[st.toggleKnob, value ? { alignSelf: 'flex-end' } : { alignSelf: 'flex-start' }]} />
+    </Pressable>
+  );
+}
+
 // ===========================================================================
-// 1. Profile — dark self-profile (figma 100:13030)
+// Profile / Settings — one shared body: the "Settings - Revised" frame
+// (#125:7465) is titled "Profile" in-app; the Profile tab renders the same
+// design as a root (no back chevron) plus the red Set Status link, which no
+// v.2 frame covers but keeps s.setStatus reachable.
 // ===========================================================================
-export const Profile = ({ navigation }: any) => {
+function ProfileBody({ navigation, onBack, showSetStatus }: { navigation: any; onBack?: () => void; showSetStatus?: boolean }) {
   const s = useStore();
   const user = s.user;
+  const [confirming, setConfirming] = useState(false);
+  const [agree, setAgree] = useState(false);
+  const [deleting, setDeleting] = useState(false);
   if (!user) return null;
 
   const isPal = user.role === 'pal';
 
-  return (
-    <SafeAreaView edges={['top']} style={{ flex: 1, backgroundColor: DARK.bg }}>
-      {/* Profile is a root tab, not a pushed screen, so no back chevron. */}
-      <DarkHeader
-        title="Profile"
-        rightIcon="pencil"
-        onRight={() => navigation.navigate('EditProfile')}
-      />
-      <ScrollView contentContainerStyle={{ paddingHorizontal: 20, paddingBottom: 32 }}>
-        {/* Avatar + identity — shared Avatar shows the user's initial when no photo is set. */}
-        <View style={{ alignSelf: 'center', marginTop: 16 }}>
-          <Avatar uri={user.avatar} name={user.firstName} size={140} />
-        </View>
-        <Txt variant="h3" color={DARK.text} center style={{ marginTop: 16 }}>{user.firstName}</Txt>
-        <TouchableOpacity onPress={() => navigation.navigate('SetStatus')} style={st.setStatus} activeOpacity={0.7}>
-          <View style={st.statusDot} />
-          <Txt color={RED} style={{ fontSize: 15, fontFamily: fonts.bodyBold }}>Set Status</Txt>
-        </TouchableOpacity>
+  const runDelete = async () => {
+    setDeleting(true);
+    await s.deleteAccount();
+    // store wipes the session + signs out; the auth navigator unmounts this screen.
+  };
 
-        {/* Bio */}
-        <Txt variant="body" color={DARK.textSecondary} center style={{ marginTop: 18, paddingHorizontal: 4 }}>
-          {user.bio}
-        </Txt>
+  return (
+    <SafeAreaView edges={['top']} style={{ flex: 1, backgroundColor: L.bg }}>
+      <LightHeader title="Profile" onBack={onBack} onEdit={() => navigation.navigate('EditProfile')} />
+      <ScrollView contentContainerStyle={{ paddingHorizontal: 20, paddingBottom: 28 }} showsVerticalScrollIndicator={false}>
+        <View style={{ alignSelf: 'center', marginTop: 18 }}>
+          <Avatar uri={user.avatar} name={user.firstName} size={124} />
+        </View>
+        <Txt style={st.profileName} center>{user.firstName}</Txt>
+
+        {showSetStatus ? (
+          <TouchableOpacity
+            onPress={() => navigation.navigate('SetStatus')}
+            style={st.setStatus}
+            activeOpacity={0.7}
+            accessibilityRole="button"
+            accessibilityLabel="Set Status"
+          >
+            <View style={st.statusDot} />
+            <Txt style={{ fontFamily: POPPINS_MEDIUM, fontSize: 13, color: L.red }}>Set Status</Txt>
+          </TouchableOpacity>
+        ) : null}
+
+        <Txt style={st.profileBio} center>{user.bio}</Txt>
+
+        {/* Role switch pill */}
+        <View style={st.switchPill}>
+          <Txt style={st.switchPillText}>{isPal ? 'Switch to request a favor' : 'Switch to be a favor pal'}</Txt>
+          <TinyToggle value={isPal} onChange={() => s.setRole(isPal ? 'member' : 'pal')} />
+        </View>
 
         {/* Stats */}
-        <View style={[st.statsRow, { borderColor: DARK.divider }]}>
-          <Stat value={String(user.totalFavors)} label="Total Favors" />
-          <Stat value={user.rating.toFixed(1)} label="Rating" star />
-          <Stat value={String(user.yearsActive)} label="Years" />
+        <View style={st.statsRow}>
+          <View style={{ flex: 1, alignItems: 'flex-start' }}>
+            <Txt style={st.statValue}>{String(user.totalFavors)}</Txt>
+            <Txt style={st.statLabel}>Total Favors</Txt>
+          </View>
+          <View style={{ flex: 1, alignItems: 'center' }}>
+            <Txt style={st.statValue}>{user.rating.toFixed(1)}</Txt>
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4, marginTop: 4 }}>
+              <Ionicons name="star" size={12} color={L.star} />
+              <Txt style={{ ...st.statLabel, marginTop: 0 }}>Rating</Txt>
+            </View>
+          </View>
+          <View style={{ flex: 1, alignItems: 'flex-end' }}>
+            <Txt style={st.statValue}>{String(user.yearsActive)}</Txt>
+            <Txt style={st.statLabel}>Years</Txt>
+          </View>
         </View>
 
-        {/* Info rows */}
+        {/* Contact rows */}
+        <View style={[st.divider, { marginTop: 22 }]} />
         <InfoRow icon="mail" title="Email" subtitle={user.email} onPress={() => navigation.navigate('EditProfile')} />
         <InfoRow icon="call" title="Phone" subtitle={user.phone} onPress={() => navigation.navigate('EditProfile')} />
         <InfoRow icon="home" title="Home" subtitle={user.homeAddress} onPress={() => navigation.navigate('EditProfile')} />
         <InfoRow icon="lock-closed" title="Password" subtitle="Change Password" onPress={() => navigation.navigate('EditProfile')} />
 
-        {/* Account hub — the SideDrawer only opens from Home, so the Profile tab is
-            the only reliable path to these account controls. */}
-        <Txt variant="caption" color={DARK.textTertiary} style={{ marginTop: 24, marginBottom: 2, letterSpacing: 0.8, textTransform: 'uppercase' }}>Account</Txt>
-        <NavRow icon="time" label="Favor History" onPress={() => navigation.navigate('History')} />
-        <NavRow icon="card" label="Payment Methods" onPress={() => navigation.navigate('Payment')} />
-        {isPal && (
-          <NavRow icon="wallet" label="Payouts & Bank" onPress={() => navigation.navigate('StripeOnboarding')} />
-        )}
-        <NavRow icon="settings" label="Settings" onPress={() => navigation.navigate('Settings')} />
-        <NavRow icon="help-circle" label="Help" onPress={() => navigation.navigate('Help')} />
-        <NavRow icon="log-out" label="Log Out" onPress={() => s.logout()} danger />
+        <Cta
+          title="DELETE MY ACCOUNT"
+          onPress={() => { setAgree(false); setConfirming(true); }}
+          style={{ marginTop: 30 }}
+        />
       </ScrollView>
+
+      {/* Settings - Delete account (#1196:18885) — checkbox confirm modal.
+          Copy matches the frame verbatim (incl. its "within45days"/"cetain"
+          spellings). App Store 5.1.1(v): deletion initiated + completed in-app. */}
+      <Modal visible={confirming} transparent animationType="fade" onRequestClose={() => !deleting && setConfirming(false)}>
+        <Pressable style={st.scrim} onPress={() => !deleting && setConfirming(false)}>
+          <Pressable style={st.deleteCard} onPress={() => {}}>
+            <Txt style={st.deleteTitle} center>DELETE MY ACCOUNT</Txt>
+            <Txt style={st.deleteBody}>
+              Once your request is processed, your personal information will be permanently deleted within45days, with the exception of cetain information we are legally required or permitted to retain.{'\n'}
+              Please consider your request as you will immediately be signed out of the app and this cannot be undone.
+            </Txt>
+            <TouchableOpacity
+              style={st.checkRow}
+              activeOpacity={0.7}
+              onPress={() => setAgree((a) => !a)}
+              accessibilityRole="checkbox"
+              accessibilityState={{ checked: agree }}
+            >
+              <View style={[st.checkbox, agree && { backgroundColor: L.text }]}>
+                {agree ? <Ionicons name="checkmark" size={13} color="#FFFFFF" /> : null}
+              </View>
+              <Txt style={st.checkText}>
+                Yes, I want to permanently delete my account.{'\n'}
+                I understand I will be signed out of MyFavor app and no longer able to access the app or sign in
+              </Txt>
+            </TouchableOpacity>
+            <Cta title="DELETE MY ACCOUNT" onPress={runDelete} disabled={!agree} loading={deleting} style={{ height: 42, marginTop: 18 }} />
+          </Pressable>
+        </Pressable>
+      </Modal>
     </SafeAreaView>
-  );
-};
-
-function NavRow({ icon, label, onPress, danger }: any) {
-  const tint = danger ? RED : DARK.text;
-  return (
-    <TouchableOpacity
-      onPress={onPress}
-      activeOpacity={0.7}
-      style={[st.infoRow, { borderBottomColor: DARK.divider }]}
-      accessibilityRole="button"
-      accessibilityLabel={label}
-    >
-      <Ionicons name={icon} size={22} color={tint} style={{ width: 32 }} />
-      <Txt variant="label" color={tint} style={{ flex: 1 }}>{label}</Txt>
-      {danger ? null : <Ionicons name="chevron-forward" size={18} color={DARK.textTertiary} />}
-    </TouchableOpacity>
-  );
-}
-
-function Stat({ value, label, star }: any) {
-  return (
-    <View style={{ flex: 1, alignItems: 'center' }}>
-      <Txt color={DARK.text} style={{ fontSize: 34, fontFamily: fonts.display }}>{value}</Txt>
-      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4, marginTop: 2 }}>
-        {star ? <Ionicons name="star" size={14} color={STAR} /> : null}
-        <Txt color={DARK.textSecondary} style={{ fontSize: 14 }}>{label}</Txt>
-      </View>
-    </View>
   );
 }
 
 function InfoRow({ icon, title, subtitle, onPress }: any) {
   return (
-    <TouchableOpacity onPress={onPress} activeOpacity={0.7} style={[st.infoRow, { borderBottomColor: DARK.divider }]}>
-      <Ionicons name={icon} size={22} color={DARK.text} style={{ width: 32 }} />
+    <TouchableOpacity onPress={onPress} activeOpacity={0.7} style={st.infoRow} accessibilityRole="button" accessibilityLabel={`${title}, ${subtitle}`}>
+      <Ionicons name={icon} size={17} color={L.text} style={{ width: 34, marginTop: 2 }} />
       <View style={{ flex: 1 }}>
-        <Txt variant="label" color={DARK.text}>{title}</Txt>
-        <Txt variant="bodySm" color={DARK.textSecondary} numberOfLines={1} style={{ marginTop: 2 }}>{subtitle}</Txt>
+        <Txt style={st.infoTitle}>{title}</Txt>
+        <Txt style={st.infoSub} numberOfLines={1}>{subtitle}</Txt>
       </View>
-      <Ionicons name="chevron-forward" size={18} color={DARK.textTertiary} />
     </TouchableOpacity>
   );
 }
 
+// 1. Profile — root tab (no back chevron), same v.2 design.
+export const Profile = ({ navigation }: any) => (
+  <ProfileBody navigation={navigation} showSetStatus />
+);
+
+// 2. Settings — "Settings - Revised" frame #125:7465 (in-app title "Profile").
+export const Settings = ({ navigation }: any) => (
+  <ProfileBody navigation={navigation} onBack={() => navigation.goBack()} />
+);
+
 // ===========================================================================
-// 2. EditProfile — dark form (figma 97:4909)
+// 3. EditProfile — light form (#125:7568) + Success modal (#125:7632).
 // ===========================================================================
 export const EditProfile = ({ navigation }: any) => {
   const s = useStore();
@@ -252,21 +346,8 @@ export const EditProfile = ({ navigation }: any) => {
     }
   };
 
-  const onSave = async () => {
-    // A new/current password entry means the user wants to change it — actually
-    // submit it via changePassword instead of silently dropping the fields.
-    const wantsPwChange = !!(newPw.trim() || currentPw.trim());
-    if (wantsPwChange) {
-      const ok = await s.changePassword(currentPw, newPw);
-      if (!ok) {
-        setModal({
-          title: 'Password Not Changed',
-          message: 'Enter your current password and a new password of at least 6 characters.',
-        });
-        return;
-      }
-    }
-
+  // First SAVE (after Zip Code) — profile fields only.
+  const saveProfile = async () => {
     try {
       await s.updateProfile({
         firstName, lastName, bio, email, phone,
@@ -281,19 +362,22 @@ export const EditProfile = ({ navigation }: any) => {
       });
       return;
     }
+    setModal({ title: 'Success!', message: 'User Profile has been Successfully updated', success: true });
+  };
 
-    if (wantsPwChange) {
-      setCurrentPw('');
-      setNewPw('');
+  // Second SAVE (after New Password) — password change only.
+  const savePassword = async () => {
+    const ok = await s.changePassword(currentPw, newPw);
+    if (!ok) {
+      setModal({
+        title: 'Password Not Changed',
+        message: 'Enter your current password and a new password of at least 6 characters.',
+      });
+      return;
     }
-    // Always confirm a successful save (closeModal navigates back on success).
-    setModal({
-      title: 'Profile Updated',
-      message: wantsPwChange
-        ? 'Your changes were saved and your password was updated.'
-        : 'Your changes were saved.',
-      success: true,
-    });
+    setCurrentPw('');
+    setNewPw('');
+    setModal({ title: 'Success!', message: 'User Profile has been Successfully updated', success: true });
   };
 
   const closeModal = () => {
@@ -303,29 +387,29 @@ export const EditProfile = ({ navigation }: any) => {
   };
 
   return (
-    <SafeAreaView edges={['top']} style={{ flex: 1, backgroundColor: DARK.bg }}>
-      <DarkHeader title="Edit Profile" onBack={() => navigation.goBack()} />
+    <SafeAreaView edges={['top']} style={{ flex: 1, backgroundColor: L.bg }}>
+      <LightHeader title="Edit Profile" onBack={() => navigation.goBack()} />
       <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
-        <ScrollView contentContainerStyle={{ padding: 20, paddingBottom: 40 }} keyboardShouldPersistTaps="handled">
+        <ScrollView contentContainerStyle={{ padding: 16, paddingBottom: 36 }} keyboardShouldPersistTaps="handled" showsVerticalScrollIndicator={false}>
           {/* Avatar with red edit badge */}
-          <View style={{ alignSelf: 'center', marginBottom: 24 }}>
-            <Avatar uri={avatar} name={firstName} size={96} />
-            <TouchableOpacity onPress={pickImage} style={[st.editBadge, { borderColor: DARK.bg }]} activeOpacity={0.85}>
-              <Ionicons name="pencil" size={15} color="#fff" />
+          <View style={{ alignSelf: 'center', marginTop: 6, marginBottom: 26 }}>
+            <Avatar uri={avatar} name={firstName} size={124} />
+            <TouchableOpacity onPress={pickImage} style={st.editBadge} activeOpacity={0.85} accessibilityRole="button" accessibilityLabel="Change photo">
+              <Ionicons name="pencil" size={15} color="#FFFFFF" />
             </TouchableOpacity>
           </View>
 
           <View style={st.fieldRow}>
-            <DarkField label="First Name" value={firstName} onChangeText={setFirstName} />
-            <DarkField label="Last Name" value={lastName} onChangeText={setLastName} />
+            <LightField label="First Name" value={firstName} onChangeText={setFirstName} />
+            <LightField label="Last Name" value={lastName} onChangeText={setLastName} />
           </View>
 
           <View style={st.fieldWrap}>
-            <DarkField label="Bio" value={bio} onChangeText={setBio} multiline maxLength={300} />
+            <LightField label="Bio" value={bio} onChangeText={setBio} multiline maxLength={300} />
           </View>
 
           <View style={st.fieldWrap}>
-            <DarkField label="Email Address" value={email} onChangeText={setEmail} keyboardType="email-address" autoCapitalize="none" />
+            <LightField label="Email Address" value={email} onChangeText={setEmail} keyboardType="email-address" autoCapitalize="none" />
           </View>
 
           <View style={st.fieldWrap}>
@@ -333,30 +417,32 @@ export const EditProfile = ({ navigation }: any) => {
           </View>
 
           <View style={st.fieldWrap}>
-            <DarkField label="Home Address" value={homeAddress} onChangeText={setHomeAddress} />
+            <LightField label="Home Address" value={homeAddress} onChangeText={setHomeAddress} />
           </View>
 
           <View style={st.fieldRow}>
-            <DarkField label="City" value={city} onChangeText={setCity} />
-            <DarkField label="State" value={stateName} onChangeText={setStateName} />
+            <LightField label="City" value={city} onChangeText={setCity} />
+            <LightField label="State" value={stateName} onChangeText={setStateName} />
           </View>
 
           <View style={st.fieldWrap}>
-            <DarkField label="Zip Code" value={zip} onChangeText={setZip} keyboardType="number-pad" />
+            <LightField label="Zip Code" value={zip} onChangeText={setZip} keyboardType="number-pad" />
           </View>
 
-          <View style={[st.fieldWrap, { marginTop: 12 }]}>
-            <DarkField label="Current Password" value={currentPw} onChangeText={setCurrentPw} secureTextEntry />
+          <Cta title="SAVE" onPress={saveProfile} style={{ marginTop: 10 }} />
+
+          <View style={[st.fieldWrap, { marginTop: 26 }]}>
+            <LightField label="Current Password" value={currentPw} onChangeText={setCurrentPw} secureTextEntry />
           </View>
 
           <View style={st.fieldWrap}>
-            <DarkField label="New Password" value={newPw} onChangeText={setNewPw} secureTextEntry />
+            <LightField label="New Password" value={newPw} onChangeText={setNewPw} secureTextEntry />
           </View>
 
-          <Button title="SAVE" variant="white" onPress={onSave} style={{ marginTop: 16 }} />
+          <Cta title="SAVE" onPress={savePassword} style={{ marginTop: 10 }} />
         </ScrollView>
       </KeyboardAvoidingView>
-      <InfoModal
+      <LightModal
         visible={!!modal}
         title={modal?.title ?? ''}
         message={modal?.message ?? ''}
@@ -368,157 +454,62 @@ export const EditProfile = ({ navigation }: any) => {
 };
 
 // ===========================================================================
-// 3. Settings — dark list (figma 97:4297)
+// 4. Help — light contact form (#125:7401) + full-screen success (#125:7430).
 // ===========================================================================
-export const Settings = ({ navigation }: any) => {
-  const s = useStore();
-  const [push, setPush] = useState(true);
-  const [emailN, setEmailN] = useState(false);
-  const [loc, setLoc] = useState(true);
-  const [deleting, setDeleting] = useState(false);
-  const [confirmingDelete, setConfirmingDelete] = useState(false);
-
-  const track = { false: DARK.switchTrack, true: RED };
-
-  // App Store guideline 5.1.1(v): account deletion must be initiated and
-  // completed in-app. ConfirmModal works on web + native (Alert.alert no-ops on web).
-  const runDelete = async () => {
-    setConfirmingDelete(false);
-    setDeleting(true);
-    await s.deleteAccount();
-    // store wipes the session + signs out; the auth navigator unmounts this screen.
-  };
-
+function GreenCheck({ size = 96 }: { size?: number }) {
   return (
-    <SafeAreaView edges={['top']} style={{ flex: 1, backgroundColor: DARK.bg }}>
-      <DarkHeader title="Settings" onBack={() => navigation.goBack()} />
-      <ScrollView contentContainerStyle={{ paddingHorizontal: 20, paddingBottom: 32 }}>
-        <SectionLabel>Account</SectionLabel>
-        <SettingRow icon="person-outline" title="Edit Profile" onPress={() => navigation.navigate('EditProfile')} />
-        <SettingRow icon="lock-closed-outline" title="Change Password" onPress={() => navigation.navigate('EditProfile')} />
-
-        <SectionLabel>Notifications</SectionLabel>
-        <SettingRow icon="notifications-outline" title="Push Notifications" right={<Switch value={push} onValueChange={setPush} trackColor={track} />} />
-        <SettingRow icon="mail-outline" title="Email Notifications" right={<Switch value={emailN} onValueChange={setEmailN} trackColor={track} />} />
-
-        <SectionLabel>Preferences</SectionLabel>
-        <SettingRow icon="location-outline" title="Location Services" right={<Switch value={loc} onValueChange={setLoc} trackColor={track} />} />
-
-        <SectionLabel>Support</SectionLabel>
-        <SettingRow icon="help-circle-outline" title="Help Center" onPress={() => navigation.navigate('Help')} />
-        <SettingRow icon="document-text-outline" title="Privacy Policy" onPress={() => navigation.navigate('Legal', { doc: 'privacy' })} />
-        <SettingRow icon="shield-checkmark-outline" title="Terms of Service" onPress={() => navigation.navigate('Legal', { doc: 'terms' })} />
-
-        <SectionLabel>Account Actions</SectionLabel>
-        <TouchableOpacity
-          onPress={() => setConfirmingDelete(true)}
-          disabled={deleting}
-          activeOpacity={0.7}
-          style={[st.lightRow, { borderBottomColor: DARK.divider, opacity: deleting ? 0.5 : 1 }]}
-        >
-          <Ionicons name="trash-outline" size={22} color={RED} style={{ marginRight: 14 }} />
-          <Txt variant="label" color={RED} style={{ flex: 1 }}>
-            {deleting ? 'Deleting…' : 'Delete Account'}
-          </Txt>
-        </TouchableOpacity>
-        <TouchableOpacity onPress={() => s.logout()} activeOpacity={0.7} style={[st.lightRow, { borderBottomColor: DARK.divider }]}>
-          <Ionicons name="log-out-outline" size={22} color={DARK.textSecondary} style={{ marginRight: 14 }} />
-          <Txt variant="label" color={DARK.text} style={{ flex: 1 }}>Log Out</Txt>
-        </TouchableOpacity>
-      </ScrollView>
-      <ConfirmModal
-        visible={confirmingDelete}
-        title="Delete Account?"
-        message="This permanently deletes your account and all of your data — favors, messages, payment methods, and history. This cannot be undone."
-        confirmLabel="Delete Account"
-        cancelLabel="Cancel"
-        destructive
-        onConfirm={runDelete}
-        onCancel={() => setConfirmingDelete(false)}
-      />
-    </SafeAreaView>
-  );
-};
-
-function SettingRow({ icon, title, right, onPress }: any) {
-  return (
-    <TouchableOpacity
-      disabled={!onPress}
-      onPress={onPress}
-      activeOpacity={0.7}
-      style={[st.lightRow, { borderBottomColor: DARK.divider }]}
-    >
-      <Ionicons name={icon} size={22} color={DARK.textSecondary} style={{ marginRight: 14 }} />
-      <Txt variant="label" color={DARK.text} style={{ flex: 1 }}>{title}</Txt>
-      {right ?? (onPress ? <Ionicons name="chevron-forward" size={18} color={DARK.textTertiary} /> : null)}
-    </TouchableOpacity>
+    <Svg width={size} height={size} viewBox="0 0 96 96" fill="none">
+      <Circle cx={48} cy={48} r={41} stroke={L.green} strokeWidth={7} />
+      <Path d="M31 49 L43.5 61.5 L66 37" stroke={L.green} strokeWidth={7} strokeLinecap="round" strokeLinejoin="round" />
+    </Svg>
   );
 }
 
-function SectionLabel({ children }: any) {
-  return (
-    <Txt variant="caption" color={DARK.textTertiary} style={{ marginTop: 22, marginBottom: 4, letterSpacing: 0.8, textTransform: 'uppercase' }}>
-      {children}
-    </Txt>
-  );
-}
-
-// ===========================================================================
-// 4. Help — dark contact form (figma 2:4291)
-// ===========================================================================
 export const Help = ({ navigation }: any) => {
   const [msg, setMsg] = useState('');
   const [sent, setSent] = useState(false);
 
   if (sent) {
+    // Help - Success frame has no header/back — just the check, copy, CONTINUE.
     return (
-      <SafeAreaView edges={['top']} style={{ flex: 1, backgroundColor: DARK.bg }}>
-        <DarkHeader title="Help" onBack={() => navigation.goBack()} />
-        <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center', padding: 24, gap: 16 }}>
-          <Ionicons name="checkmark-circle" size={76} color={GREEN} />
-          <Txt variant="h3" color={DARK.text} center>Message Sent</Txt>
-          <Txt variant="body" color={DARK.textSecondary} center>
-            Thanks for reaching out! Our support team will get back to you shortly.
+      <SafeAreaView edges={['top']} style={{ flex: 1, backgroundColor: L.bg }}>
+        <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 24 }}>
+          <GreenCheck size={96} />
+          <Txt style={st.successText} center>
+            You’ve succesfully{'\n'}submitted your{'\n'}question!
           </Txt>
-          <Button title="Done" variant="white" uppercase={false} onPress={() => navigation.goBack()} style={{ alignSelf: 'stretch', marginTop: 8 }} />
+        </View>
+        <View style={{ paddingHorizontal: 24, paddingBottom: 28 }}>
+          <Cta title="CONTINUE" onPress={() => navigation.goBack()} />
         </View>
       </SafeAreaView>
     );
   }
 
   return (
-    <SafeAreaView edges={['top']} style={{ flex: 1, backgroundColor: DARK.bg }}>
-      <DarkHeader title="Help" onBack={() => navigation.goBack()} />
+    <SafeAreaView edges={['top']} style={{ flex: 1, backgroundColor: L.bg }}>
+      <LightHeader title="Help" onBack={() => navigation.goBack()} />
       <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
-        <ScrollView contentContainerStyle={{ padding: 24 }} keyboardShouldPersistTaps="handled">
-          <Txt variant="h2" color={DARK.text}>Need help or have a{'\n'}question?</Txt>
-          <Txt variant="body" color={DARK.textSecondary} style={{ marginTop: 10, marginBottom: 20 }}>
-            Send us a message.
-          </Txt>
+        <ScrollView contentContainerStyle={{ flexGrow: 1, padding: 24 }} keyboardShouldPersistTaps="handled">
+          <Txt style={st.helpHeading}>Need help or have a question?</Txt>
+          <Txt style={st.helpSub}>Send us a message</Txt>
 
-          <View style={[st.helpBox, { borderColor: DARK.border, backgroundColor: DARK.field }]}>
+          <View style={st.helpBox}>
             <TextInput
-              style={{ flex: 1, fontSize: 16, color: DARK.text, textAlignVertical: 'top' }}
+              style={st.helpInput}
               value={msg}
               onChangeText={setMsg}
               multiline
               maxLength={700}
-              placeholder="Tell us what's going on and how we can help."
-              placeholderTextColor={DARK.textTertiary}
+              placeholder="Enter message here"
+              placeholderTextColor={L.placeholder}
+              textAlignVertical="top"
             />
           </View>
-          <Txt variant="caption" color={DARK.textSecondary} style={{ textAlign: 'right', marginTop: 10 }}>
-            700 characters max.
-          </Txt>
+          <Txt style={st.helpMax}>700 characters max.</Txt>
 
-          <Button
-            title="Submit"
-            variant="white"
-            uppercase={false}
-            onPress={() => setSent(true)}
-            disabled={!msg.trim()}
-            style={{ marginTop: 28 }}
-          />
+          <View style={{ flex: 1 }} />
+          <Cta title="SUBMIT" onPress={() => setSent(true)} disabled={!msg.trim()} style={{ marginTop: 24 }} />
         </ScrollView>
       </KeyboardAvoidingView>
     </SafeAreaView>
@@ -526,7 +517,7 @@ export const Help = ({ navigation }: any) => {
 };
 
 // ===========================================================================
-// 5. SideDrawer — navy left panel over the map (figma 181:10620)
+// 5. SideDrawer — white left panel over the dimmed screen (#125:7342).
 // ===========================================================================
 export const SideDrawer = ({ navigation }: any) => {
   const s = useStore();
@@ -539,73 +530,68 @@ export const SideDrawer = ({ navigation }: any) => {
 
   return (
     <View style={{ flex: 1, flexDirection: 'row' }}>
-      <SafeAreaView edges={['top', 'bottom']} style={[st.drawer, { backgroundColor: DARK.card, borderRightColor: DARK.border }]}>
-        <View style={{ flex: 1, paddingHorizontal: 20, paddingTop: 12 }}>
-          {/* Identity */}
-          <View style={{ alignItems: 'center', marginTop: 8 }}>
-            <View style={{ width: 86, height: 86 }}>
-              <Avatar uri={u?.avatar} name={u?.firstName} size={86} />
-              <TouchableOpacity onPress={() => go('EditProfile')} style={[st.drawerBadge, { borderColor: DARK.card }]} activeOpacity={0.85}>
-                <Ionicons name="pencil" size={13} color="#fff" />
-              </TouchableOpacity>
-            </View>
-            <Txt variant="h4" color={DARK.text} style={{ marginTop: 12 }}>{u?.firstName ?? 'Anton'}</Txt>
-            <TouchableOpacity onPress={() => go('Tabs', { screen: 'Profile' })}>
-              <Txt color={DARK.textSecondary} style={{ fontSize: 14, marginTop: 4 }}>View Profile</Txt>
-            </TouchableOpacity>
-            <TouchableOpacity
-              onPress={() => go('SetStatus')}
-              style={{ flexDirection: 'row', alignItems: 'center', gap: 8, marginTop: 10 }}
-            >
-              <View style={st.statusDot} />
-              <Txt color={RED} style={{ fontSize: 14, fontFamily: fonts.bodyBold }}>Set Status</Txt>
+      <SafeAreaView edges={['top', 'bottom']} style={st.drawer}>
+        {/* Identity */}
+        <View style={{ alignItems: 'center', marginTop: 18 }}>
+          <View style={{ width: 132, height: 132 }}>
+            <Avatar uri={u?.avatar} name={u?.firstName} size={132} />
+            <TouchableOpacity onPress={() => go('EditProfile')} style={st.drawerBadge} activeOpacity={0.85} accessibilityRole="button" accessibilityLabel="Edit profile">
+              <Ionicons name="pencil" size={15} color="#FFFFFF" />
             </TouchableOpacity>
           </View>
+          <Txt style={st.drawerName}>{u?.firstName ?? 'Anton'}</Txt>
+          <TouchableOpacity onPress={() => go('Tabs', { screen: 'Profile' })} hitSlop={6} accessibilityRole="button" accessibilityLabel="View Profile">
+            <Txt style={st.drawerViewProfile}>View Profile</Txt>
+          </TouchableOpacity>
+        </View>
 
-          <View style={[st.drawerDivider, { backgroundColor: DARK.divider }]} />
+        <View style={[st.divider, { marginTop: 24 }]} />
 
-          {/* Menu */}
-          <DrawerRow icon="time-outline" label="Favor History" onPress={() => go('History')} />
-          <DrawerRow icon="help-circle-outline" label="Help" onPress={() => go('Help')} />
-          <DrawerRow icon="settings-outline" label="Settings" onPress={() => go('Settings')} />
-          {u?.role === 'pal' && (
-            <DrawerRow icon="cash-outline" label="Earnings" onPress={() => go('Earnings')} />
-          )}
-          {/* Two stable, distinctly-labeled rows instead of one role-retargeting
-              "Account" row, so neither financial surface silently changes destination
-              (or vanishes) when the role toggle flips on another screen. */}
-          <DrawerRow icon="card-outline" label="Payment Methods" onPress={() => go('Payment')} />
-          {u?.role === 'pal' && (
-            <DrawerRow icon="wallet-outline" label="Payouts & Bank" onPress={() => go('StripeOnboarding')} />
-          )}
+        {/* Menu */}
+        <View style={{ flex: 1, paddingTop: 8 }}>
+          <DrawerRow label="Favor History" onPress={() => go('History')}>
+            <MaterialIcons name="history" size={22} color={L.text} />
+          </DrawerRow>
+          <DrawerRow label="Help" onPress={() => go('Help')}>
+            <Ionicons name="help-circle" size={21} color={L.text} />
+          </DrawerRow>
+          <DrawerRow label="Settings" onPress={() => go('Settings')}>
+            <Ionicons name="settings-sharp" size={19} color={L.text} />
+          </DrawerRow>
+          <DrawerRow label="Payment" onPress={() => go('Payment')}>
+            <Ionicons name="card" size={20} color={L.text} />
+          </DrawerRow>
 
           <View style={{ flex: 1 }} />
 
-          <DrawerRow icon="log-out-outline" label="Logout" onPress={() => s.logout()} />
+          <DrawerRow label="Logout" onPress={() => s.logout()} style={{ marginBottom: 18 }}>
+            <Ionicons name="log-out-outline" size={21} color={L.text} />
+          </DrawerRow>
         </View>
       </SafeAreaView>
 
-      <Pressable style={st.backdrop} onPress={close} />
+      <Pressable style={st.backdrop} onPress={close} accessibilityRole="button" accessibilityLabel="Close menu" />
     </View>
   );
 };
 
-function DrawerRow({ icon, label, onPress }: any) {
+function DrawerRow({ label, onPress, children, style }: any) {
   return (
-    <TouchableOpacity onPress={onPress} activeOpacity={0.7} style={{ flexDirection: 'row', alignItems: 'center', gap: 16, paddingVertical: 16 }}>
-      <Ionicons name={icon} size={22} color={DARK.text} />
-      <Txt color={DARK.text} style={{ fontSize: 16 }}>{label}</Txt>
+    <TouchableOpacity onPress={onPress} activeOpacity={0.7} style={[st.drawerRow, style]} accessibilityRole="button" accessibilityLabel={label}>
+      <View style={{ width: 22, alignItems: 'center' }}>{children}</View>
+      <Txt style={st.drawerRowText}>{label}</Txt>
     </TouchableOpacity>
   );
 }
 
 // ===========================================================================
-// 6. SetStatus — availability picker modal (figma "Set Status")
+// 6. SetStatus — availability picker modal. No v.2 frame covers it, so it is
+// restyled to the light card language (white card, green/gray states).
 // ===========================================================================
-const STATUS_OPTIONS: { key: 'online' | 'invisible' | 'offline'; label: string; dot: string; color: string }[] = [
-  { key: 'online', label: 'Online', dot: GREEN, color: GREEN },
-  { key: 'invisible', label: 'Invisible', dot: 'transparent', color: DARK.text },
-  { key: 'offline', label: 'Offline', dot: 'rgba(255,255,255,0.4)', color: DARK.textSecondary },
+const STATUS_OPTIONS: { key: 'online' | 'invisible' | 'offline'; label: string; dot: string; ring: string; color: string }[] = [
+  { key: 'online', label: 'Online', dot: '#02CB00', ring: '#02CB00', color: '#02CB00' },
+  { key: 'invisible', label: 'Invisible', dot: 'transparent', ring: '#767676', color: L.text },
+  { key: 'offline', label: 'Offline', dot: '#9E9E9E', ring: '#9E9E9E', color: L.sub },
 ];
 
 export const SetStatus = ({ navigation }: any) => {
@@ -616,10 +602,10 @@ export const SetStatus = ({ navigation }: any) => {
     navigation.goBack();
   };
   return (
-    <Pressable style={st.statusScrim} onPress={() => navigation.goBack()}>
-      <Pressable style={[st.statusCard, { backgroundColor: DARK.card }]} onPress={() => {}}>
-        <Txt variant="h2" center color={DARK.text} style={{ marginBottom: 18 }}>Set Status</Txt>
-        <View style={[st.statusDivider, { backgroundColor: DARK.divider }]} />
+    <Pressable style={[st.scrim, { paddingHorizontal: 28 }]} onPress={() => navigation.goBack()}>
+      <Pressable style={st.statusCard} onPress={() => {}}>
+        <Txt style={st.statusTitle} center>Set Status</Txt>
+        <View style={st.divider} />
         {STATUS_OPTIONS.map((opt) => {
           const sel = current === opt.key;
           return (
@@ -632,15 +618,12 @@ export const SetStatus = ({ navigation }: any) => {
               accessibilityState={{ selected: sel, checked: sel }}
             >
               <View style={st.statusRow}>
-                <View style={[st.statusRadio, { borderColor: opt.dot === 'transparent' ? DARK.textTertiary : opt.dot, backgroundColor: opt.dot }]} />
-                <Txt
-                  color={opt.color}
-                  style={{ fontSize: 18, fontFamily: sel ? fonts.bodyBold : fonts.bodyRegular }}
-                >
+                <View style={[st.statusRadio, { borderColor: opt.ring, backgroundColor: opt.dot }]} />
+                <Txt style={{ fontFamily: sel ? fonts.displayMedium : POPPINS_MEDIUM, fontSize: 15, color: opt.color }}>
                   {opt.label}
                 </Txt>
               </View>
-              <View style={[st.statusDivider, { backgroundColor: DARK.divider }]} />
+              <View style={st.divider} />
             </TouchableOpacity>
           );
         })}
@@ -651,57 +634,107 @@ export const SetStatus = ({ navigation }: any) => {
 
 // ---------------------------------------------------------------------------
 const st = StyleSheet.create({
-  darkHeader: {
+  // Header
+  header: {
     height: 52, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
-    paddingHorizontal: 16, borderBottomWidth: StyleSheet.hairlineWidth,
+    paddingHorizontal: 16, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: L.divider,
+    backgroundColor: L.bg,
   },
-  darkInput: {
-    borderRadius: 10, paddingHorizontal: 14, minHeight: 52,
+  headerTitle: { fontFamily: fonts.displayMedium, fontSize: 16, color: L.text },
+
+  // CTA
+  cta: { height: 46, borderRadius: 10, backgroundColor: L.cta, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 16 },
+  ctaText: { fontFamily: fonts.displayMedium, fontSize: 13, color: '#FFFFFF', letterSpacing: 1 },
+
+  // Modals
+  scrim: { flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', alignItems: 'center', justifyContent: 'center' },
+  alertCard: { width: 285, borderRadius: 10, backgroundColor: '#FFFFFF', paddingVertical: 22, paddingHorizontal: 20 },
+  alertTitle: { fontFamily: fonts.display, fontSize: 17, color: L.text },
+  alertMsg: { fontFamily: fonts.bodyRegular, fontSize: 13, lineHeight: 19, color: L.text, marginTop: 10 },
+
+  // Delete-account modal
+  deleteCard: { alignSelf: 'stretch', marginHorizontal: 28, borderRadius: 8, backgroundColor: '#FFFFFF', paddingVertical: 22, paddingHorizontal: 20 },
+  deleteTitle: { fontFamily: fonts.displayMedium, fontSize: 15, letterSpacing: 0.4, color: L.text, marginBottom: 14 },
+  deleteBody: { fontFamily: fonts.bodyRegular, fontSize: 13, lineHeight: 19, color: L.text },
+  checkRow: { flexDirection: 'row', alignItems: 'flex-start', marginTop: 16 },
+  checkbox: {
+    width: 18, height: 18, borderRadius: 2, borderWidth: 1.5, borderColor: L.text,
+    alignItems: 'center', justifyContent: 'center', marginTop: 1,
+  },
+  checkText: { flex: 1, marginLeft: 10, fontFamily: fonts.bodyRegular, fontSize: 12.5, lineHeight: 18, color: L.text },
+
+  // Fields (Edit Profile)
+  fieldLabel: { fontFamily: POPPINS_MEDIUM, fontSize: 13, color: L.text, marginBottom: 7 },
+  fieldBox: {
+    backgroundColor: L.input, borderRadius: 8, minHeight: 44, paddingHorizontal: 14,
     flexDirection: 'row', alignItems: 'center',
   },
+  fieldBoxMulti: { height: 110, alignItems: 'flex-start', paddingVertical: 12 },
+  fieldInput: { flex: 1, fontFamily: fonts.bodyRegular, fontSize: 15, color: L.text, paddingVertical: 0 },
   fieldWrap: { marginBottom: 16 },
-  fieldRow: { flexDirection: 'row', gap: 12, marginBottom: 16 },
-
-  // Profile
-  setStatus: { flexDirection: 'row', alignItems: 'center', gap: 8, alignSelf: 'center', marginTop: 12 },
-  statusDot: { width: 8, height: 8, borderRadius: 4, backgroundColor: RED },
-  statsRow: {
-    flexDirection: 'row', alignItems: 'center', paddingVertical: 20, marginTop: 24, marginBottom: 4,
-    borderTopWidth: StyleSheet.hairlineWidth, borderBottomWidth: StyleSheet.hairlineWidth,
-  },
-  infoRow: {
-    flexDirection: 'row', alignItems: 'center', gap: 14, paddingVertical: 18,
-    borderBottomWidth: StyleSheet.hairlineWidth,
-  },
-
-  // EditProfile avatar badge
+  fieldRow: { flexDirection: 'row', gap: 14, marginBottom: 16 },
   editBadge: {
-    position: 'absolute', right: -2, bottom: -2, width: 30, height: 30, borderRadius: 15,
-    backgroundColor: RED, alignItems: 'center', justifyContent: 'center', borderWidth: 2,
+    position: 'absolute', right: 0, bottom: 2, width: 32, height: 32, borderRadius: 16,
+    backgroundColor: L.red, alignItems: 'center', justifyContent: 'center',
   },
 
-  // Settings
-  lightRow: { flexDirection: 'row', alignItems: 'center', paddingVertical: 16, borderBottomWidth: StyleSheet.hairlineWidth },
+  // US flag
+  flag: { width: 21, height: 14, borderRadius: 2, overflow: 'hidden' },
+  flagCanton: { position: 'absolute', top: 0, left: 0, width: 9, height: 8, backgroundColor: '#3C3B6E' },
+
+  // Profile / Settings
+  profileName: { fontFamily: fonts.display, fontSize: 18, color: L.text, marginTop: 16 },
+  setStatus: { flexDirection: 'row', alignItems: 'center', gap: 7, alignSelf: 'center', marginTop: 10 },
+  statusDot: { width: 8, height: 8, borderRadius: 4, backgroundColor: L.red },
+  profileBio: { fontFamily: fonts.bodyRegular, fontSize: 14, lineHeight: 20, color: L.sub, marginTop: 14, paddingHorizontal: 16 },
+  switchPill: {
+    flexDirection: 'row', alignItems: 'center', alignSelf: 'center', marginTop: 18,
+    backgroundColor: '#FFFFFF', borderRadius: 999, paddingLeft: 16, paddingRight: 6, height: 34, gap: 10,
+    shadowColor: '#000', shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.12, shadowRadius: 8, elevation: 3,
+  },
+  switchPillText: { fontFamily: POPPINS_MEDIUM, fontSize: 11, color: L.text },
+  toggleTrack: { width: 38, height: 22, borderRadius: 11, padding: 2, justifyContent: 'center' },
+  toggleKnob: {
+    width: 18, height: 18, borderRadius: 9, backgroundColor: '#FFFFFF',
+    shadowColor: '#000', shadowOffset: { width: 0, height: 1 }, shadowOpacity: 0.2, shadowRadius: 2, elevation: 2,
+  },
+  statsRow: { flexDirection: 'row', alignItems: 'flex-start', marginTop: 26 },
+  statValue: { fontFamily: fonts.display, fontSize: 26, lineHeight: 32, color: L.text },
+  statLabel: { fontFamily: fonts.bodyRegular, fontSize: 13, color: L.sub, marginTop: 4 },
+  divider: { height: StyleSheet.hairlineWidth, backgroundColor: L.divider, alignSelf: 'stretch' },
+  infoRow: {
+    flexDirection: 'row', alignItems: 'flex-start', paddingVertical: 14, paddingLeft: 12,
+    borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: L.divider,
+  },
+  infoTitle: { fontFamily: fonts.displayMedium, fontSize: 14, color: L.text },
+  infoSub: { fontFamily: fonts.bodyRegular, fontSize: 13, color: L.sub, marginTop: 3 },
 
   // Help
-  helpBox: { borderWidth: 1, borderRadius: 12, padding: 16, height: 340 },
+  helpHeading: { fontFamily: fonts.displayMedium, fontSize: 21, color: L.text, marginTop: 14 },
+  helpSub: { fontFamily: fonts.bodyRegular, fontSize: 14, color: L.text, marginTop: 12 },
+  helpBox: { backgroundColor: L.input, borderRadius: 8, height: 160, paddingHorizontal: 14, paddingVertical: 12, marginTop: 18 },
+  helpInput: { flex: 1, fontFamily: fonts.bodyRegular, fontSize: 15, color: L.text, paddingVertical: 0 },
+  helpMax: { fontFamily: fonts.bodyRegular, fontSize: 11.5, color: L.placeholder, textAlign: 'right', marginTop: 8 },
+  successText: { fontFamily: fonts.displayMedium, fontSize: 22, lineHeight: 31, color: L.text, marginTop: 26 },
 
   // SideDrawer
   drawer: {
-    width: '78%', borderRightWidth: StyleSheet.hairlineWidth,
+    width: '72%', backgroundColor: L.bg,
     shadowColor: '#000', shadowOffset: { width: 2, height: 0 }, shadowOpacity: 0.12, shadowRadius: 8, elevation: 8,
   },
   drawerBadge: {
-    position: 'absolute', right: -2, bottom: -2, width: 28, height: 28, borderRadius: 14,
-    backgroundColor: RED, alignItems: 'center', justifyContent: 'center', borderWidth: 2,
+    position: 'absolute', right: 2, bottom: 4, width: 33, height: 33, borderRadius: 17,
+    backgroundColor: L.red, alignItems: 'center', justifyContent: 'center',
   },
-  drawerDivider: { height: StyleSheet.hairlineWidth, marginVertical: 22 },
-  backdrop: { flex: 1, backgroundColor: 'rgba(0,0,0,0.45)' },
+  drawerName: { fontFamily: fonts.display, fontSize: 17, color: L.text, marginTop: 14 },
+  drawerViewProfile: { fontFamily: fonts.bodyRegular, fontSize: 13, color: L.text, marginTop: 6 },
+  drawerRow: { flexDirection: 'row', alignItems: 'center', gap: 20, paddingVertical: 22, paddingHorizontal: 30 },
+  drawerRowText: { fontFamily: POPPINS_MEDIUM, fontSize: 15, color: L.text },
+  backdrop: { flex: 1, backgroundColor: 'rgba(0,0,0,0.55)' },
 
   // SetStatus modal
-  statusScrim: { flex: 1, backgroundColor: 'rgba(0,0,0,0.45)', alignItems: 'center', justifyContent: 'center', paddingHorizontal: 28 },
-  statusCard: { width: '100%', borderRadius: 18, paddingVertical: 28, paddingHorizontal: 28 },
-  statusDivider: { height: StyleSheet.hairlineWidth },
-  statusRow: { flexDirection: 'row', alignItems: 'center', gap: 16, paddingVertical: 20 },
-  statusRadio: { width: 16, height: 16, borderRadius: 8, borderWidth: 1.5 },
+  statusCard: { width: '100%', borderRadius: 16, backgroundColor: '#FFFFFF', paddingVertical: 24, paddingHorizontal: 24 },
+  statusTitle: { fontFamily: fonts.display, fontSize: 20, color: L.text, marginBottom: 16 },
+  statusRow: { flexDirection: 'row', alignItems: 'center', gap: 14, paddingVertical: 17 },
+  statusRadio: { width: 14, height: 14, borderRadius: 7, borderWidth: 1.5 },
 });
