@@ -73,13 +73,12 @@ export function createApp() {
   // JSON body parsing with a strict size limit (mitigates large-payload DoS).
   app.use(express.json({ limit: '1mb' }));
 
-  // Global rate limit across the API.
-  app.use(globalLimiter);
-
   // Health/readiness probe. Verifies Postgres is actually reachable with a
   // lightweight query so a broken instance is reported unhealthy (503) and the
   // platform can restart/fail the deploy — rather than staying "healthy" while
-  // every real request 500s.
+  // every real request 500s. Mounted BEFORE the rate limiter: the platform's
+  // frequent health checks must never be throttled (nor count against the API
+  // budget), or a healthy instance can be reported down under normal traffic.
   app.get('/health', async (_req, res) => {
     try {
       await prisma.$queryRaw`SELECT 1`;
@@ -88,6 +87,9 @@ export function createApp() {
       return res.status(503).json({ ok: false, env: config.nodeEnv, error: 'database_unreachable' });
     }
   });
+
+  // Global rate limit across the API (production only; see rateLimit.ts).
+  app.use(globalLimiter);
 
   app.use('/api/auth', authRouter);
   app.use('/api/profile', profileRouter);

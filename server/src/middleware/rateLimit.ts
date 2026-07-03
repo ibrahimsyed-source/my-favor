@@ -3,8 +3,10 @@ import { config } from '../config';
 
 // Rate limiting protects against brute-force and abuse. Auth endpoints get a
 // much tighter budget than general API traffic. Limits are keyed by client IP.
-// Skipped only under NODE_ENV=test so the integration suite (many accounts from
-// one IP) isn't throttled — the limiters are always active in dev/production.
+// Enforced in PRODUCTION only: local dev (a single trusted developer whose app
+// polls notifications/active-favor on an interval) and the integration suite
+// (many accounts from one IP) would otherwise exhaust the global budget and
+// 429 the whole app. Brute-force protection is a production concern.
 //
 // SCALING LIMITATION: these limiters use express-rate-limit's default per-process
 // MemoryStore. Counters are local to a single Node process and are wiped on every
@@ -16,7 +18,7 @@ import { config } from '../config';
 // back these limiters with a shared store (e.g. rate-limit-redis) so counts are
 // global. That requires adding Redis + a dependency and is intentionally deferred /
 // out of scope here.
-const skip = () => config.nodeEnv === 'test';
+const skip = () => !config.isProd;
 
 export const globalLimiter = rateLimit({
   windowMs: 15 * 60 * 1000, // 15 minutes

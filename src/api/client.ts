@@ -89,7 +89,27 @@ async function raw(path: string, opts: ReqOpts): Promise<Response> {
 // session is only DESTROYED on a genuine auth failure (the refresh token itself
 // is rejected) — a network/timeout/5xx is transient, so we keep the session and
 // let the caller retry, instead of logging the user out on a flaky connection.
-async function tryRefresh(): Promise<boolean> {
+//
+// SINGLE-FLIGHT: the app runs several pollers (notifications, incoming, active
+// favor) whose access tokens expire at the same moment, so multiple requests
+// 401 together and each would call this concurrently. The server rotates the
+// refresh token on use (single-use), so parallel refreshes send the SAME stored
+// token: the first rotates+revokes it and stores a fresh session, the losers
+// then present the now-revoked token, get 401, and clearSession() — wiping the
+// valid session the winner just minted and silently logging the user out. We
+// dedupe to ONE in-flight refresh so every waiter shares the winner's result.
+let refreshInFlight: Promise<boolean> | null = null;
+
+function tryRefresh(): Promise<boolean> {
+  if (!refreshInFlight) {
+    refreshInFlight = doRefresh().finally(() => {
+      refreshInFlight = null;
+    });
+  }
+  return refreshInFlight;
+}
+
+async function doRefresh(): Promise<boolean> {
   const refreshToken = await getStoredRefresh();
   if (!refreshToken) return false;
   let res: Response;

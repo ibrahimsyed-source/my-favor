@@ -386,20 +386,24 @@ export const Searching = ({ navigation }: any) => {
   // ("Now") flow runs the live-match simulation below.
   const isScheduled = activeFavor?.scheduledFor != null && activeFavor.scheduledFor > Date.now();
 
+  // v.2 "Match Alert Notification" (#125:10778): once the Pal accepts, the member
+  // gets a match popup ("{Pal} accepted your favor." + OKAY) instead of being
+  // dropped silently into tracking. Tapping OKAY enters live tracking.
+  const [matched, setMatched] = useState(false);
+
   // Simulate the Pal accepting shortly after payment: bind the matched pal so the
   // tracking screen shows the same person named here, advance the favor to
-  // 'matched', and replace into live tracking (replace so Back/gesture doesn't
-  // dump the member back onto this stale Searching modal). The "Choose another
-  // Favor Pal" button below stays as the genuine impatient-user fallback.
+  // 'matched', then surface the match alert (the "Choose another Favor Pal"
+  // button below stays as the genuine impatient-user fallback until then).
   useEffect(() => {
     if (isScheduled) return; // scheduled favors don't drive en-route tracking yet
     const t = setTimeout(() => {
       if (matchedPal) assignPal(matchedPal.id);
       else advanceFavor('matched');
-      navigation.replace('FavorTracking');
+      setMatched(true);
     }, 2500);
     return () => clearTimeout(t);
-  }, [isScheduled, matchedPal, assignPal, advanceFavor, navigation]);
+  }, [isScheduled, matchedPal, assignPal, advanceFavor]);
 
   if (!fontsReady) return <View style={{ flex: 1, backgroundColor: WHITE }} />;
 
@@ -422,6 +426,17 @@ export const Searching = ({ navigation }: any) => {
                 {`We'll match you with a Favor Pal for ${formatSchedule(activeFavor?.scheduledFor)}.`}
               </Text>
               <BlackButton title="BACK TO HOME" onPress={() => navigation.popToTop()} style={{ marginTop: 20 }} />
+            </>
+          ) : matched ? (
+            <>
+              {/* v.2 Match Alert Notification #125:10778 */}
+              <Text style={styles.alertTitle}>Favor matched!</Text>
+              <Text style={styles.alertBody}>{`${palName} accepted your favor.`}</Text>
+              <BlackButton
+                title="OKAY"
+                onPress={() => navigation.replace('FavorTracking')}
+                style={{ marginTop: 20 }}
+              />
             </>
           ) : (
             <>
