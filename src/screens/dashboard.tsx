@@ -256,13 +256,11 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'space-between',
   },
+  // Frame 1660:15783: plain white bars on the dark header — no tile behind.
   menuBtn: {
     width: 40,
     height: 40,
-    borderRadius: 12,
-    backgroundColor: '#221E1E',
     justifyContent: 'center',
-    paddingLeft: 9,
   },
   menuBar: { height: 2.5, borderRadius: 2, backgroundColor: WHITE },
   pill: {

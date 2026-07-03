@@ -429,9 +429,10 @@ export const Searching = ({ navigation }: any) => {
             </>
           ) : matched ? (
             <>
-              {/* v.2 Match Alert Notification #125:10778 */}
-              <Text style={styles.alertTitle}>Favor matched!</Text>
-              <Text style={styles.alertBody}>{`${palName} accepted your favor.`}</Text>
+              {/* v.2 Match Alert Notification #125:10778 — "Fabrizio has accepted
+                  your favor! / You favor pal is on their way." (typo corrected) */}
+              <Text style={styles.alertTitle}>{`${palName} has accepted your favor!`}</Text>
+              <Text style={styles.alertBody}>Your favor pal is on their way.</Text>
               <BlackButton
                 title="OKAY"
                 onPress={() => navigation.replace('FavorTracking')}

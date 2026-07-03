@@ -13,8 +13,11 @@ import { prisma } from '../db';
 const MAX_ATTEMPTS = 5;
 
 function generateCode(): string {
-  // 6-digit numeric, cryptographically random, no modulo bias.
-  return crypto.randomInt(0, 1_000_000).toString().padStart(6, '0');
+  // 4-digit numeric, cryptographically random, no modulo bias. The v.2 design
+  // is a 4-digit code everywhere ("Please enter 4 digit code…", frames
+  // 125:8471 / 125:11525 / 1357:17757); expiry + attempt caps above keep the
+  // smaller space safe (5 tries against 10,000 codes, 10-minute TTL).
+  return crypto.randomInt(0, 10_000).toString().padStart(4, '0');
 }
 
 export interface IssuedOtp {

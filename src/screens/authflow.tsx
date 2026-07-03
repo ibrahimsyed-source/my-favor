@@ -163,8 +163,8 @@ const CheckBox: React.FC<{ checked: boolean }> = ({ checked }) => {
   );
 };
 
-// Row of six single-digit code boxes (server codes are 6 digits — the design
-// mock shows 4; six are kept so real verification works).
+// Row of four single-digit code boxes (v.2 frames 125:8471 / 125:11525 show a
+// 4-digit code; the server issues 4-digit OTPs to match).
 const CodeBoxes: React.FC<{
   code: string[];
   inputs: React.MutableRefObject<Array<TextInput | null>>;
@@ -176,7 +176,7 @@ const CodeBoxes: React.FC<{
   const { theme } = useTheme();
   return (
     <View style={{ flexDirection: 'row', justifyContent: 'center', gap: tokens.spacing.sm }}>
-      {[0, 1, 2, 3, 4, 5].map((i) => (
+      {[0, 1, 2, 3].map((i) => (
         <TextInput
           key={i}
           ref={(el) => { inputs.current[i] = el; }}
@@ -662,7 +662,7 @@ const OTP_SECONDS = 43;
 export const OtpVerify = ({ navigation, route }: any) => {
   const { theme } = useTheme();
   const s = useStore();
-  const [code, setCode] = useState(['', '', '', '', '', '']);
+  const [code, setCode] = useState(['', '', '', '']);
   const [error, setError] = useState('');
   const [notice, setNotice] = useState('');
   const [submitting, setSubmitting] = useState(false);
@@ -707,8 +707,8 @@ export const OtpVerify = ({ navigation, route }: any) => {
 
   const onVerify = async () => {
     if (submitting) return;
-    if (full.length < 6) {
-      setError('Please enter the full 6-digit code.');
+    if (full.length < 4) {
+      setError('Please enter the full 4-digit code.');
       return;
     }
     // Password reset: the code is verified server-side by reset-password (with
@@ -729,7 +729,7 @@ export const OtpVerify = ({ navigation, route }: any) => {
       } else {
         // No password on hand (defensive fallback) — verify and enter directly.
         const ok = await s.verifyOtp(full);
-        if (!ok) setError('Incorrect or expired code. Please enter the full 6-digit code.');
+        if (!ok) setError('Incorrect or expired code. Please enter the full 4-digit code.');
       }
     } catch (e: any) {
       setError(e?.message || 'Incorrect or expired code. Please try again.');
@@ -767,7 +767,7 @@ export const OtpVerify = ({ navigation, route }: any) => {
     setNotice('');
     try {
       if (dest) await (isReset ? forgotPasswordApi(dest) : resendOtpApi(dest, 'signup'));
-      setCode(['', '', '', '', '', '']);
+      setCode(['', '', '', '']);
       setSeconds(OTP_SECONDS);
       setNotice('A new code has been sent.');
       inputs.current[0]?.focus();
@@ -793,7 +793,8 @@ export const OtpVerify = ({ navigation, route }: any) => {
           contentContainerStyle={{ flexGrow: 1, paddingHorizontal: PX, paddingBottom: PX }}
           keyboardShouldPersistTaps="handled"
         >
-          <FormHeading>Enter the code sent to your email</FormHeading>
+          {/* #125:11525 copy */}
+          <FormHeading>Please enter 4 digit code to reset password</FormHeading>
 
           <CodeBoxes code={code} inputs={inputs} onDigit={setDigit} onKeyPress={onKeyPress} size={48} error={!!error} />
 
@@ -833,7 +834,7 @@ export const OtpVerify = ({ navigation, route }: any) => {
             title="SUBMIT"
             variant="primary"
             onPress={onVerify}
-            disabled={full.length < 6}
+            disabled={full.length < 4}
             style={{ height: 50 }}
           />
         </ScrollView>
@@ -877,10 +878,8 @@ export const OtpVerify = ({ navigation, route }: any) => {
                   color={theme.success}
                   style={{ alignSelf: 'center', marginBottom: tokens.spacing.md }}
                 />
-                <Txt variant="h1" center style={{ marginBottom: tokens.spacing.base }}>Success!</Txt>
-                <Txt center style={{ fontFamily: P_MEDIUM, fontSize: 16, lineHeight: 24 }} color={theme.textSecondary}>
-                  Your account has been verified successfully.
-                </Txt>
+                {/* #125:8517: green check + "Account Verified" heading, no body copy. */}
+                <Txt variant="h1" center style={{ marginBottom: tokens.spacing.base }}>Account Verified</Txt>
                 <Button
                   title="CONTINUE"
                   variant="primary"
@@ -893,7 +892,7 @@ export const OtpVerify = ({ navigation, route }: any) => {
               <>
                 <Txt variant="h1" center style={{ marginBottom: tokens.spacing.base }}>Verification</Txt>
                 <Txt center style={{ fontFamily: P_MEDIUM, fontSize: 16, lineHeight: 24 }}>
-                  Please enter 6 digit code to verify your account.
+                  Please enter 4 digit code to verify your account.
                 </Txt>
                 <Txt center style={{ fontFamily: P_MEDIUM, fontSize: 15, marginTop: tokens.spacing.base }}>
                   {seconds > 0 ? `Code expires in ${fmt(seconds)}` : 'Code expired'}

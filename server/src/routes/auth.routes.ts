@@ -72,7 +72,7 @@ authRouter.post(
 // returns a session.
 const verifyOtpSchema = z.object({
   destination: z.string().trim().toLowerCase().min(3).max(200),
-  code: z.string().trim().regex(/^\d{6}$/, 'Code must be 6 digits'),
+  code: z.string().trim().regex(/^\d{4}$/, 'Code must be 4 digits'),
 });
 authRouter.post(
   '/verify-otp',
@@ -148,7 +148,7 @@ authRouter.post(
 // Revokes every existing session so a leaked old password/token can't be reused.
 const resetSchema = z.object({
   email: z.string().trim().toLowerCase().email().max(200),
-  code: z.string().trim().regex(/^\d{6}$/, 'Code must be 6 digits'),
+  code: z.string().trim().regex(/^\d{4}$/, 'Code must be 4 digits'),
   password: passwordSchema,
 });
 authRouter.post(
