@@ -268,7 +268,7 @@ export function Payment({ navigation }: any) {
             <TouchableOpacity
               activeOpacity={0.7}
               style={s.row}
-              onPress={() => navigation.navigate('Tabs', { screen: 'History' })}
+              onPress={() => navigation.navigate('History')}
               accessibilityRole="button"
               accessibilityLabel="Payment history"
             >
@@ -496,7 +496,9 @@ export function AddCard({ navigation, route }: any) {
       return setError('That expiration date has already passed.');
     }
     const expMonth = mm;
-    const expYear = fullYear % 100;
+    // Send the full 4-digit year — the API requires expYear >= 2024. (The store
+    // and display tolerate a legacy 2-digit value too; see editExpYear above.)
+    const expYear = fullYear;
 
     // CVC is required whenever a (new) card number is entered; 3–4 digits.
     if (!keepSaved) {
@@ -513,13 +515,20 @@ export function AddCard({ navigation, route }: any) {
 
     setError(null);
     setSaving(true);
-    // The store has no in-place updateCard, so editing = replace: drop the old
-    // record, then persist the edited one. Both use functional setState so they
-    // compose (filter then append) regardless of ordering.
-    if (editCard) removeCard(editCard.id);
-    await addCard({ brand, last4, expMonth, expYear });
-    setSaving(false);
-    setResult(editCard ? 'updated' : 'added');
+    // The store has no in-place updateCard, so editing = replace. Persist the
+    // new card FIRST; only drop the old record once the save succeeds, so a
+    // failed request never strands the user with no card. A thrown ApiError
+    // (e.g. validation/network) must reset the button and surface a message —
+    // without this catch the spinner would spin forever.
+    try {
+      await addCard({ brand, last4, expMonth, expYear });
+      if (editCard) removeCard(editCard.id);
+      setResult(editCard ? 'updated' : 'added');
+    } catch (e) {
+      setError((e as Error)?.message || 'Could not save your card. Please try again.');
+    } finally {
+      setSaving(false);
+    }
   };
 
   const closeAndBack = () => {

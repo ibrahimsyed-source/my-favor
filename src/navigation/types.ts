@@ -42,6 +42,7 @@ export type RootStackParamList = {
 
   // --- Shared ---
   SideDrawer: undefined;
+  Messages: undefined; // conversations list (was a tab pre-v2-dashboard)
   MessageThread: { threadId: string };
   EditProfile: undefined;
   Settings: undefined;
@@ -56,10 +57,10 @@ export type RootStackParamList = {
   Legal: { doc: 'privacy' | 'terms' };
 };
 
+// Dashboard Main v2 (1660:15783) tab bar: HOME / ACCOUNT / ACTIVITY.
+// Messages, Browse and Earnings live as stack routes (drawer / flows), not tabs.
 export type TabParamList = {
   Home: undefined;
-  Messages: undefined;
-  Browse: undefined; // board of open favors to do (replaces History in the tab bar)
-  Earnings: undefined; // pal-only tab
-  Profile: undefined;
+  Account: undefined; // profile
+  Activity: undefined; // notifications inbox (red unread badge in the bar)
 };

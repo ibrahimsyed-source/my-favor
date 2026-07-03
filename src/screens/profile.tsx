@@ -347,10 +347,13 @@ export const EditProfile = ({ navigation }: any) => {
   };
 
   // First SAVE (after Zip Code) — profile fields only.
+  // NOTE: email and phone are identity-bearing and intentionally NOT updatable
+  // via PATCH /profile/me (the server schema is .strict() and rejects them, so
+  // including them 400s the whole save). Send only the editable fields.
   const saveProfile = async () => {
     try {
       await s.updateProfile({
-        firstName, lastName, bio, email, phone,
+        firstName, lastName, bio,
         homeAddress, city, state: stateName, zip, avatar,
       });
     } catch {
@@ -540,7 +543,7 @@ export const SideDrawer = ({ navigation }: any) => {
             </TouchableOpacity>
           </View>
           <Txt style={st.drawerName}>{u?.firstName ?? 'Anton'}</Txt>
-          <TouchableOpacity onPress={() => go('Tabs', { screen: 'Profile' })} hitSlop={6} accessibilityRole="button" accessibilityLabel="View Profile">
+          <TouchableOpacity onPress={() => go('Tabs', { screen: 'Account' })} hitSlop={6} accessibilityRole="button" accessibilityLabel="View Profile">
             <Txt style={st.drawerViewProfile}>View Profile</Txt>
           </TouchableOpacity>
         </View>

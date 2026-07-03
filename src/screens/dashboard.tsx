@@ -1,41 +1,67 @@
 import React from 'react';
-import { View, Image, TouchableOpacity, StyleSheet, LayoutChangeEvent, StatusBar } from 'react-native';
+import {
+  View, Text, Image, ScrollView, TouchableOpacity, StyleSheet, StatusBar,
+} from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useFocusEffect } from '@react-navigation/native';
 import { Ionicons } from '@expo/vector-icons';
+import { useFonts, Poppins_400Regular } from '@expo-google-fonts/poppins';
 import { Txt, Avatar } from '../components';
-import { tokens } from '../theme';
 import { useStore } from '../store';
+import { FAVOR_TIERS } from '../types';
+import { TIERS } from './request';
 
 // ---------------------------------------------------------------------------
-// Dashboard Main v2 (Figma 100:8450) — full-bleed dark map, white menu button
-// top-left, white "Switch to request a favor" pill with an off-state toggle,
-// and the user's avatar in a red ring at the centre of a translucent red
-// radius circle. The black HOME / ACCOUNT / ACTIVITY bar below is the tab bar.
+// Home — "Dashboard Main v2" (Figma 1660:15783, User App v.2 › Dashboard row).
+// 437x1232 frame: dark header (hamburger + "Switch to be a favor pal" pill,
+// "How big is the favor?" + lead), white body with the four tier tiles,
+// black NEGOTIATE YOUR FAVOR button, "Location of your favor" search field
+// with the black NOW pill, Address block, then the light map with red
+// favor-pal pins and the user's avatar pin inside a soft radius circle.
+// The black HOME / ACCOUNT / ACTIVITY bar is the tab bar (navigation/index).
 // ---------------------------------------------------------------------------
 
-// v.2 palette (sampled from the frame render)
-const RED = '#D40000'; // v.2 pin ring / active-tab red
-const INK = '#0D0A0A'; // near-black text + icon ink
+const INK = '#0D0A0A';       // near-black surfaces + text
+const RED = '#D40000';       // v.2 red (pins, active tab)
+const SUB_DARK = '#B9B4B4';  // lead paragraph on the dark header
+const SUB = '#8F8F8F';       // secondary text on white
+const FIELD_BG = '#F3F3F3';  // search field fill
+const WHITE = '#FFFFFF';
 
-// Dark West-Palm-Beach map exported from the frame (chrome patched out; the
-// translucent red radius circle stays baked in around the centre pin spot).
-const MAP_IMG = require('../../assets/img/dashboard/map-dark.png');
-const IMG_W = 621; // asset px (1.5x of the 414pt mock)
-const IMG_H = 1212;
-const PIN_X = 310; // baked pin centre in asset px
-const PIN_Y = 671.5;
-const PIN_D = 60; // baked pin outer diameter in asset px (40pt)
-const PIN_RING = 5.5; // baked red ring thickness in asset px (~3.7pt)
+const P400 = 'Poppins_400Regular';
+const P500 = 'Poppins_500Medium';
+const P600 = 'Poppins_600SemiBold';
+
+const MAP_IMG = require('../../assets/img/request/map-light.png');
+const PIN_AVATAR = require('../../assets/img/request/pin-avatar.png');
+
+type TierKey = keyof typeof FAVOR_TIERS;
+const TIER_KEYS: TierKey[] = ['tiny', 'small', 'big', 'huge'];
+
+// Red favor-pal map pins (person silhouette in a red teardrop), placed like the
+// frame's six pins — positions are fractions of the map area.
+const PAL_PINS = [
+  { x: 0.13, y: 0.08 }, { x: 0.72, y: 0.10 },
+  { x: 0.13, y: 0.62 }, { x: 0.75, y: 0.55 },
+  { x: 0.60, y: 0.78 }, { x: 0.87, y: 0.30 },
+];
+
+const PalPin: React.FC<{ x: number; y: number }> = ({ x, y }) => (
+  <View pointerEvents="none" style={{ position: 'absolute', left: `${x * 100}%`, top: `${y * 100}%` }}>
+    <Ionicons name="location" size={46} color={RED} />
+    <Ionicons name="person" size={16} color={WHITE} style={{ position: 'absolute', top: 8, left: 15 }} />
+  </View>
+);
 
 export function Home({ navigation }: any) {
   const insets = useSafeAreaInsets();
   const s = useStore();
+  const [fontsLoaded] = useFonts({ Poppins_400Regular });
 
   const active = s.activeFavor;
+  const address = s.draftFavor?.location?.address ?? s.user?.homeAddress ?? '2099 Woodvine Rd, Lorman…';
 
-  // Frame 100:8450 shows light (white) status-bar content over the dark map;
-  // App.tsx sets a global dark style, so override it only while focused.
+  // Dark header → light status-bar content while this screen is focused.
   useFocusEffect(
     React.useCallback(() => {
       StatusBar.setBarStyle('light-content');
@@ -43,18 +69,14 @@ export function Home({ navigation }: any) {
     }, [])
   );
 
-  const [box, setBox] = React.useState({ w: 0, h: 0 });
-  const onLayout = (e: LayoutChangeEvent) =>
-    setBox({ w: e.nativeEvent.layout.width, h: e.nativeEvent.layout.height });
+  const pickTier = (tier: TierKey) => {
+    s.setDraft({ tier, price: FAVOR_TIERS[tier].price });
+    navigation.navigate('FavorDescription');
+  };
 
-  // Project the baked pin point through the Image's cover transform so the
-  // live avatar sits exactly on the map's red-ring marker at any screen size.
-  const scale = box.w > 0 ? Math.max(box.w / IMG_W, box.h / IMG_H) : 0;
-  const pin = {
-    x: (box.w - IMG_W * scale) / 2 + PIN_X * scale,
-    y: (box.h - IMG_H * scale) / 2 + PIN_Y * scale,
-    d: PIN_D * scale,
-    ring: PIN_RING * scale,
+  const switchToPal = () => {
+    s.setRole('pal');
+    navigation.navigate('BrowseFavors');
   };
 
   const resumeActive = () => {
@@ -68,92 +90,150 @@ export function Home({ navigation }: any) {
     }
   };
 
+  if (!fontsLoaded) return <View style={{ flex: 1, backgroundColor: INK }} />;
+
   return (
-    <View style={{ flex: 1, backgroundColor: INK }} onLayout={onLayout}>
-      {/* MAP (full bleed, red radius circle baked in) */}
-      <Image
-        source={MAP_IMG}
-        style={StyleSheet.absoluteFill}
-        resizeMode="cover"
-        accessible={false}
-      />
+    <View style={{ flex: 1, backgroundColor: WHITE }}>
+      <ScrollView bounces={false} showsVerticalScrollIndicator={false} contentContainerStyle={{ flexGrow: 1 }}>
+        {/* ---- DARK HEADER ---------------------------------------------- */}
+        <View style={[styles.header, { paddingTop: insets.top + 12 }]}>
+          <View style={styles.headerRow}>
+            <TouchableOpacity
+              activeOpacity={0.85}
+              onPress={() => navigation.navigate('SideDrawer')}
+              accessibilityRole="button"
+              accessibilityLabel="Open menu"
+              style={styles.menuBtn}
+            >
+              <View style={[styles.menuBar, { width: 22 }]} />
+              <View style={[styles.menuBar, { width: 18, marginTop: 4 }]} />
+              <View style={[styles.menuBar, { width: 14, marginTop: 4 }]} />
+            </TouchableOpacity>
 
-      {/* Your avatar pinned in the red ring at the centre of the radius circle */}
-      {box.w > 0 && (
-        <View
-          pointerEvents="none"
-          accessibilityRole="image"
-          accessibilityLabel="Your location on the map"
-          style={{
-            position: 'absolute',
-            left: pin.x - pin.d / 2,
-            top: pin.y - pin.d / 2,
-            width: pin.d,
-            height: pin.d,
-            borderRadius: pin.d / 2,
-            backgroundColor: RED,
-            alignItems: 'center',
-            justifyContent: 'center',
-          }}
-        >
-          <Avatar uri={s.user?.avatar} size={pin.d - pin.ring * 2} name={s.user?.firstName ?? '?'} />
+            {/* "Switch to be a favor pal" — white pill, off toggle */}
+            <TouchableOpacity
+              activeOpacity={0.85}
+              onPress={switchToPal}
+              accessibilityRole="switch"
+              accessibilityState={{ checked: false }}
+              accessibilityLabel="Switch to be a favor pal"
+              style={styles.pill}
+            >
+              <Text style={styles.pillText}>Switch to be a favor pal</Text>
+              <View style={styles.track}>
+                <View style={styles.thumb} />
+              </View>
+            </TouchableOpacity>
+          </View>
+
+          <Text style={styles.h1}>How big is the favor?</Text>
+          <Text style={styles.lead}>
+            Choose the cost of favor based on the amount of effort required.
+          </Text>
         </View>
-      )}
 
-      {/* TOP CONTROLS — menu button + "Switch to request a favor" pill */}
-      <View
-        style={{
-          position: 'absolute',
-          top: insets.top + 19,
-          left: 24,
-          right: 24,
-          flexDirection: 'row',
-          alignItems: 'center',
-          justifyContent: 'space-between',
-        }}
-      >
+        {/* ---- TIER TILES ------------------------------------------------ */}
+        <View style={styles.tileRow}>
+          {TIER_KEYS.map((key) => {
+            const t = TIERS[key];
+            return (
+              <TouchableOpacity
+                key={key}
+                activeOpacity={0.85}
+                onPress={() => pickTier(key)}
+                accessibilityRole="button"
+                accessibilityLabel={`${FAVOR_TIERS[key].label}, $${FAVOR_TIERS[key].price.toFixed(2)}`}
+                style={styles.tile}
+              >
+                <View style={styles.tileImgBox}>
+                  <Image
+                    source={t.img}
+                    style={{ position: 'absolute', left: t.dx, top: t.dy, width: t.w, height: t.h, opacity: 0.9 }}
+                    resizeMode="stretch"
+                  />
+                </View>
+                <Text style={styles.tileName}>{FAVOR_TIERS[key].label.replace(' Favor', '')}</Text>
+                <Text style={styles.tilePrice}>${FAVOR_TIERS[key].price.toFixed(2)}</Text>
+              </TouchableOpacity>
+            );
+          })}
+        </View>
+
+        {/* ---- NEGOTIATE ------------------------------------------------- */}
         <TouchableOpacity
           activeOpacity={0.85}
-          onPress={() => navigation.navigate('SideDrawer')}
+          onPress={() => navigation.navigate('Negotiate')}
           accessibilityRole="button"
-          accessibilityLabel="Open menu"
-          style={styles.menuBtn}
+          style={styles.negotiateBtn}
         >
-          {/* three left-aligned bars of decreasing width */}
-          <View style={[styles.menuBar, { width: 25 }]} />
-          <View style={[styles.menuBar, { width: 21, marginTop: 4.5 }]} />
-          <View style={[styles.menuBar, { width: 16, marginTop: 4.5 }]} />
+          <Text style={styles.negotiateText}>NEGOTIATE YOUR FAVOR</Text>
         </TouchableOpacity>
 
+        {/* ---- LOCATION -------------------------------------------------- */}
+        <Text style={styles.locationLabel}>Location of your favor</Text>
+
         <TouchableOpacity
           activeOpacity={0.85}
-          onPress={() => navigation.navigate('SelectFavor')}
+          onPress={() => navigation.navigate('ConfirmAddress')}
           accessibilityRole="button"
-          accessibilityLabel="Switch to request a favor"
-          style={styles.pill}
+          accessibilityLabel="Where to?"
+          style={styles.searchField}
         >
-          <Txt style={styles.pillText}>Switch to request a favor</Txt>
-          <View style={styles.track}>
-            <View style={styles.thumb} />
+          <Ionicons name="search" size={18} color={SUB} />
+          <Text style={styles.searchPlaceholder}>Where to?</Text>
+          <View style={styles.nowPill}>
+            <Ionicons name="time-outline" size={13} color={WHITE} />
+            <Text style={styles.nowText}>NOW</Text>
+            <Ionicons name="chevron-down" size={14} color={WHITE} />
           </View>
         </TouchableOpacity>
-      </View>
 
-      {/* RESUME ACTIVE FAVOR (only while a favor is live) */}
+        <TouchableOpacity
+          activeOpacity={0.85}
+          onPress={() => navigation.navigate('ConfirmAddress')}
+          accessibilityRole="button"
+          accessibilityLabel={`Address: ${address}`}
+          style={styles.addressRow}
+        >
+          <Ionicons name="location-sharp" size={22} color={INK} style={{ marginTop: 2 }} />
+          <View style={{ marginLeft: 12, flex: 1 }}>
+            <Text style={styles.addressLabel}>Address</Text>
+            <Text style={styles.addressText} numberOfLines={1}>{address}</Text>
+          </View>
+        </TouchableOpacity>
+
+        {/* ---- MAP ------------------------------------------------------- */}
+        <View style={styles.mapBox}>
+          <Image source={MAP_IMG} style={StyleSheet.absoluteFill} resizeMode="cover" accessible={false} />
+          {/* soft radius circle around the user */}
+          <View pointerEvents="none" style={styles.radius} />
+          {PAL_PINS.map((p, i) => <PalPin key={i} x={p.x} y={p.y} />)}
+          {/* the user's avatar pin at the circle centre */}
+          <View pointerEvents="none" style={styles.avatarPin} accessibilityLabel="Your location on the map">
+            {s.user?.avatar ? (
+              <Avatar uri={s.user.avatar} size={26} name={s.user?.firstName ?? '?'} />
+            ) : (
+              <Image source={PIN_AVATAR} style={{ width: 30, height: 30, borderRadius: 15 }} />
+            )}
+          </View>
+        </View>
+      </ScrollView>
+
+      {/* RESUME ACTIVE FAVOR (app addition — only while a favor is live) */}
       {active ? (
         <TouchableOpacity
           activeOpacity={0.9}
           onPress={resumeActive}
           accessibilityRole="button"
           accessibilityLabel="Resume active favor"
-          style={[styles.resumeCard, { bottom: (insets.bottom || 0) + 16 }]}
+          style={styles.resumeCard}
         >
           <View style={styles.resumeIcon}>
-            <Ionicons name="navigate" size={20} color="#FFFFFF" />
+            <Ionicons name="navigate" size={20} color={WHITE} />
           </View>
           <View style={{ flex: 1 }}>
             <Txt variant="caption" color="rgba(255,255,255,0.6)">Resume active favor</Txt>
-            <Txt variant="label" color="#FFFFFF" numberOfLines={1}>
+            <Txt variant="label" color={WHITE} numberOfLines={1}>
               {active.description || (active.palId === s.user?.id ? 'Favor in progress' : 'Track your favor')}
             </Txt>
           </View>
@@ -165,71 +245,153 @@ export function Home({ navigation }: any) {
 }
 
 const styles = StyleSheet.create({
+  // Dark header block
+  header: {
+    backgroundColor: INK,
+    paddingHorizontal: 23,
+    paddingBottom: 24,
+  },
+  headerRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+  },
   menuBtn: {
     width: 40,
     height: 40,
-    borderRadius: 13,
-    backgroundColor: '#FFFFFF',
+    borderRadius: 12,
+    backgroundColor: '#221E1E',
     justifyContent: 'center',
-    paddingLeft: 8,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.25,
-    shadowRadius: 5,
-    elevation: 4,
+    paddingLeft: 9,
   },
-  menuBar: {
-    height: 2.5,
-    borderRadius: 2,
-    backgroundColor: INK,
-  },
+  menuBar: { height: 2.5, borderRadius: 2, backgroundColor: WHITE },
   pill: {
-    height: 40,
-    borderRadius: tokens.radius.pill,
-    backgroundColor: '#FFFFFF',
+    height: 36,
+    borderRadius: 18,
+    backgroundColor: WHITE,
     flexDirection: 'row',
     alignItems: 'center',
-    // Measured off the 1.5x frame render: text ink starts 36px (24pt) from the
-    // pill's left edge; the toggle track ends 36px (24pt) before the right edge.
-    paddingLeft: 24,
-    paddingRight: 24,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.25,
-    shadowRadius: 5,
-    elevation: 4,
+    paddingLeft: 16,
+    paddingRight: 6,
   },
-  pillText: {
-    fontFamily: 'Poppins_500Medium',
-    fontSize: 13,
-    lineHeight: 18,
-    color: INK,
-    marginRight: 9, // ink-to-track gap measured at 14px (9.3pt) in the frame render
-  },
+  pillText: { fontFamily: P500, fontSize: 12, lineHeight: 16, color: INK, marginRight: 8 },
   track: {
-    width: 38,
-    height: 21,
-    borderRadius: 10.5,
+    width: 34,
+    height: 20,
+    borderRadius: 10,
     backgroundColor: '#D7D7D7',
     justifyContent: 'center',
   },
   thumb: {
-    width: 21,
-    height: 21,
-    borderRadius: 10.5,
-    backgroundColor: '#FFFFFF',
+    width: 20,
+    height: 20,
+    borderRadius: 10,
+    backgroundColor: WHITE,
     borderWidth: 0.5,
     borderColor: 'rgba(0,0,0,0.08)',
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 1 },
-    shadowOpacity: 0.15,
-    shadowRadius: 1,
-    elevation: 1,
   },
+  h1: { fontFamily: P600, fontSize: 24, lineHeight: 34, color: WHITE, marginTop: 26 },
+  lead: { fontFamily: P400, fontSize: 13, lineHeight: 19, color: SUB_DARK, marginTop: 6, paddingRight: 30 },
+
+  // Tier tiles
+  tileRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    paddingHorizontal: 23,
+    marginTop: 22,
+  },
+  tile: {
+    width: 82,
+    borderRadius: 8,
+    backgroundColor: WHITE,
+    alignItems: 'center',
+    paddingTop: 6,
+    paddingBottom: 8,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.12,
+    shadowRadius: 6,
+    elevation: 3,
+  },
+  tileImgBox: { width: 64, height: 64, borderRadius: 5, overflow: 'hidden', backgroundColor: WHITE },
+  tileName: { fontFamily: P500, fontSize: 15, lineHeight: 22, color: INK, marginTop: 4 },
+  tilePrice: { fontFamily: P400, fontSize: 11, lineHeight: 16, color: SUB },
+
+  // Negotiate button (btn/solid/2/black)
+  negotiateBtn: {
+    height: 48,
+    borderRadius: 8,
+    backgroundColor: INK,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginHorizontal: 23,
+    marginTop: 22,
+  },
+  negotiateText: { fontFamily: P500, fontSize: 15, color: WHITE, letterSpacing: 0.3 },
+
+  // Location section
+  locationLabel: { fontFamily: P500, fontSize: 16, lineHeight: 24, color: INK, marginTop: 24, marginHorizontal: 23 },
+  searchField: {
+    height: 44,
+    borderRadius: 8,
+    backgroundColor: FIELD_BG,
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginHorizontal: 23,
+    marginTop: 12,
+    paddingLeft: 14,
+    paddingRight: 6,
+  },
+  searchPlaceholder: { fontFamily: P400, fontSize: 14, color: SUB, marginLeft: 10, flex: 1 },
+  nowPill: {
+    height: 32,
+    borderRadius: 16,
+    backgroundColor: INK,
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 10,
+    gap: 4,
+  },
+  nowText: { fontFamily: P500, fontSize: 12, color: WHITE },
+  addressRow: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    marginHorizontal: 23,
+    marginTop: 18,
+    marginBottom: 16,
+  },
+  addressLabel: { fontFamily: P400, fontSize: 14, lineHeight: 21, color: SUB },
+  addressText: { fontFamily: P600, fontSize: 17, lineHeight: 25, color: INK, marginTop: 2 },
+
+  // Map
+  mapBox: { flexGrow: 1, minHeight: 300, backgroundColor: '#D8D8D8', overflow: 'hidden' },
+  radius: {
+    position: 'absolute',
+    left: '18%',
+    top: '12%',
+    width: 220,
+    height: 220,
+    borderRadius: 110,
+    backgroundColor: 'rgba(70,70,70,0.28)',
+  },
+  avatarPin: {
+    position: 'absolute',
+    left: '42%',
+    top: '38%',
+    width: 34,
+    height: 34,
+    borderRadius: 17,
+    backgroundColor: RED,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+
+  // Resume-active floating card (kept from the previous build)
   resumeCard: {
     position: 'absolute',
     left: 24,
     right: 24,
+    bottom: 16,
     flexDirection: 'row',
     alignItems: 'center',
     gap: 12,

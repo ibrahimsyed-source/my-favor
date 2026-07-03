@@ -112,7 +112,7 @@ export const FavorTracking = ({ navigation }: any) => {
         return;
       }
     }
-    navigation.navigate('Tabs', { screen: 'Messages' });
+    navigation.navigate('Messages');
   };
 
   const callPal = () => {

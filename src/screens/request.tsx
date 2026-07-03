@@ -42,7 +42,9 @@ type TierKey = keyof typeof FAVOR_TIERS; // 'tiny' | 'small' | 'big' | 'huge'
 
 // Tier illustrations exported from Figma (node 100:12594). Each sits inside a
 // 75x75 mask (radius 5) slightly oversized/offset exactly like the frame.
-const TIERS: Record<TierKey, { img: any; w: number; h: number; dx: number; dy: number }> = {
+// Exported: the Dashboard Main v2 home screen (1660:15783) renders the same
+// illustrations in its tier tiles.
+export const TIERS: Record<TierKey, { img: any; w: number; h: number; dx: number; dy: number }> = {
   tiny: { img: require('../../assets/img/request/tier-tiny.png'), w: 94, h: 94, dx: -9, dy: -10 },
   small: { img: require('../../assets/img/request/tier-small.png'), w: 94, h: 94, dx: -9, dy: -10 },
   big: { img: require('../../assets/img/request/tier-big.png'), w: 78, h: 78, dx: -1, dy: -1 },

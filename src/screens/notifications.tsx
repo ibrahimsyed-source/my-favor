@@ -88,11 +88,11 @@ export function Notifications({ navigation }: any) {
       case 'match':
       case 'arrived':
         if (activeFavor) navigation.navigate('FavorTracking');
-        else navigation.navigate('Tabs', { screen: 'History' });
+        else navigation.navigate('History');
         break;
       case 'cancellation':
       case 'no_pal':
-        navigation.navigate('Tabs', { screen: 'History' });
+        navigation.navigate('History');
         break;
       default:
         break; // 'general' — no destination, mark-read only
