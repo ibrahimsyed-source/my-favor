@@ -1,6 +1,7 @@
 import React, { useState, useRef, useEffect } from 'react';
 import {
   View, Text, Image, TouchableOpacity, StyleSheet, ActivityIndicator, Share, ViewStyle,
+  useWindowDimensions,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { Screen, Txt, Button, TopBar, InfoModal } from '../components';
@@ -60,10 +61,19 @@ function Dots({ active, navigation, style }: { active: number; navigation: any; 
 // Wordmark — Poppins SemiBold ("My Favor"): 52pt on Launch, 48pt on Sign Up / Login.
 const WORDMARK = { fontFamily: fonts.displayMedium, fontSize: 52, lineHeight: 68, color: INK } as const;
 
+// The frames are laid out for an 896pt-tall screen. On shorter viewports the
+// fixed illustration heights pushed the page dots off-screen — scale the art
+// and vertical gaps down (never up) so every page keeps its dots visible.
+function useSqueeze() {
+  const { height } = useWindowDimensions();
+  return Math.min(1, Math.max(0.55, (height - 260) / (896 - 260)));
+}
+
 // 1. Launch (v.2 #125:8371) — page 1 of the carousel: red "f" logo card top-center,
 //    two illustrated people mid, "My Favor" wordmark near the bottom, dots ●○○.
 //    Auto-advances to page 2 after a beat; tap anywhere to skip the wait.
 export function Launch({ navigation }: any) {
+  const k = useSqueeze();
   useEffect(() => {
     const t = setTimeout(() => navigation.replace('Welcome'), 1400);
     return () => clearTimeout(t);
@@ -75,16 +85,16 @@ export function Launch({ navigation }: any) {
         onPress={() => navigation.replace('Welcome')}
         accessibilityRole="button"
         accessibilityLabel="Continue"
-        style={{ flex: 1, alignItems: 'center', paddingBottom: 73 }}
+        style={{ flex: 1, alignItems: 'center', paddingBottom: 73 * k }}
       >
-        <Image source={logo} style={{ width: 156, height: 156, marginTop: 68 }} resizeMode="contain" />
+        <Image source={logo} style={{ width: 156 * k, height: 156 * k, marginTop: 68 * k }} resizeMode="contain" />
         <View style={{ flex: 1, flexDirection: 'row', alignItems: 'flex-end', justifyContent: 'center' }}>
           {/* Woman (thumbs-up) + man, feet aligned, 15pt apart (no overlap in the frame). */}
-          <Image source={personLeft} style={{ width: 131, height: 341 }} resizeMode="contain" />
-          <Image source={personRight} style={{ width: 160, height: 355, marginLeft: 15 }} resizeMode="contain" />
+          <Image source={personLeft} style={{ width: 131 * k, height: 341 * k }} resizeMode="contain" />
+          <Image source={personRight} style={{ width: 160 * k, height: 355 * k, marginLeft: 15 }} resizeMode="contain" />
         </View>
-        <Txt center style={{ ...WORDMARK, marginTop: 44 }}>My Favor</Txt>
-        <Dots active={0} navigation={navigation} style={{ marginTop: 44 }} />
+        <Txt center style={{ ...WORDMARK, marginTop: 44 * k }}>My Favor</Txt>
+        <Dots active={0} navigation={navigation} style={{ marginTop: 44 * k }} />
       </TouchableOpacity>
     </Screen>
   );
@@ -93,18 +103,19 @@ export function Launch({ navigation }: any) {
 // 2. Welcome (v.2 #125:8386) — page 2: lawn-mowing illustration, the value-prop
 //    headline (bold "$$"), and the two paths side by side. Dots ○●○.
 export function Welcome({ navigation }: any) {
+  const k = useSqueeze();
   return (
     <Screen padded={false}>
-      <View style={{ flex: 1, paddingHorizontal: 23, paddingBottom: 73 }}>
+      <View style={{ flex: 1, paddingHorizontal: 23, paddingBottom: 73 * k }}>
         <Image
           source={welcomeMower}
-          style={{ width: '100%', height: 349, marginTop: 46.5 }}
+          style={{ width: '100%', height: 349 * k, marginTop: 46.5 * k }}
           resizeMode="contain"
         />
         {/* Line breaks mirror the frame's 4-line rag; "$$" is the only bold run.
             Poppins_500Medium is registered in App.tsx but not yet exposed on the
             `fonts` token map (see foundationRequests) — literal until then. */}
-        <Txt center style={{ fontFamily: 'Poppins_500Medium', fontSize: 34, lineHeight: 48, color: INK, marginTop: 42 }}>
+        <Txt center style={{ fontFamily: 'Poppins_500Medium', fontSize: 34, lineHeight: 48, color: INK, marginTop: 42 * k }}>
           {'Ask for all the\nfavors you need, or\nearn '}
           <Text style={{ fontFamily: fonts.display }}>$$</Text>
           {' doing favors\nfor others.'}
@@ -124,7 +135,7 @@ export function Welcome({ navigation }: any) {
             style={{ ...BTN, flex: 1, paddingHorizontal: 0, backgroundColor: GRAY_BTN }}
           />
         </View>
-        <Dots active={1} navigation={navigation} style={{ marginTop: 39 }} />
+        <Dots active={1} navigation={navigation} style={{ marginTop: 39 * k }} />
       </View>
     </Screen>
   );
@@ -133,6 +144,7 @@ export function Welcome({ navigation }: any) {
 // 3. SignupLogin (v.2 #125:8404) — page 3: logo card + wordmark up top, then the
 //    stacked SHARE THIS APP / SIGNUP / LOGIN buttons anchored at the bottom. Dots ○○●.
 export function SignupLogin({ navigation }: any) {
+  const k = useSqueeze();
   const onShare = () => {
     Share.share({
       message: 'Join me on My Favor — ask for all the favors you need, or earn $$ doing favors for others!',
@@ -140,10 +152,10 @@ export function SignupLogin({ navigation }: any) {
   };
   return (
     <Screen padded={false}>
-      <View style={{ flex: 1, paddingHorizontal: 23, paddingBottom: 73 }}>
+      <View style={{ flex: 1, paddingHorizontal: 23, paddingBottom: 73 * k }}>
         <View style={{ flex: 1, alignItems: 'center' }}>
-          <Image source={logo} style={{ width: 156, height: 156, marginTop: 85 }} resizeMode="contain" />
-          <Txt center style={{ ...WORDMARK, fontSize: 48, lineHeight: 63, marginTop: 43 }}>My Favor</Txt>
+          <Image source={logo} style={{ width: 156 * k, height: 156 * k, marginTop: 85 * k }} resizeMode="contain" />
+          <Txt center style={{ ...WORDMARK, fontSize: 48, lineHeight: 63, marginTop: 43 * k }}>My Favor</Txt>
         </View>
         <View style={{ gap: 8 }}>
           <Button
