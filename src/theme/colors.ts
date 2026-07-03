@@ -24,7 +24,7 @@ export const palette = {
   // Neutrals
   black: '#000000',
   white: '#FFFFFF',
-  textPrimary: '#1A1A1A',
+  textPrimary: '#0D0A0A', // v.2 ink
   textSecondary: '#68707F', // "Text/Grey 5" (~4.9:1 on white)
   textTertiary: '#767676', // darkened from #959595 to pass WCAG AA (4.54:1) for placeholders/captions
   disabled: '#999999',

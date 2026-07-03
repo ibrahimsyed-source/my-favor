@@ -380,7 +380,7 @@ export const ConfirmModal: React.FC<{
 };
 
 const styles = StyleSheet.create({
-  btn: { height: 54, borderRadius: tokens.radius.md, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 20 },
+  btn: { height: 54, borderRadius: tokens.radius.sm, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 20 },
   modalScrim: { flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', alignItems: 'center', justifyContent: 'center', paddingHorizontal: 28 },
   modalCard: { width: '100%', borderRadius: 18, paddingVertical: 32, paddingHorizontal: 28 },
   field: { flexDirection: 'row', alignItems: 'center', borderRadius: tokens.radius.md, paddingHorizontal: 16, minHeight: 56 },

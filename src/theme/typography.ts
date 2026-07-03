@@ -1,20 +1,22 @@
-// Type scale from the Figma file. Headings/wordmark use Poppins — the crisp
-// bold geometric sans the artboards actually use (the "My Favor" wordmark,
-// "Verification", "Favor Booked", screen titles). Body uses Open Sans; Roboto
-// for labels/buttons. Families are registered in App.tsx.
+// Type scale from the Figma file. v.2 rule: Poppins EVERYWHERE (weights 400/500/
+// 600, bold 700 only for the wordmark/headings). Every token below resolves to a
+// Poppins family — the legacy Roboto/Open-Sans slot names are kept so existing
+// consumers keep working, but they now point at the matching Poppins weight.
+// Families are registered in App.tsx.
 
 export const fonts = {
   // Poppins (display / headings / logo)
   display: 'Poppins_700Bold',
   displayMedium: 'Poppins_600SemiBold',
-  // Roboto
-  robotoRegular: 'Roboto_400Regular',
-  robotoMedium: 'Roboto_500Medium',
-  robotoBold: 'Roboto_700Bold',
-  // Open Sans (body)
-  bodyRegular: 'OpenSans_400Regular',
-  bodySemiBold: 'OpenSans_600SemiBold',
-  bodyBold: 'OpenSans_700Bold',
+  // Legacy "Roboto" slots — repointed to Poppins (v.2 "Poppins everywhere").
+  robotoRegular: 'Poppins_400Regular',
+  robotoMedium: 'Poppins_500Medium',
+  robotoBold: 'Poppins_700Bold',
+  // Body — repointed from Open Sans to Poppins.
+  bodyRegular: 'Poppins_400Regular',
+  bodyMedium: 'Poppins_500Medium',
+  bodySemiBold: 'Poppins_600SemiBold',
+  bodyBold: 'Poppins_700Bold',
 } as const;
 
 export const typography = {
@@ -28,7 +30,7 @@ export const typography = {
   bodySm: { fontFamily: fonts.bodyRegular, fontSize: 15, lineHeight: 21 },
   label: { fontFamily: fonts.bodySemiBold, fontSize: 16, lineHeight: 22 }, // field labels (bold dark)
   caption: { fontFamily: fonts.bodyRegular, fontSize: 13, lineHeight: 18 },
-  button: { fontFamily: fonts.bodySemiBold, fontSize: 16, lineHeight: 20 }, // uppercase CTA text
+  button: { fontFamily: fonts.bodyMedium, fontSize: 16, lineHeight: 20 }, // Poppins Medium uppercase CTA text
   tab: { fontFamily: fonts.robotoMedium, fontSize: 10, lineHeight: 12 },
 } as const;
 

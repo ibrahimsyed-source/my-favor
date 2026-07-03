@@ -4,8 +4,9 @@ import {
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
+import { useFonts, Poppins_400Regular } from '@expo-google-fonts/poppins';
 import { useTheme, tokens, fonts } from '../theme';
-import { Txt, Avatar, StarRating, InfoModal, TopBar, Button } from '../components';
+import { Avatar, StarRating, InfoModal, TopBar } from '../components';
 import { useStore } from '../store';
 import { getFavorsApi, rateFavorApi } from '../api/endpoints';
 import { FAVOR_TIERS, Favor } from '../types';
@@ -18,9 +19,18 @@ import { FAVOR_TIERS, Favor } from '../types';
 // #880:18160. White canvas, Poppins headings, status chips, hairline dividers.
 // ---------------------------------------------------------------------------
 
-// v.2 chip colors (from the Figma frames; green/amber/red match theme tokens).
-const CHIP_INCOMPLETE = '#58595B'; // dark slate "Incomplete" chip
 const PAY_BADGE_BORDER = '#D9D9D9';
+
+// v.2 body/label typography is Poppins 400/500 (canvas-verified).
+const P400 = 'Poppins_400Regular'; // loaded locally (App.tsx registers 500/600/700)
+const P500 = 'Poppins_500Medium'; // registered app-wide in App.tsx
+
+// Poppins Regular isn't registered app-wide; expo-font caches globally so this
+// resolves instantly after the first mount anywhere in the app.
+function usePoppinsRegular() {
+  const [loaded] = useFonts({ Poppins_400Regular });
+  return loaded;
+}
 
 // ---------------------------------------------------------------------------
 // Date helpers (deterministic formatting from ms epoch)
@@ -105,12 +115,12 @@ function txnId(id?: string): string {
 const isIncomplete = (f?: Favor) => !!f && f.status === 'completed' && f.rating == null;
 
 // Status chip meta for the v.2 list rows: Completed (green), In Progress
-// (amber), Cancelled (red), Incomplete (dark slate + red flag).
+// (amber), Cancelled (red), Incomplete (red + flag).
 function chipMeta(favor: Favor, theme: any): { label: string; bg: string; flag?: boolean } {
   switch (favor.status) {
     case 'completed':
       return isIncomplete(favor)
-        ? { label: 'Incomplete', bg: CHIP_INCOMPLETE, flag: true }
+        ? { label: 'Incomplete', bg: theme.primary, flag: true }
         : { label: 'Completed', bg: theme.success };
     case 'cancelled':
     case 'no_pal':
@@ -122,7 +132,7 @@ function chipMeta(favor: Favor, theme: any): { label: string; bg: string; flag?:
     case 'in_progress':
       return { label: 'In Progress', bg: theme.warning };
     default:
-      return { label: 'Incomplete', bg: CHIP_INCOMPLETE, flag: true };
+      return { label: 'Incomplete', bg: theme.primary, flag: true };
   }
 }
 
@@ -284,6 +294,7 @@ export const History = ({ navigation }: any) => {
 export const FavorHistoryDetail = ({ navigation, route }: any) => {
   const { theme } = useTheme();
   const s = useStore();
+  const fontsReady = usePoppinsRegular();
 
   const favorId: string | undefined = route?.params?.favorId;
   const favor: Favor | undefined =
@@ -299,7 +310,7 @@ export const FavorHistoryDetail = ({ navigation, route }: any) => {
   const incomplete = isIncomplete(favor);
   const tierArt = favor ? TIER_ART[favor.tier] : undefined;
 
-  // ---- completed variant: support message (existing thread + send logic) ----
+  // ---- support message, both variants (existing thread + send logic) ----
   const [message, setMessage] = useState('');
   const [sent, setSent] = useState(false);
   const sendMessage = async () => {
@@ -327,7 +338,9 @@ export const FavorHistoryDetail = ({ navigation, route }: any) => {
       setNeedRating(true);
       return;
     }
-    const tipVal = tipChoice === 'other' ? Math.max(0, parseFloat(otherTip) || 0) : tipChoice ?? 0;
+    // Clamp a custom "Other" tip to the server's inclusive $1000 max — otherwise
+    // an over-cap tip 400s the whole rating request (silently, showing a false success).
+    const tipVal = tipChoice === 'other' ? Math.min(1000, Math.max(0, parseFloat(otherTip) || 0)) : tipChoice ?? 0;
     if (s.activeFavor?.id === favor.id) {
       // The store action owns the active favor (clears it + syncs history).
       s.rateFavor(rating, feedback.trim(), tipVal || undefined);
@@ -342,6 +355,8 @@ export const FavorHistoryDetail = ({ navigation, route }: any) => {
   };
 
   const Divider = () => <View style={[styles.divider, { backgroundColor: theme.divider }]} />;
+
+  if (!fontsReady) return <View style={{ flex: 1, backgroundColor: theme.background }} />; // flash-guard
 
   if (!favor) {
     return (
@@ -369,12 +384,12 @@ export const FavorHistoryDetail = ({ navigation, route }: any) => {
           </View>
           <View style={{ marginLeft: tokens.spacing.base, flex: 1 }}>
             <Text style={[styles.titleLg, { color: theme.text }]}>{tierLabel}</Text>
-            <Txt variant="caption" color={theme.textSecondary} style={{ marginTop: 2 }}>
+            <Text style={[styles.caption, { color: theme.textSecondary, marginTop: 2 }]}>
               {longDay(ts)}
-            </Txt>
-            <Txt variant="caption" color={theme.textSecondary}>
+            </Text>
+            <Text style={[styles.caption, { color: theme.textSecondary }]}>
               {timeOnly(ts)}
-            </Txt>
+            </Text>
           </View>
         </View>
 
@@ -385,9 +400,9 @@ export const FavorHistoryDetail = ({ navigation, route }: any) => {
           <Ionicons name="document-text" size={20} color={theme.text} />
           <Text style={[styles.heading, { color: theme.text, marginLeft: 12 }]}>Description</Text>
         </View>
-        <Txt variant="bodySm" color={theme.textSecondary} style={{ marginTop: 8, paddingLeft: 32 }}>
+        <Text style={[styles.bodySm, { color: theme.textSecondary, marginTop: 8, paddingLeft: 32 }]}>
           {favor.description}
-        </Txt>
+        </Text>
 
         <Divider />
 
@@ -396,9 +411,9 @@ export const FavorHistoryDetail = ({ navigation, route }: any) => {
           <Ionicons name="location" size={20} color={theme.text} />
           <Text style={[styles.heading, { color: theme.text, marginLeft: 12 }]}>Address</Text>
         </View>
-        <Txt variant="bodySm" color={theme.textSecondary} style={{ marginTop: 8, paddingLeft: 32 }}>
+        <Text style={[styles.bodySm, { color: theme.textSecondary, marginTop: 8, paddingLeft: 32 }]}>
           {favor.location?.address}
-        </Txt>
+        </Text>
 
         <Divider />
 
@@ -422,26 +437,26 @@ export const FavorHistoryDetail = ({ navigation, route }: any) => {
             </View>
             {pal ? (
               <>
-                <Txt variant="caption" color={theme.textSecondary} style={{ marginTop: 2 }}>
+                <Text style={[styles.caption, { color: theme.textSecondary, marginTop: 2 }]}>
                   3 Miles away
-                </Txt>
+                </Text>
                 <View style={[styles.inline, { marginTop: 10 }]}>
                   <Ionicons name="thumbs-up" size={14} color={theme.textSecondary} />
-                  <Txt variant="caption" color={theme.textSecondary} style={{ marginLeft: 8 }}>
+                  <Text style={[styles.caption, { color: theme.textSecondary, marginLeft: 8 }]}>
                     {pal.reliability}% Reliable
-                  </Txt>
+                  </Text>
                 </View>
                 <View style={[styles.inline, { marginTop: 6 }]}>
                   <Ionicons name="star" size={14} color={theme.textSecondary} />
-                  <Txt variant="caption" color={theme.textSecondary} style={{ marginLeft: 8 }}>
+                  <Text style={[styles.caption, { color: theme.textSecondary, marginLeft: 8 }]}>
                     {pal.positiveReviews}% Positive Reviews
-                  </Txt>
+                  </Text>
                 </View>
               </>
             ) : (
-              <Txt variant="caption" color={theme.textSecondary} style={{ marginTop: 2 }}>
+              <Text style={[styles.caption, { color: theme.textSecondary, marginTop: 2 }]}>
                 Pal details unavailable for this favor.
-              </Txt>
+              </Text>
             )}
           </View>
         </View>
@@ -459,23 +474,24 @@ export const FavorHistoryDetail = ({ navigation, route }: any) => {
               {card ? `${cap(card.brand)} • ${card.last4}` : 'Card on file'}
             </Text>
           </View>
-          <Text style={[styles.titleMd, { color: theme.text }]}>{money(favor.total)}</Text>
+          {/* v.2 #125:7216 shows the payment amount "+$20.00"-style. */}
+          <Text style={[styles.titleMd, { color: theme.text }]}>{`+${money(favor.total)}`}</Text>
         </View>
-        <Txt variant="bodySm" color={theme.textSecondary} style={{ marginTop: 6, paddingLeft: 32 }}>
+        <Text style={[styles.bodySm, { color: theme.textSecondary, marginTop: 6, paddingLeft: 32 }]}>
           Favor {money(favor.price)} + fees {money(feeTotal)}
           {favor.tip ? ` + tip ${money(favor.tip)}` : ''}
-        </Txt>
+        </Text>
         <View style={[styles.inline, { marginTop: 14, paddingLeft: 32 }]}>
-          <Txt variant="caption" color={theme.textSecondary} style={{ width: 110 }}>
+          <Text style={[styles.caption, { color: theme.textSecondary, width: 110 }]}>
             Date &amp; Time
-          </Txt>
-          <Txt variant="caption" color={theme.text}>{stampDate(ts)}</Txt>
+          </Text>
+          <Text style={[styles.caption, { color: theme.text }]}>{stampDate(ts)}</Text>
         </View>
         <View style={[styles.inline, { marginTop: 8, paddingLeft: 32 }]}>
-          <Txt variant="caption" color={theme.textSecondary} style={{ width: 110 }}>
+          <Text style={[styles.caption, { color: theme.textSecondary, width: 110 }]}>
             Transaction ID
-          </Txt>
-          <Txt variant="caption" color={theme.text}>{txnId(favor.id)}</Txt>
+          </Text>
+          <Text style={[styles.caption, { color: theme.text }]}>{txnId(favor.id)}</Text>
         </View>
 
         <Divider />
@@ -519,12 +535,14 @@ export const FavorHistoryDetail = ({ navigation, route }: any) => {
               <TouchableOpacity
                 activeOpacity={0.8}
                 onPress={() => setTipChoice(tipChoice === 'other' ? null : 'other')}
-                style={{ paddingVertical: 8, marginLeft: 6 }}
+                style={[styles.tipChip, { backgroundColor: tipChoice === 'other' ? theme.cta : theme.inputBg }]}
                 accessibilityRole="button"
                 accessibilityState={{ selected: tipChoice === 'other' }}
                 accessibilityLabel="Tip another amount"
               >
-                <Text style={[styles.tipChipTxt, { color: theme.text }]}>Other</Text>
+                <Text style={[styles.tipChipTxt, { color: tipChoice === 'other' ? theme.ctaText : theme.text }]}>
+                  Other
+                </Text>
               </TouchableOpacity>
               {tipChoice === 'other' && (
                 <View style={[styles.otherField, { backgroundColor: theme.inputBg }]}>
@@ -556,54 +574,61 @@ export const FavorHistoryDetail = ({ navigation, route }: any) => {
                 placeholderTextColor={theme.textTertiary}
               />
             </View>
-            <Txt variant="caption" color={theme.textSecondary} style={{ textAlign: 'right', marginTop: 8 }}>
+            <Text style={[styles.caption, { color: theme.textSecondary, textAlign: 'right', marginTop: 8 }]}>
               700 characters max.
-            </Txt>
-            <Button
-              title="MARK FAVOR COMPLETE"
-              variant="primary"
+            </Text>
+            <TouchableOpacity
+              activeOpacity={0.85}
               onPress={markComplete}
-              style={{ marginTop: tokens.spacing.base }}
-            />
+              style={[styles.ctaBtn, { backgroundColor: theme.cta }]}
+              accessibilityRole="button"
+              accessibilityLabel="Mark favor complete"
+            >
+              <Text style={[styles.ctaBtnTxt, { color: theme.ctaText }]}>MARK FAVOR COMPLETE</Text>
+            </TouchableOpacity>
           </>
         ) : (
           <>
-            {/* ---- Completed favor: comment + support message ---- */}
+            {/* ---- Completed favor: comment left with the rating ---- */}
             <Text style={[styles.heading, { color: theme.text, marginTop: tokens.spacing.lg }]}>
               Comment
             </Text>
-            <Txt variant="bodySm" color={theme.textSecondary} style={{ marginTop: 8 }}>
+            <Text style={[styles.bodySm, { color: theme.textSecondary, marginTop: 8 }]}>
               {favor.feedback ?? 'No comment was left for this favor.'}
-            </Txt>
-
-            <Text style={[styles.heading, { color: theme.text, marginTop: tokens.spacing.xxl }]}>
-              Need help or have a question with this favor?
             </Text>
-            <Text style={[styles.heading, { color: theme.text }]}>Send us a message.</Text>
-            <View style={[styles.msgBox, { backgroundColor: theme.inputBg, marginTop: tokens.spacing.base }]}>
-              <TextInput
-                style={[styles.msgInput, { color: theme.text }]}
-                value={message}
-                onChangeText={setMessage}
-                multiline
-                maxLength={700}
-                placeholder={
-                  'Provide as much detail as possible about your favor!  Let your provider know about what they will be doing, what they will need to bring, special requirements, etc.'
-                }
-                placeholderTextColor={theme.textTertiary}
-              />
-            </View>
-            <Txt variant="caption" color={theme.textSecondary} style={{ textAlign: 'right', marginTop: 8 }}>
-              700 characters max.
-            </Txt>
-            <Button
-              title="SEND"
-              variant="primary"
-              onPress={sendMessage}
-              style={{ marginTop: tokens.spacing.base }}
-            />
           </>
         )}
+
+        {/* ---- Support message (both variants — #125:7216 and #880:18160) ---- */}
+        <Text style={[styles.heading, { color: theme.text, marginTop: tokens.spacing.xxl }]}>
+          Need help or have a question with this favor?
+        </Text>
+        <Text style={[styles.heading, { color: theme.text }]}>Send us a message.</Text>
+        <View style={[styles.msgBox, { backgroundColor: theme.inputBg, marginTop: tokens.spacing.base }]}>
+          <TextInput
+            style={[styles.msgInput, { color: theme.text }]}
+            value={message}
+            onChangeText={setMessage}
+            multiline
+            maxLength={700}
+            placeholder={
+              'Provide as much detail as possible about your favor!  Let your provider know about what they will be doing, what they will need to bring, special requirements, etc.'
+            }
+            placeholderTextColor={theme.textTertiary}
+          />
+        </View>
+        <Text style={[styles.caption, { color: theme.textSecondary, textAlign: 'right', marginTop: 8 }]}>
+          700 characters max.
+        </Text>
+        <TouchableOpacity
+          activeOpacity={0.85}
+          onPress={sendMessage}
+          style={[styles.ctaBtn, { backgroundColor: theme.cta }]}
+          accessibilityRole="button"
+          accessibilityLabel="Send message"
+        >
+          <Text style={[styles.ctaBtnTxt, { color: theme.ctaText }]}>SEND</Text>
+        </TouchableOpacity>
       </ScrollView>
 
       <InfoModal
@@ -673,7 +698,7 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
   },
   payBadgeTxt: {
-    fontFamily: fonts.bodySemiBold,
+    fontFamily: P500,
     fontSize: 10,
     color: '#141414',
   },
@@ -685,7 +710,7 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
   },
   chipTxt: {
-    fontFamily: fonts.bodySemiBold,
+    fontFamily: P500,
     fontSize: 11,
     color: '#FFFFFF',
   },
@@ -750,7 +775,7 @@ const styles = StyleSheet.create({
   msgInput: {
     flex: 1,
     fontSize: 15,
-    fontFamily: fonts.bodyRegular,
+    fontFamily: P400,
     textAlignVertical: 'top',
     minHeight: 120,
   },
@@ -763,7 +788,7 @@ const styles = StyleSheet.create({
     marginRight: 12,
   },
   tipChipTxt: {
-    fontFamily: fonts.bodySemiBold,
+    fontFamily: P500,
     fontSize: 13,
   },
   otherField: {
@@ -775,10 +800,35 @@ const styles = StyleSheet.create({
     marginLeft: 12,
   },
   otherInput: {
-    fontFamily: fonts.bodySemiBold,
+    fontFamily: P500,
     fontSize: 13,
     minWidth: 56,
     paddingVertical: 0,
     marginLeft: 2,
+  },
+  // v.2 body/caption text (Poppins Regular, same sizes as the old Txt variants).
+  caption: {
+    fontFamily: P400,
+    fontSize: 13,
+    lineHeight: 18,
+  },
+  bodySm: {
+    fontFamily: P400,
+    fontSize: 15,
+    lineHeight: 21,
+  },
+  // v.2 black CTA: 48px tall, radius 8, white Poppins Medium uppercase label
+  // (same local pattern as payment.tsx / checkout.tsx).
+  ctaBtn: {
+    height: 48,
+    borderRadius: 8,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginTop: tokens.spacing.base,
+  },
+  ctaBtnTxt: {
+    fontFamily: P500,
+    fontSize: 15,
+    letterSpacing: 0.5,
   },
 });

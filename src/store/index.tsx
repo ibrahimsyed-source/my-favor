@@ -4,7 +4,7 @@ import {
   User, Favor, PaymentCard, Transaction, Thread, Message, AppNotification,
   Role, UserStatus, FavorTier, GeoPoint, FavorStatus, computeFees, computePayout,
 } from '../types';
-import { setSession, clearSession, getStoredRefresh, getStoredUser, setStoredUser, ApiError } from '../api/client';
+import { setSession, clearSession, getStoredRefresh, getStoredUser, setStoredUser, ApiError, setOnSessionExpired } from '../api/client';
 import {
   signupApi, verifyOtpApi, loginApi, logoutApi, deleteAccountApi, changePasswordApi,
   getMeApi, updateProfileApi, setRoleApi, setStatusApi, getPalsApi, getPalApi,
@@ -25,6 +25,10 @@ import {
 // ---------------------------------------------------------------------------
 
 const ACTIVE = ['requested', 'matched', 'enroute', 'arrived', 'in_progress'];
+
+// Monotonic sequence for client-only notification ids so repeat inserts (e.g.
+// reporting the same user twice) never collide on a React key.
+let localSeq = 0;
 
 // Pals come back as a reduced shape (no email/phone pre-match); widen to User
 // for the existing screens, which only read display fields.
@@ -56,7 +60,7 @@ interface StoreValue {
   restoring: boolean; // true while the app is restoring a saved session on cold start
   signup: (data: Partial<User> & { password: string }) => Promise<void>;
   verifyOtp: (code: string) => Promise<boolean>;
-  login: (email: string, password: string) => Promise<'ok' | 'unverified' | 'invalid'>;
+  login: (email: string, password: string) => Promise<'ok' | 'unverified' | 'invalid' | 'error'>;
   logout: () => void;
   deleteAccount: () => Promise<void>;
   updateProfile: (patch: Partial<User>) => Promise<void>;
@@ -200,6 +204,15 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     setThreads([]); setMessages([]); setNotifications([]); setBlockedUsers([]); setPals([]);
   }, []);
 
+  // If the API client hard-loses the session mid-flight (a refresh token is
+  // rejected — e.g. after a password change revokes all tokens), clear user
+  // state so isAuthenticated flips false and the navigator returns to Login,
+  // instead of stranding a tokenless "zombie" authenticated shell.
+  useEffect(() => {
+    setOnSessionExpired(() => resetState());
+    return () => setOnSessionExpired(null);
+  }, [resetState]);
+
   // ---- session bootstrap (restore on app start) ----
   useEffect(() => {
     (async () => {
@@ -299,7 +312,7 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     }
   }, [pendingDest, loadAll]);
 
-  const login = useCallback(async (email: string, password: string): Promise<'ok' | 'unverified' | 'invalid'> => {
+  const login = useCallback(async (email: string, password: string): Promise<'ok' | 'unverified' | 'invalid' | 'error'> => {
     try {
       const session = await loginApi(email.toLowerCase(), password);
       await setSession(session);
@@ -314,7 +327,11 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
         setPendingDest(email.toLowerCase());
         return 'unverified';
       }
-      return 'invalid';
+      // Only a genuine bad-credential 401 means the email/password was wrong.
+      if (e?.status === 401) return 'invalid';
+      // Everything else (network_error status 0, >=500 cold starts, 429 rate
+      // limits) is a transport/server failure — don't blame the user's creds.
+      return 'error';
     }
   }, [loadAll]);
 
@@ -341,7 +358,14 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
 
   const changePassword = useCallback(async (current: string, next: string) => {
     try {
-      await changePasswordApi(current, next);
+      // The server revokes every session on a password change but returns a
+      // fresh pair for THIS device — persist it, otherwise this device keeps its
+      // now-revoked refresh token and 401s into a zombie session ~15m later.
+      const res = (await changePasswordApi(current, next)) as
+        { ok: boolean; accessToken?: string; refreshToken?: string };
+      if (res.accessToken && res.refreshToken) {
+        await setSession({ accessToken: res.accessToken, refreshToken: res.refreshToken });
+      }
       return true;
     } catch {
       return false;
@@ -527,7 +551,7 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
   // ---- moderation ----
   const reportUser = useCallback((userId: string, reason?: string) => {
     setNotifications((n) => [
-      { id: `local_${userId}`, type: 'general', title: 'Report received',
+      { id: `local_${userId}_${Date.now()}_${localSeq++}`, type: 'general', title: 'Report received',
         body: 'Thanks — our Trust & Safety team will review this shortly.', date: Date.now(), read: false },
       ...n,
     ]);

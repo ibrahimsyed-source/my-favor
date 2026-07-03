@@ -15,6 +15,7 @@ import {
   OpenSans_700Bold,
 } from '@expo-google-fonts/open-sans';
 import {
+  Poppins_400Regular,
   Poppins_500Medium,
   Poppins_600SemiBold,
   Poppins_700Bold,
@@ -42,7 +43,7 @@ function useWebGlobalStyles() {
       input, textarea, select, [contenteditable] { outline: none !important; }
       input:focus, textarea:focus { outline: none !important; box-shadow: none !important; }
       /* Default any unstyled text to the brand body font (custom-styled <Txt> keeps its own). */
-      html, body, #root { font-family: "OpenSans_400Regular", system-ui, -apple-system, sans-serif; }
+      html, body, #root { font-family: "Poppins_400Regular", system-ui, -apple-system, sans-serif; }
     `;
     document.head.appendChild(style);
     // Force the embedded icon font to load immediately so icons paint on first
@@ -99,6 +100,7 @@ export default function App() {
     OpenSans_400Regular,
     OpenSans_600SemiBold,
     OpenSans_700Bold,
+    Poppins_400Regular,
     Poppins_500Medium,
     Poppins_600SemiBold,
     Poppins_700Bold,

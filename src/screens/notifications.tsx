@@ -3,7 +3,7 @@ import { View, FlatList, TouchableOpacity, Modal, StyleSheet, Text } from 'react
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { TopBar } from '../components';
-import { tokens, fonts, palette } from '../theme';
+import { tokens, palette } from '../theme';
 import { useStore } from '../store';
 import { AppNotification } from '../types';
 
@@ -35,7 +35,7 @@ const POPPINS_MEDIUM = 'Poppins_500Medium';
 // notification alerts use "CLOSE" (e.g. "No Favor Pal Available" #125:11190).
 const ACTION_LABEL: Record<AppNotification['type'], string> = {
   match: 'OKAY',
-  arrived: 'OKAY',
+  arrived: 'OK',
   general: 'OKAY',
   cancellation: 'CLOSE',
   no_pal: 'CLOSE',
@@ -245,7 +245,7 @@ const styles = StyleSheet.create({
   rowCard: { borderRadius: 16, paddingVertical: 20, paddingHorizontal: 20 },
   rowTitle: { fontFamily: POPPINS_MEDIUM, fontSize: 18, lineHeight: 26, color: INK, textAlign: 'center' },
   rowBody: { fontFamily: POPPINS_MEDIUM, fontSize: 14, lineHeight: 21, color: INK, textAlign: 'center', marginTop: 4 },
-  rowTime: { fontFamily: fonts.bodyRegular, fontSize: 12, lineHeight: 16, color: palette.textTertiary, textAlign: 'center', marginTop: 8 },
+  rowTime: { fontFamily: POPPINS_MEDIUM, fontSize: 12, lineHeight: 16, color: palette.textTertiary, textAlign: 'center', marginTop: 8 },
   markAll: { fontFamily: POPPINS_MEDIUM, fontSize: 13, lineHeight: 18, color: palette.info },
 
   // Push-permission dialog (#125:8532): 357x253 card r14, #282828 text,

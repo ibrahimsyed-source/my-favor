@@ -230,6 +230,10 @@ export const Login = ({ navigation }: any) => {
         navigation.navigate('OtpVerify', { destination: email.trim().toLowerCase(), password });
       } else if (r === 'invalid') {
         setError('Invalid email or password.');
+      } else if (r === 'error') {
+        // Network / server error (offline, cold start, rate limit) — distinct
+        // from bad credentials, so don't blame the user's email/password.
+        setError('Could not sign in. Please try again.');
       }
     } catch (e) {
       setError('Could not sign in. Please try again.');
@@ -285,8 +289,22 @@ export const Login = ({ navigation }: any) => {
           onPress={onLogin}
           loading={submitting}
           disabled={!email.trim() || !password}
-          style={{ height: 50, marginTop: tokens.spacing.xl }}
+          style={{ height: 48, marginTop: tokens.spacing.xl }}
         />
+        <TouchableOpacity
+          onPress={() => navigation.navigate('Signup')}
+          style={{ alignSelf: 'center', marginTop: tokens.spacing.lg }}
+          hitSlop={8}
+          accessibilityRole="link"
+          accessibilityLabel="Sign up for an account"
+        >
+          <Txt variant="bodySm" color={theme.textSecondary}>
+            Don't have an account?{' '}
+            <Txt variant="bodySm" style={{ fontFamily: fonts.displayMedium }} color={theme.primary}>
+              Sign Up
+            </Txt>
+          </Txt>
+        </TouchableOpacity>
       </ScrollView>
     </Screen>
   );
@@ -345,7 +363,7 @@ export const ForgotPassword = ({ navigation }: any) => {
           onPress={onSubmit}
           loading={busy}
           disabled={!email.trim()}
-          style={{ height: 50 }}
+          style={{ height: 48 }}
         />
       </ScrollView>
     </Screen>
@@ -400,7 +418,7 @@ export const NewPassword = ({ navigation, route }: any) => {
     return (
       <Screen padded={false}>
         <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center', paddingHorizontal: PX }}>
-          <Ionicons name="checkmark-circle" size={96} color="#4CAF50" />
+          <Ionicons name="checkmark-circle" size={96} color={theme.success} />
           <Txt
             variant="h1"
             center
@@ -410,7 +428,7 @@ export const NewPassword = ({ navigation, route }: any) => {
           </Txt>
         </View>
         <View style={{ paddingHorizontal: PX, paddingBottom: PX }}>
-          <Button title="LOGIN TO YOUR ACCOUNT" variant="primary" onPress={toLogin} style={{ height: 50 }} />
+          <Button title="LOGIN TO YOUR ACCOUNT" variant="primary" onPress={toLogin} style={{ height: 48 }} />
         </View>
       </Screen>
     );
@@ -448,7 +466,7 @@ export const NewPassword = ({ navigation, route }: any) => {
           onPress={onSubmit}
           loading={busy}
           disabled={!pw || !confirm}
-          style={{ height: 50 }}
+          style={{ height: 48 }}
         />
       </ScrollView>
 
@@ -500,6 +518,26 @@ export const Signup = ({ navigation, route }: any) => {
     if (submitting) return;
     if (!agreeTerms) {
       setError('Please agree to MyFavor’s Liability Waiver, Privacy Policy, and Terms & Conditions to continue.');
+      return;
+    }
+    // Client-side validation mirroring the server's signupSchema so a bad field
+    // shows a specific, field-pointing message instead of the API's opaque
+    // "Invalid request" (the server rejects <8-char passwords, blank names,
+    // malformed emails and short phones, and the client only surfaces err.message).
+    if (!firstName.trim() || !lastName.trim()) {
+      setError('Please enter your first and last name.');
+      return;
+    }
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email.trim())) {
+      setError('Please enter a valid email address.');
+      return;
+    }
+    if (phone.replace(/\D/g, '').length < 7) {
+      setError('Please enter a valid phone number.');
+      return;
+    }
+    if (password.length < 8) {
+      setError('Password must be at least 8 characters.');
       return;
     }
     setSubmitting(true);
@@ -657,7 +695,7 @@ export const Signup = ({ navigation, route }: any) => {
           variant="primary"
           onPress={onSignup}
           loading={submitting}
-          style={{ height: 50, marginTop: tokens.spacing.sm }}
+          style={{ height: 48, marginTop: tokens.spacing.sm }}
         />
       </ScrollView>
     </Screen>
@@ -711,7 +749,7 @@ export const OtpVerify = ({ navigation, route }: any) => {
       next[i] = ch;
       return next;
     });
-    if (ch && i < 5) inputs.current[i + 1]?.focus();
+    if (ch && i < 3) inputs.current[i + 1]?.focus();
   };
 
   const onKeyPress = (i: number, e: any) => {
@@ -850,7 +888,7 @@ export const OtpVerify = ({ navigation, route }: any) => {
             variant="primary"
             onPress={onVerify}
             disabled={full.length < 4}
-            style={{ height: 50 }}
+            style={{ height: 48 }}
           />
         </ScrollView>
       </Screen>
@@ -894,18 +932,18 @@ export const OtpVerify = ({ navigation, route }: any) => {
                   style={{ alignSelf: 'center', marginBottom: tokens.spacing.md }}
                 />
                 {/* #125:8517: green check + "Account Verified" heading, no body copy. */}
-                <Txt variant="h1" center style={{ marginBottom: tokens.spacing.base }}>Account Verified</Txt>
+                <Txt center style={{ fontFamily: P_MEDIUM, fontSize: 24, lineHeight: 36, marginBottom: tokens.spacing.base }}>Account Verified</Txt>
                 <Button
                   title="CONTINUE"
                   variant="primary"
                   onPress={onContinue}
                   loading={continuing}
-                  style={{ height: 50, marginTop: tokens.spacing.xl }}
+                  style={{ height: 48, marginTop: tokens.spacing.xl }}
                 />
               </>
             ) : (
               <>
-                <Txt variant="h1" center style={{ marginBottom: tokens.spacing.base }}>Verification</Txt>
+                <Txt center style={{ fontFamily: P_MEDIUM, fontSize: 24, lineHeight: 36, marginBottom: tokens.spacing.base }}>Verification</Txt>
                 <Txt center style={{ fontFamily: P_MEDIUM, fontSize: 16, lineHeight: 24 }}>
                   Please enter 4 digit code to verify your account.
                 </Txt>
@@ -954,7 +992,7 @@ export const OtpVerify = ({ navigation, route }: any) => {
                   variant="primary"
                   onPress={onVerify}
                   loading={submitting}
-                  style={{ height: 50, marginTop: tokens.spacing.lg }}
+                  style={{ height: 48, marginTop: tokens.spacing.lg }}
                 />
               </>
             )}
@@ -988,8 +1026,8 @@ const styles = StyleSheet.create({
   },
   modalCard: {
     width: '100%',
-    maxWidth: 360,
-    borderRadius: tokens.radius.xl,
+    maxWidth: 351,
+    borderRadius: tokens.radius.lg,
     paddingVertical: tokens.spacing.xl,
     paddingHorizontal: tokens.spacing.xl,
   },

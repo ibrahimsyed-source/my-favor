@@ -240,8 +240,14 @@ authRouter.post(
       throw badRequest('Current password is incorrect');
     }
     await prisma.user.update({ where: { id: user.id }, data: { passwordHash: await hashPassword(newPassword) } });
-    await revokeAllRefreshTokens(user.id); // force re-login on other devices
-    res.json({ ok: true });
+    // Revoke every existing session so a leaked old password/token can't be
+    // reused, then mint a fresh session for THIS device so the caller stays
+    // signed in. (The request authenticates via the access token, not a refresh
+    // token, so we can't tell which stored refresh row belongs to the caller to
+    // spare it — issue a new pair and return it instead.)
+    await revokeAllRefreshTokens(user.id);
+    const session = await issueSession(user.id, user.role);
+    res.json({ ok: true, ...session });
   }),
 );
 

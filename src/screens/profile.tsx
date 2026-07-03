@@ -21,7 +21,7 @@ import { useStore } from '../store';
 // ---------------------------------------------------------------------------
 const L = {
   bg: '#FFFFFF',
-  text: '#1A1A1A',
+  text: '#0D0A0A',
   sub: '#767676', // gray body / row subtitles
   placeholder: '#9A9A9A',
   divider: '#ECECEC',
@@ -33,26 +33,48 @@ const L = {
   toggleOff: '#E4E4E6',
 } as const;
 
+// ---------------------------------------------------------------------------
+// Provider App v.2 DARK kit — pal-mode (user.role === 'pal') variants of these
+// account screens mirror payouts.tsx: page fill #0D0A0A, navy sheets/rows/
+// dividers #252A38, navy field fills #2E3442, white text/labels, and white
+// primary buttons with black labels. The same helpers below render this kit
+// when passed `dark`, so member (light) and pal (dark) share one component.
+// ---------------------------------------------------------------------------
+const D = {
+  bg: '#0D0A0A',
+  sheet: '#252A38', // navy rows / cards / dividers
+  field: '#2E3442', // navy filled input (a shade lighter than the sheet)
+  text: '#FFFFFF',
+  sub: '#B9B4B4', // secondary / body text
+  placeholder: 'rgba(255,255,255,0.4)',
+  divider: '#252A38',
+  border: 'rgba(255,255,255,0.10)',
+  red: '#ED1C24',
+  ctaBg: '#FFFFFF', // provider primary CTA — white pill…
+  ctaText: '#000000', // …with a black label
+} as const;
+
 const POPPINS_MEDIUM = 'Poppins_500Medium'; // registered in App.tsx
 
 // ---------------------------------------------------------------------------
 // v.2 light building blocks
 // ---------------------------------------------------------------------------
-function LightHeader({ title, onBack, onEdit }: { title: string; onBack?: () => void; onEdit?: () => void }) {
+function LightHeader({ title, onBack, onEdit, dark }: { title: string; onBack?: () => void; onEdit?: () => void; dark?: boolean }) {
+  const ink = dark ? D.text : L.text;
   return (
-    <View style={st.header}>
+    <View style={[st.header, dark && st.headerDark]}>
       <View style={{ width: 44 }}>
         {onBack ? (
           <TouchableOpacity onPress={onBack} hitSlop={12} accessibilityRole="button" accessibilityLabel="Go back">
-            <Ionicons name="arrow-back" size={24} color={L.text} />
+            <Ionicons name="arrow-back" size={24} color={ink} />
           </TouchableOpacity>
         ) : null}
       </View>
-      <Txt style={st.headerTitle} center>{title}</Txt>
+      <Txt style={dark ? { ...st.headerTitle, color: D.text } : st.headerTitle} center>{title}</Txt>
       <View style={{ width: 44, alignItems: 'flex-end' }}>
         {onEdit ? (
           <TouchableOpacity onPress={onEdit} hitSlop={12} accessibilityRole="button" accessibilityLabel="Edit profile">
-            <Ionicons name="pencil" size={20} color={L.text} />
+            <Ionicons name="pencil" size={20} color={ink} />
           </TouchableOpacity>
         ) : null}
       </View>
@@ -60,9 +82,9 @@ function LightHeader({ title, onBack, onEdit }: { title: string; onBack?: () => 
   );
 }
 
-// Black CTA bar (SAVE / SUBMIT / CONTINUE / DELETE MY ACCOUNT) — 46px, r10.
-function Cta({ title, onPress, disabled, loading, style }: {
-  title: string; onPress?: () => void; disabled?: boolean; loading?: boolean; style?: any;
+// Black CTA bar (SAVE / SUBMIT / CONTINUE / DELETE MY ACCOUNT) — 48px, r8.
+function Cta({ title, onPress, disabled, loading, style, dark }: {
+  title: string; onPress?: () => void; disabled?: boolean; loading?: boolean; style?: any; dark?: boolean;
 }) {
   return (
     <TouchableOpacity
@@ -72,24 +94,24 @@ function Cta({ title, onPress, disabled, loading, style }: {
       accessibilityRole="button"
       accessibilityLabel={title}
       accessibilityState={{ disabled: !!disabled || !!loading, busy: !!loading }}
-      style={[st.cta, disabled && { opacity: 0.4 }, style]}
+      style={[dark ? st.ctaDark : st.cta, disabled && { opacity: 0.4 }, style]}
     >
-      {loading ? <ActivityIndicator color="#FFFFFF" /> : <Txt style={st.ctaText}>{title}</Txt>}
+      {loading ? <ActivityIndicator color={dark ? D.ctaText : '#FFFFFF'} /> : <Txt style={dark ? st.ctaTextDark : st.ctaText}>{title}</Txt>}
     </TouchableOpacity>
   );
 }
 
 // Centered white alert card (Edit Profile - Success Modal #125:7632).
-function LightModal({ visible, title, message, buttonLabel, onClose }: {
-  visible: boolean; title: string; message: string; buttonLabel: string; onClose: () => void;
+function LightModal({ visible, title, message, buttonLabel, onClose, dark }: {
+  visible: boolean; title: string; message: string; buttonLabel: string; onClose: () => void; dark?: boolean;
 }) {
   return (
     <Modal visible={visible} transparent animationType="fade" onRequestClose={onClose}>
       <Pressable style={st.scrim} onPress={onClose}>
-        <Pressable style={st.alertCard} onPress={() => {}}>
-          <Txt style={st.alertTitle} center>{title}</Txt>
-          <Txt style={st.alertMsg} center>{message}</Txt>
-          <Cta title={buttonLabel} onPress={onClose} style={{ height: 40, marginTop: 18 }} />
+        <Pressable style={[st.alertCard, dark && st.alertCardDark]} onPress={() => {}}>
+          <Txt style={dark ? { ...st.alertTitle, color: D.text } : st.alertTitle} center>{title}</Txt>
+          <Txt style={dark ? { ...st.alertMsg, color: D.sub } : st.alertMsg} center>{message}</Txt>
+          <Cta title={buttonLabel} onPress={onClose} dark={dark} style={{ height: 40, marginTop: 18 }} />
         </Pressable>
       </Pressable>
     </Modal>
@@ -97,18 +119,22 @@ function LightModal({ visible, title, message, buttonLabel, onClose }: {
 }
 
 // Gray filled input with a light label above (Edit Profile #125:7568).
-function LightField({ label, value, onChangeText, placeholder, secureTextEntry, keyboardType, multiline, maxLength, autoCapitalize }: any) {
+// `editable={false}` renders a greyed, read-only field (used for identity
+// fields that can't be changed here); `note` prints a small hint beneath it.
+function LightField({ label, value, onChangeText, placeholder, secureTextEntry, keyboardType, multiline, maxLength, autoCapitalize, dark, editable, note }: any) {
   const [hide, setHide] = useState(!!secureTextEntry);
+  const readOnly = editable === false;
   return (
     <View style={{ flex: 1 }}>
-      {label ? <Txt style={st.fieldLabel}>{label}</Txt> : null}
-      <View style={[st.fieldBox, multiline && st.fieldBoxMulti]}>
+      {label ? <Txt style={dark ? { ...st.fieldLabel, color: D.text } : st.fieldLabel}>{label}</Txt> : null}
+      <View style={[st.fieldBox, dark && st.fieldBoxDark, multiline && st.fieldBoxMulti, readOnly && st.fieldBoxDisabled]}>
         <TextInput
-          style={[st.fieldInput, multiline && { paddingVertical: 0, height: '100%' }]}
+          style={[st.fieldInput, dark && { color: D.text }, readOnly && { color: dark ? D.sub : L.sub }, multiline && { paddingVertical: 0, height: '100%' }]}
           value={value}
           onChangeText={onChangeText}
+          editable={editable}
           placeholder={placeholder}
-          placeholderTextColor={L.placeholder}
+          placeholderTextColor={dark ? D.placeholder : L.placeholder}
           secureTextEntry={hide}
           keyboardType={keyboardType}
           multiline={multiline}
@@ -118,10 +144,11 @@ function LightField({ label, value, onChangeText, placeholder, secureTextEntry, 
         />
         {secureTextEntry ? (
           <TouchableOpacity onPress={() => setHide((h: boolean) => !h)} hitSlop={8} accessibilityRole="button" accessibilityLabel={hide ? 'Show password' : 'Hide password'}>
-            <Ionicons name={hide ? 'eye' : 'eye-off'} size={18} color={L.text} />
+            <Ionicons name={hide ? 'eye' : 'eye-off'} size={18} color={dark ? D.text : L.text} />
           </TouchableOpacity>
         ) : null}
       </View>
+      {note ? <Txt style={dark ? { ...st.fieldNote, color: D.sub } : st.fieldNote}>{note}</Txt> : null}
     </View>
   );
 }
@@ -138,23 +165,26 @@ function USFlag() {
   );
 }
 
-function PhoneField({ value, onChangeText }: any) {
+function PhoneField({ value, onChangeText, dark, editable, note }: any) {
+  const readOnly = editable === false;
   return (
     <View>
-      <Txt style={st.fieldLabel}>Phone Number</Txt>
-      <View style={st.fieldBox} accessibilityLabel="Country code, United States, plus 1">
+      <Txt style={dark ? { ...st.fieldLabel, color: D.text } : st.fieldLabel}>Phone Number</Txt>
+      <View style={[st.fieldBox, dark && st.fieldBoxDark, readOnly && st.fieldBoxDisabled]} accessibilityLabel="Country code, United States, plus 1">
         <USFlag />
-        <Txt style={{ fontFamily: POPPINS_MEDIUM, fontSize: 14, color: L.text, marginLeft: 7, marginRight: 3 }}>+1</Txt>
-        <Ionicons name="chevron-down" size={13} color={L.text} />
+        <Txt style={{ fontFamily: POPPINS_MEDIUM, fontSize: 14, color: dark ? D.text : L.text, marginLeft: 7, marginRight: 3 }}>+1</Txt>
+        <Ionicons name="chevron-down" size={13} color={dark ? D.text : L.text} />
         <TextInput
-          style={[st.fieldInput, { marginLeft: 14 }]}
+          style={[st.fieldInput, { marginLeft: 14 }, dark && { color: D.text }, readOnly && { color: dark ? D.sub : L.sub }]}
           value={value}
           onChangeText={onChangeText}
+          editable={editable}
           placeholder="8000 - 000 - 000"
-          placeholderTextColor={L.placeholder}
+          placeholderTextColor={dark ? D.placeholder : L.placeholder}
           keyboardType="phone-pad"
         />
       </View>
+      {note ? <Txt style={dark ? { ...st.fieldNote, color: D.sub } : st.fieldNote}>{note}</Txt> : null}
     </View>
   );
 }
@@ -189,6 +219,7 @@ function ProfileBody({ navigation, onBack, showSetStatus }: { navigation: any; o
   if (!user) return null;
 
   const isPal = user.role === 'pal';
+  const dark = isPal; // pal mode renders the Provider App v.2 dark Settings
 
   const runDelete = async () => {
     setDeleting(true);
@@ -197,13 +228,13 @@ function ProfileBody({ navigation, onBack, showSetStatus }: { navigation: any; o
   };
 
   return (
-    <SafeAreaView edges={['top']} style={{ flex: 1, backgroundColor: L.bg }}>
-      <LightHeader title="Profile" onBack={onBack} onEdit={() => navigation.navigate('EditProfile')} />
+    <SafeAreaView edges={['top']} style={{ flex: 1, backgroundColor: dark ? D.bg : L.bg }}>
+      <LightHeader title="Profile" onBack={onBack} onEdit={() => navigation.navigate('EditProfile')} dark={dark} />
       <ScrollView contentContainerStyle={{ paddingHorizontal: 20, paddingBottom: 28 }} showsVerticalScrollIndicator={false}>
         <View style={{ alignSelf: 'center', marginTop: 18 }}>
           <Avatar uri={user.avatar} name={user.firstName} size={124} />
         </View>
-        <Txt style={st.profileName} center>{user.firstName}</Txt>
+        <Txt style={dark ? { ...st.profileName, color: D.text } : st.profileName} center>{user.firstName}</Txt>
 
         {showSetStatus ? (
           <TouchableOpacity
@@ -218,9 +249,9 @@ function ProfileBody({ navigation, onBack, showSetStatus }: { navigation: any; o
           </TouchableOpacity>
         ) : null}
 
-        <Txt style={st.profileBio} center>{user.bio}</Txt>
+        <Txt style={dark ? { ...st.profileBio, color: D.sub } : st.profileBio} center>{user.bio}</Txt>
 
-        {/* Role switch pill */}
+        {/* Role switch pill — white in both themes (dark text reads on white) */}
         <View style={st.switchPill}>
           <Txt style={st.switchPillText}>{isPal ? 'Switch to request a favor' : 'Switch to be a favor pal'}</Txt>
           <TinyToggle value={isPal} onChange={() => s.setRole(isPal ? 'member' : 'pal')} />
@@ -229,45 +260,47 @@ function ProfileBody({ navigation, onBack, showSetStatus }: { navigation: any; o
         {/* Stats */}
         <View style={st.statsRow}>
           <View style={{ flex: 1, alignItems: 'flex-start' }}>
-            <Txt style={st.statValue}>{String(user.totalFavors)}</Txt>
-            <Txt style={st.statLabel}>Total Favors</Txt>
+            <Txt style={dark ? { ...st.statValue, color: D.text } : st.statValue}>{String(user.totalFavors)}</Txt>
+            <Txt style={dark ? { ...st.statLabel, color: D.sub } : st.statLabel}>Total Favors</Txt>
           </View>
           <View style={{ flex: 1, alignItems: 'center' }}>
-            <Txt style={st.statValue}>{user.rating.toFixed(1)}</Txt>
+            <Txt style={dark ? { ...st.statValue, color: D.text } : st.statValue}>{user.rating.toFixed(1)}</Txt>
             <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4, marginTop: 4 }}>
               <Ionicons name="star" size={12} color={L.star} />
-              <Txt style={{ ...st.statLabel, marginTop: 0 }}>Rating</Txt>
+              <Txt style={dark ? { ...st.statLabel, marginTop: 0, color: D.sub } : { ...st.statLabel, marginTop: 0 }}>Rating</Txt>
             </View>
           </View>
           <View style={{ flex: 1, alignItems: 'flex-end' }}>
-            <Txt style={st.statValue}>{String(user.yearsActive)}</Txt>
-            <Txt style={st.statLabel}>Years</Txt>
+            <Txt style={dark ? { ...st.statValue, color: D.text } : st.statValue}>{String(user.yearsActive)}</Txt>
+            <Txt style={dark ? { ...st.statLabel, color: D.sub } : st.statLabel}>Years</Txt>
           </View>
         </View>
 
         {/* Contact rows */}
-        <View style={[st.divider, { marginTop: 22 }]} />
-        <InfoRow icon="mail" title="Email" subtitle={user.email} onPress={() => navigation.navigate('EditProfile')} />
-        <InfoRow icon="call" title="Phone" subtitle={user.phone} onPress={() => navigation.navigate('EditProfile')} />
-        <InfoRow icon="home" title="Home" subtitle={user.homeAddress} onPress={() => navigation.navigate('EditProfile')} />
-        <InfoRow icon="lock-closed" title="Password" subtitle="Change Password" onPress={() => navigation.navigate('EditProfile')} />
+        <View style={[st.divider, { marginTop: 22 }, dark && { backgroundColor: D.divider }]} />
+        <InfoRow icon="mail" title="Email" subtitle={user.email} onPress={() => navigation.navigate('EditProfile')} dark={dark} />
+        <InfoRow icon="call" title="Phone" subtitle={user.phone} onPress={() => navigation.navigate('EditProfile')} dark={dark} />
+        <InfoRow icon="home" title="Home" subtitle={user.homeAddress} onPress={() => navigation.navigate('EditProfile')} dark={dark} />
+        <InfoRow icon="lock-closed" title="Password" subtitle="Change Password" onPress={() => navigation.navigate('EditProfile')} dark={dark} />
 
         <Cta
           title="DELETE MY ACCOUNT"
           onPress={() => { setAgree(false); setConfirming(true); }}
+          dark={dark}
           style={{ marginTop: 30 }}
         />
       </ScrollView>
 
       {/* Settings - Delete account (#1196:18885) — checkbox confirm modal.
-          Copy matches the frame verbatim (incl. its "within45days"/"cetain"
-          spellings). App Store 5.1.1(v): deletion initiated + completed in-app. */}
+          Copy matches the frame, with the design's "within45days"/"cetain"
+          typos corrected per app policy ("within 45 days"/"certain").
+          App Store 5.1.1(v): deletion initiated + completed in-app. */}
       <Modal visible={confirming} transparent animationType="fade" onRequestClose={() => !deleting && setConfirming(false)}>
         <Pressable style={st.scrim} onPress={() => !deleting && setConfirming(false)}>
-          <Pressable style={st.deleteCard} onPress={() => {}}>
-            <Txt style={st.deleteTitle} center>DELETE MY ACCOUNT</Txt>
-            <Txt style={st.deleteBody}>
-              Once your request is processed, your personal information will be permanently deleted within45days, with the exception of cetain information we are legally required or permitted to retain.{'\n'}
+          <Pressable style={[st.deleteCard, dark && { backgroundColor: D.sheet }]} onPress={() => {}}>
+            <Txt style={dark ? { ...st.deleteTitle, color: D.text } : st.deleteTitle} center>DELETE MY ACCOUNT</Txt>
+            <Txt style={dark ? { ...st.deleteBody, color: D.sub } : st.deleteBody}>
+              Once your request is processed, your personal information will be permanently deleted within 45 days, with the exception of certain information we are legally required or permitted to retain.{'\n'}
               Please consider your request as you will immediately be signed out of the app and this cannot be undone.
             </Txt>
             <TouchableOpacity
@@ -277,15 +310,15 @@ function ProfileBody({ navigation, onBack, showSetStatus }: { navigation: any; o
               accessibilityRole="checkbox"
               accessibilityState={{ checked: agree }}
             >
-              <View style={[st.checkbox, agree && { backgroundColor: L.text }]}>
-                {agree ? <Ionicons name="checkmark" size={13} color="#FFFFFF" /> : null}
+              <View style={[st.checkbox, dark && { borderColor: D.text }, agree && { backgroundColor: dark ? D.text : L.text }]}>
+                {agree ? <Ionicons name="checkmark" size={13} color={dark ? D.ctaText : '#FFFFFF'} /> : null}
               </View>
-              <Txt style={st.checkText}>
+              <Txt style={dark ? { ...st.checkText, color: D.text } : st.checkText}>
                 Yes, I want to permanently delete my account.{'\n'}
                 I understand I will be signed out of MyFavor app and no longer able to access the app or sign in
               </Txt>
             </TouchableOpacity>
-            <Cta title="DELETE MY ACCOUNT" onPress={runDelete} disabled={!agree} loading={deleting} style={{ height: 42, marginTop: 18 }} />
+            <Cta title="DELETE MY ACCOUNT" onPress={runDelete} disabled={!agree} loading={deleting} dark={dark} style={{ height: 42, marginTop: 18 }} />
           </Pressable>
         </Pressable>
       </Modal>
@@ -293,13 +326,13 @@ function ProfileBody({ navigation, onBack, showSetStatus }: { navigation: any; o
   );
 }
 
-function InfoRow({ icon, title, subtitle, onPress }: any) {
+function InfoRow({ icon, title, subtitle, onPress, dark }: any) {
   return (
-    <TouchableOpacity onPress={onPress} activeOpacity={0.7} style={st.infoRow} accessibilityRole="button" accessibilityLabel={`${title}, ${subtitle}`}>
-      <Ionicons name={icon} size={17} color={L.text} style={{ width: 34, marginTop: 2 }} />
+    <TouchableOpacity onPress={onPress} activeOpacity={0.7} style={[st.infoRow, dark && { borderBottomColor: D.divider }]} accessibilityRole="button" accessibilityLabel={`${title}, ${subtitle}`}>
+      <Ionicons name={icon} size={17} color={dark ? D.text : L.text} style={{ width: 34, marginTop: 2 }} />
       <View style={{ flex: 1 }}>
-        <Txt style={st.infoTitle}>{title}</Txt>
-        <Txt style={st.infoSub} numberOfLines={1}>{subtitle}</Txt>
+        <Txt style={dark ? { ...st.infoTitle, color: D.text } : st.infoTitle}>{title}</Txt>
+        <Txt style={dark ? { ...st.infoSub, color: D.sub } : st.infoSub} numberOfLines={1}>{subtitle}</Txt>
       </View>
     </TouchableOpacity>
   );
@@ -311,8 +344,10 @@ export const Profile = ({ navigation }: any) => (
 );
 
 // 2. Settings — "Settings - Revised" frame #125:7465 (in-app title "Profile").
+// showSetStatus surfaces the red "Set Status" link under the name — required by
+// the Provider App v.2 dark Settings (#181:9932); harmless in member light.
 export const Settings = ({ navigation }: any) => (
-  <ProfileBody navigation={navigation} onBack={() => navigation.goBack()} />
+  <ProfileBody navigation={navigation} onBack={() => navigation.goBack()} showSetStatus />
 );
 
 // ===========================================================================
@@ -321,11 +356,16 @@ export const Settings = ({ navigation }: any) => (
 export const EditProfile = ({ navigation }: any) => {
   const s = useStore();
   const u = s.user;
+  const dark = u?.role === 'pal'; // pal mode → Provider App v.2 dark Edit Profile (#181:10544)
   const [firstName, setFirstName] = useState(u?.firstName ?? '');
   const [lastName, setLastName] = useState(u?.lastName ?? '');
   const [bio, setBio] = useState(u?.bio ?? '');
-  const [email, setEmail] = useState(u?.email ?? '');
-  const [phone, setPhone] = useState(u?.phone ?? '');
+  // Email & phone are identity-bearing and CANNOT be changed via PATCH
+  // /profile/me — the server schema is .strict() and would 400 the whole save.
+  // Show them read-only (below) instead of as free-edit fields that falsely
+  // report "Success" while silently discarding the change.
+  const email = u?.email ?? '';
+  const phone = u?.phone ?? '';
   const [homeAddress, setHomeAddress] = useState(u?.homeAddress ?? '');
   const [city, setCity] = useState(u?.city ?? '');
   const [stateName, setStateName] = useState(u?.state ?? '');
@@ -354,8 +394,18 @@ export const EditProfile = ({ navigation }: any) => {
     try {
       await s.updateProfile({
         firstName, lastName, bio,
-        homeAddress, city, state: stateName, zip, avatar,
+        homeAddress, city, state: stateName, zip,
       });
+      // Avatar is intentionally kept OUT of the text-field PATCH: a raw picker
+      // URI (file://… on native, data:… on web) violates the server's
+      // avatar .url().max(2000) contract and would 400 the whole save, losing
+      // the name/bio/address edits too. Send it separately and only when it is
+      // already a hosted http(s) URL. (Until an upload endpoint exists a freshly
+      // picked local image can't be persisted, so it is dropped rather than
+      // silently corrupting the profile with an unloadable device-local path.)
+      if (avatar && avatar !== u?.avatar && /^https?:\/\//i.test(avatar)) {
+        await s.updateProfile({ avatar });
+      }
     } catch {
       // updateProfile can reject on a network error — surface it instead of
       // leaving the SAVE button looking dead.
@@ -370,11 +420,21 @@ export const EditProfile = ({ navigation }: any) => {
 
   // Second SAVE (after New Password) — password change only.
   const savePassword = async () => {
+    // Client-side guard: the server requires a new password of at least 8
+    // characters (auth.routes.ts passwordSchema). Short-circuit obviously
+    // invalid input before the 400 round-trip and keep the copy in sync.
+    if (!currentPw || newPw.length < 8) {
+      setModal({
+        title: 'Password Not Changed',
+        message: 'Enter your current password and a new password of at least 8 characters.',
+      });
+      return;
+    }
     const ok = await s.changePassword(currentPw, newPw);
     if (!ok) {
       setModal({
         title: 'Password Not Changed',
-        message: 'Enter your current password and a new password of at least 6 characters.',
+        message: 'Enter your current password and a new password of at least 8 characters.',
       });
       return;
     }
@@ -390,8 +450,8 @@ export const EditProfile = ({ navigation }: any) => {
   };
 
   return (
-    <SafeAreaView edges={['top']} style={{ flex: 1, backgroundColor: L.bg }}>
-      <LightHeader title="Edit Profile" onBack={() => navigation.goBack()} />
+    <SafeAreaView edges={['top']} style={{ flex: 1, backgroundColor: dark ? D.bg : L.bg }}>
+      <LightHeader title="Edit Profile" onBack={() => navigation.goBack()} dark={dark} />
       <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
         <ScrollView contentContainerStyle={{ padding: 16, paddingBottom: 36 }} keyboardShouldPersistTaps="handled" showsVerticalScrollIndicator={false}>
           {/* Avatar with red edit badge */}
@@ -403,46 +463,46 @@ export const EditProfile = ({ navigation }: any) => {
           </View>
 
           <View style={st.fieldRow}>
-            <LightField label="First Name" value={firstName} onChangeText={setFirstName} />
-            <LightField label="Last Name" value={lastName} onChangeText={setLastName} />
+            <LightField label="First Name" value={firstName} onChangeText={setFirstName} dark={dark} />
+            <LightField label="Last Name" value={lastName} onChangeText={setLastName} dark={dark} />
           </View>
 
           <View style={st.fieldWrap}>
-            <LightField label="Bio" value={bio} onChangeText={setBio} multiline maxLength={300} />
+            <LightField label="Bio" value={bio} onChangeText={setBio} multiline maxLength={300} dark={dark} />
           </View>
 
           <View style={st.fieldWrap}>
-            <LightField label="Email Address" value={email} onChangeText={setEmail} keyboardType="email-address" autoCapitalize="none" />
+            <LightField label="Email Address" value={email} editable={false} keyboardType="email-address" autoCapitalize="none" dark={dark} note="Contact account support to change your email." />
           </View>
 
           <View style={st.fieldWrap}>
-            <PhoneField value={phone} onChangeText={setPhone} />
+            <PhoneField value={phone} editable={false} dark={dark} note="Contact account support to change your phone number." />
           </View>
 
           <View style={st.fieldWrap}>
-            <LightField label="Home Address" value={homeAddress} onChangeText={setHomeAddress} />
+            <LightField label="Home Address" value={homeAddress} onChangeText={setHomeAddress} dark={dark} />
           </View>
 
           <View style={st.fieldRow}>
-            <LightField label="City" value={city} onChangeText={setCity} />
-            <LightField label="State" value={stateName} onChangeText={setStateName} />
+            <LightField label="City" value={city} onChangeText={setCity} dark={dark} />
+            <LightField label="State" value={stateName} onChangeText={setStateName} dark={dark} />
           </View>
 
           <View style={st.fieldWrap}>
-            <LightField label="Zip Code" value={zip} onChangeText={setZip} keyboardType="number-pad" />
+            <LightField label="Zip Code" value={zip} onChangeText={setZip} keyboardType="number-pad" dark={dark} />
           </View>
 
-          <Cta title="SAVE" onPress={saveProfile} style={{ marginTop: 10 }} />
+          <Cta title="SAVE" onPress={saveProfile} dark={dark} style={{ marginTop: 10 }} />
 
           <View style={[st.fieldWrap, { marginTop: 26 }]}>
-            <LightField label="Current Password" value={currentPw} onChangeText={setCurrentPw} secureTextEntry />
+            <LightField label="Current Password" value={currentPw} onChangeText={setCurrentPw} secureTextEntry dark={dark} />
           </View>
 
           <View style={st.fieldWrap}>
-            <LightField label="New Password" value={newPw} onChangeText={setNewPw} secureTextEntry />
+            <LightField label="New Password" value={newPw} onChangeText={setNewPw} secureTextEntry dark={dark} />
           </View>
 
-          <Cta title="SAVE" onPress={savePassword} style={{ marginTop: 10 }} />
+          <Cta title="SAVE" onPress={savePassword} dark={dark} style={{ marginTop: 10 }} />
         </ScrollView>
       </KeyboardAvoidingView>
       <LightModal
@@ -451,6 +511,7 @@ export const EditProfile = ({ navigation }: any) => {
         message={modal?.message ?? ''}
         buttonLabel="OK"
         onClose={closeModal}
+        dark={dark}
       />
     </SafeAreaView>
   );
@@ -479,7 +540,7 @@ export const Help = ({ navigation }: any) => {
         <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 24 }}>
           <GreenCheck size={96} />
           <Txt style={st.successText} center>
-            You’ve succesfully{'\n'}submitted your{'\n'}question!
+            You’ve successfully{'\n'}submitted your{'\n'}question!
           </Txt>
         </View>
         <View style={{ paddingHorizontal: 24, paddingBottom: 28 }}>
@@ -679,14 +740,19 @@ const st = StyleSheet.create({
     backgroundColor: L.bg,
   },
   headerTitle: { fontFamily: fonts.displayMedium, fontSize: 16, color: L.text },
+  headerDark: { backgroundColor: D.bg, borderBottomColor: D.border },
 
   // CTA
-  cta: { height: 46, borderRadius: 10, backgroundColor: L.cta, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 16 },
-  ctaText: { fontFamily: fonts.displayMedium, fontSize: 13, color: '#FFFFFF', letterSpacing: 1 },
+  cta: { height: 48, borderRadius: 8, backgroundColor: L.cta, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 16 },
+  ctaText: { fontFamily: fonts.displayMedium, fontSize: 15, color: '#FFFFFF', letterSpacing: 1 },
+  // Provider v.2 primary CTA — white pill, black label.
+  ctaDark: { height: 48, borderRadius: 8, backgroundColor: D.ctaBg, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 16 },
+  ctaTextDark: { fontFamily: fonts.displayMedium, fontSize: 15, color: D.ctaText, letterSpacing: 1 },
 
   // Modals
   scrim: { flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', alignItems: 'center', justifyContent: 'center' },
   alertCard: { width: 285, borderRadius: 10, backgroundColor: '#FFFFFF', paddingVertical: 22, paddingHorizontal: 20 },
+  alertCardDark: { backgroundColor: D.sheet },
   alertTitle: { fontFamily: fonts.display, fontSize: 17, color: L.text },
   alertMsg: { fontFamily: fonts.bodyRegular, fontSize: 13, lineHeight: 19, color: L.text, marginTop: 10 },
 
@@ -707,8 +773,11 @@ const st = StyleSheet.create({
     backgroundColor: L.input, borderRadius: 8, minHeight: 44, paddingHorizontal: 14,
     flexDirection: 'row', alignItems: 'center',
   },
+  fieldBoxDark: { backgroundColor: D.field },
   fieldBoxMulti: { height: 110, alignItems: 'flex-start', paddingVertical: 12 },
+  fieldBoxDisabled: { opacity: 0.6 },
   fieldInput: { flex: 1, fontFamily: fonts.bodyRegular, fontSize: 15, color: L.text, paddingVertical: 0 },
+  fieldNote: { fontFamily: fonts.bodyRegular, fontSize: 11.5, color: L.sub, marginTop: 6 },
   fieldWrap: { marginBottom: 16 },
   fieldRow: { flexDirection: 'row', gap: 14, marginBottom: 16 },
   editBadge: {

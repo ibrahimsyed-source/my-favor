@@ -110,7 +110,7 @@ const tabStyles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
   },
-  label: { fontFamily: 'Poppins_500Medium', fontSize: 9, lineHeight: 13, letterSpacing: 0.2, marginTop: 4 },
+  label: { fontFamily: 'Poppins_500Medium', fontSize: 8, lineHeight: 12, letterSpacing: 0.2, marginTop: 4 },
   badge: {
     position: 'absolute',
     top: -6,
@@ -165,9 +165,7 @@ export default function RootNavigator() {
     <Stack.Navigator screenOptions={{ headerShown: false }}>
       {!isAuthenticated ? (
         <Stack.Group>
-          <Stack.Screen name="Launch" component={Onb.Launch} />
-          <Stack.Screen name="Welcome" component={Onb.Welcome} />
-          <Stack.Screen name="SignupLogin" component={Onb.SignupLogin} />
+          {/* App opens directly on Login (onboarding carousel removed). */}
           <Stack.Screen name="Login" component={AuthF.Login} />
           <Stack.Screen name="Signup" component={AuthF.Signup} />
           <Stack.Screen
@@ -203,6 +201,7 @@ export default function RootNavigator() {
           <Stack.Screen name="PalFavorComplete" component={Pal.PalFavorComplete} />
           <Stack.Screen name="PalFavorSuccess" component={Pal.PalFavorSuccess} />
           <Stack.Screen name="Earnings" component={Payouts.Earnings} />
+          <Stack.Screen name="EarningDetail" component={Payouts.EarningDetail} />
           <Stack.Screen name="StripeOnboarding" component={Payouts.StripeOnboarding} />
           <Stack.Screen name="BankInfo" component={Payouts.BankInfo} />
           {/* Shared */}

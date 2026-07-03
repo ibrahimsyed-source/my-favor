@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import {
-  View, Text, TextInput, TouchableOpacity, ScrollView, Image, StyleSheet, FlatList, RefreshControl, Modal,
+  View, Text, TextInput, TouchableOpacity, ScrollView, Image, StyleSheet, FlatList, RefreshControl, Modal, ActivityIndicator,
 } from 'react-native';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
@@ -8,7 +8,7 @@ import { useFonts, Poppins_400Regular } from '@expo-google-fonts/poppins';
 import { Avatar } from '../components';
 import { useStore } from '../store';
 import { getIncomingApi } from '../api/endpoints';
-import { computePayout, FAVOR_TIERS, Favor } from '../types';
+import { computePayout, computeFees, FAVOR_TIERS, Favor } from '../types';
 
 // Favor Pal (provider) active-favor flow — "Provider App v.2" DARK design.
 // Palette verified on the v.2 canvas: page/map ink #0D0A0A, navy sheets/modals
@@ -397,6 +397,10 @@ export const PalFavorDetail = ({ navigation, route }: any) => {
   const [expanded, setExpanded] = useState(false);
   const [accepting, setAccepting] = useState(false);
   const [acceptError, setAcceptError] = useState('');
+  // "Waiting for confirmation" — the intermediate state between ACCEPT and Favor
+  // Booked (v.2 181:11331). acceptFavor already claims the favor server-side; we
+  // hold on the details sheet while the member confirms instead of navigating out.
+  const [waiting, setWaiting] = useState(false);
   const fontsLoaded = usePoppins();
 
   const onAccept = async (favorId: string) => {
@@ -404,9 +408,17 @@ export const PalFavorDetail = ({ navigation, route }: any) => {
     setAccepting(true);
     const res = await s.acceptFavor(favorId);
     setAccepting(false);
-    if (res.ok) navigation.navigate('Navigation');
+    if (res.ok) setWaiting(true);
     else setAcceptError(res.reason || 'This favor is no longer available.');
   };
+
+  // Once the favor is ours, settle on the waiting sheet, then advance to Favor
+  // Booked when the member confirms (simulated by a short settle before Navigation).
+  useEffect(() => {
+    if (!waiting) return;
+    const t = setTimeout(() => navigation.navigate('Navigation'), 2600);
+    return () => clearTimeout(t);
+  }, [waiting, navigation]);
   // Bind strictly to the requested favor. Only fall back to the first open favor
   // when no id was passed (e.g. a bare deep-link) — never substitute a different
   // favor, or ACCEPT/DECLINE would silently act on the wrong one after a refresh.
@@ -425,8 +437,58 @@ export const PalFavorDetail = ({ navigation, route }: any) => {
     : favor?.createdAt
       ? `Requested ${relTime(favor.createdAt)}`
       : 'As soon as possible';
+  // Member invoice breakdown for the waiting sheet (kept in lockstep with the
+  // request-side math via computeFees so the two can never disagree).
+  const { serviceFee, transactionFee } = computeFees(base);
+  // Exact address is appropriate now — the pal has claimed the favor.
+  const exactAddress = favor?.location?.address ?? 'Address shared by the member';
 
   if (!fontsLoaded) return <View style={{ flex: 1, backgroundColor: PAGE_BG }} />;
+
+  if (waiting) {
+    return (
+      <View style={{ flex: 1, backgroundColor: PAGE_BG }}>
+        <MapBackdrop />
+        {/* Neutral back lands on Favor Booked — the favor is already accepted. */}
+        <MapTopBar navigation={navigation} onBack={() => navigation.navigate('Navigation')} />
+        <View style={st.sheet}>
+          <Handle />
+          <Text style={{ color: TEXT, fontSize: 19, fontFamily: P500, textAlign: 'center', marginVertical: 14 }}>{title}</Text>
+          <View style={st.divider} />
+          <View style={{ flexDirection: 'row', marginTop: 16 }}>
+            <Avatar uri={undefined} size={56} name={requester} />
+            <View style={{ flex: 1, marginLeft: 14 }}>
+              <Text style={{ color: TEXT, fontSize: 16, fontFamily: P500 }}>{requester}</Text>
+              <Text style={{ color: SUBTLE, fontSize: 14, lineHeight: 20, marginTop: 4, fontFamily: P400 }} numberOfLines={expanded ? undefined : 2}>
+                {favor?.description || 'No details provided yet.'}
+              </Text>
+              <TouchableOpacity
+                onPress={() => setExpanded((v) => !v)}
+                accessibilityRole="button"
+                accessibilityState={{ expanded }}
+                accessibilityLabel={expanded ? 'View less favor detail' : 'View more favor detail'}
+              >
+                <Text style={{ color: TEXT, fontSize: 14, marginTop: 8, fontFamily: P500 }}>{expanded ? 'View Less' : 'View More'}</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+
+          <View style={[st.divider, { marginTop: 16 }]} />
+          <View style={{ marginTop: 12 }}>
+            <CostRow label="Service Fee" value={`$${serviceFee.toFixed(2)}`} />
+            <CostRow label="Transaction Fee" value={`$${transactionFee.toFixed(2)}`} />
+          </View>
+          <QuickRow label="Description" value={favor?.description || 'No details provided yet.'} />
+          <QuickRow label="Address" value={exactAddress} />
+
+          <View style={st.waitBanner}>
+            <ActivityIndicator color={TEXT} />
+            <Text style={st.waitText}>Waiting for confirmation…</Text>
+          </View>
+        </View>
+      </View>
+    );
+  }
 
   if (gone) {
     return (
@@ -797,16 +859,46 @@ export const PalFavorComplete = ({ navigation }: any) => {
   const s = useStore();
   const [rating, setRating] = useState(0);
   const [feedback, setFeedback] = useState('');
+  // "Feedback Submitted" confirmation (v.2 181:11267) — a green-check success
+  // state shown after rating, before returning home, instead of exiting silently.
+  const [submitted, setSubmitted] = useState(false);
   const fontsLoaded = usePoppins();
   // The favor itself was completed at MARK AS DONE; here the pal rates the
   // MEMBER (the reverse review), persisted via rateMember().
   const onSubmit = () => {
     if (rating) s.rateMember(rating, feedback);
-    navigation.reset({ index: 0, routes: [{ name: 'Tabs' }] });
+    setSubmitted(true);
   };
   // Rating the member is optional — let the pal leave without being forced to rate.
   const skip = () => navigation.reset({ index: 0, routes: [{ name: 'Tabs' }] });
+  const done = () => navigation.reset({ index: 0, routes: [{ name: 'Tabs' }] });
   if (!fontsLoaded) return <View style={{ flex: 1, backgroundColor: PAGE_BG }} />;
+
+  if (submitted) {
+    return (
+      <SafeAreaView edges={['top', 'bottom']} style={{ flex: 1, backgroundColor: PAGE_BG }}>
+        <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 24 }}>
+          <Ionicons name="checkmark-circle" size={120} color={SUCCESS} />
+          <Text style={{ color: TEXT, fontSize: 24, fontFamily: P500, textAlign: 'center', marginTop: 24 }}>
+            Feedback Submitted
+          </Text>
+          <Text style={{ color: SUBTLE, fontSize: 15, lineHeight: 22, fontFamily: P400, textAlign: 'center', marginTop: 10 }}>
+            Thanks for your feedback.
+          </Text>
+        </View>
+        <View style={{ paddingHorizontal: 24, paddingBottom: 12 }}>
+          <TouchableOpacity
+            style={st.whiteBtn}
+            accessibilityRole="button"
+            accessibilityLabel="Find another favor"
+            onPress={done}
+          >
+            <Text style={st.whiteBtnTxt}>FIND ANOTHER FAVOR</Text>
+          </TouchableOpacity>
+        </View>
+      </SafeAreaView>
+    );
+  }
   return (
     <SafeAreaView edges={['top', 'bottom']} style={{ flex: 1, backgroundColor: PAGE_BG }}>
       <ScrollView contentContainerStyle={{ paddingHorizontal: 24, paddingBottom: 24, flexGrow: 1 }}>
@@ -874,6 +966,8 @@ const st = StyleSheet.create({
   handle: { alignSelf: 'center', width: 44, height: 5, borderRadius: 3, backgroundColor: 'rgba(255,255,255,0.25)' },
   divider: { height: StyleSheet.hairlineWidth, backgroundColor: DIVIDER },
   windowPill: { alignSelf: 'center', backgroundColor: SHEET_ALT, borderRadius: 999, paddingHorizontal: 16, paddingVertical: 6, marginTop: 8 },
+  waitBanner: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 10, backgroundColor: SHEET_ALT, borderRadius: 10, paddingVertical: 14, marginTop: 22, borderWidth: StyleSheet.hairlineWidth, borderColor: BORDER },
+  waitText: { color: TEXT, fontSize: 15, fontFamily: P500 },
   actionRow: { flexDirection: 'row', alignItems: 'center', paddingVertical: 16, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: DIVIDER },
   whiteBtn: { backgroundColor: CTA_BG, borderRadius: 8, height: 48, alignItems: 'center', justifyContent: 'center', marginTop: 22 },
   whiteBtnTxt: { color: CTA_TEXT, fontSize: 15, letterSpacing: 0.5, fontFamily: P500 },

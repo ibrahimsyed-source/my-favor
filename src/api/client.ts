@@ -39,6 +39,16 @@ export async function clearSession() {
   await AsyncStorage.multiRemove([REFRESH_KEY, USER_KEY]);
 }
 
+// Bridge a HARD session loss (refresh token rejected mid-session) back to the
+// store so it can reset user state and swap the navigator back to Login. Without
+// this, clearSession() only nulls the in-memory token: live-session callers
+// swallow the resulting 401 and the app is stuck as a tokenless "zombie" shell
+// until a force-quit. The store registers a callback on mount (resetState).
+let onSessionExpired: (() => void) | null = null;
+export function setOnSessionExpired(cb: (() => void) | null) {
+  onSessionExpired = cb;
+}
+
 export function getAccessToken() {
   return accessToken;
 }
@@ -120,6 +130,7 @@ async function doRefresh(): Promise<boolean> {
   }
   if (res.status === 401 || res.status === 403) {
     await clearSession(); // the refresh token is invalid/expired — real logout
+    onSessionExpired?.(); // notify the store so it resets user state -> Login
     return false;
   }
   if (!res.ok) return false; // 5xx / transient — keep the session

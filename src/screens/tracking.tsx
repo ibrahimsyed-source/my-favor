@@ -5,8 +5,9 @@ import {
 } from 'react-native';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
+import { useFonts, Poppins_400Regular } from '@expo-google-fonts/poppins';
 import { Avatar, StarRating, StaticMap } from '../components';
-import { tokens, fonts } from '../theme';
+import { tokens } from '../theme';
 import { useStore } from '../store';
 import { computeCancellation } from '../types';
 
@@ -16,13 +17,14 @@ import { computeCancellation } from '../types';
 // Favor Pal Arrived, Order Complete, Tip Other, Tip/Feedback Submitted,
 // Cancel Favor / Cancelled / Repost Favor modals.
 // ---------------------------------------------------------------------------
-const BLACK = '#141414';
+const BLACK = '#0D0A0A'; // v.2 ink, canvas-verified (matches INK on sibling screens)
 const WHITE = '#FFFFFF';
 const RED = '#ED1C24';
 const DIVIDER = '#EBEBEB';
 const CHIP_BG = '#EFEFEF';
 const GRAY = '#8A8A8A';
 const GREEN = '#5ABE64';
+const P_REGULAR = 'Poppins_400Regular'; // loaded locally (App.tsx has 500/600/700)
 const POPPINS_M = 'Poppins_500Medium';
 const POPPINS_SB = 'Poppins_600SemiBold';
 
@@ -37,25 +39,28 @@ const V2Modal: React.FC<{
   title: string;
   body?: string;
   buttons: { label: string; gray?: boolean; onPress: () => void }[];
+  row?: boolean; // render buttons side-by-side at ~50% width (e.g. NO | YES)
   onDismiss?: () => void; // tap-scrim / hardware back; omit to force a choice
-}> = ({ visible, title, body, buttons, onDismiss }) => (
+}> = ({ visible, title, body, buttons, row, onDismiss }) => (
   <Modal visible={visible} transparent animationType="fade" onRequestClose={onDismiss ?? (() => {})}>
     <TouchableOpacity activeOpacity={1} onPress={onDismiss} style={styles.scrim}>
       <TouchableOpacity activeOpacity={1} style={styles.modalCard}>
         <Text style={styles.modalTitle}>{title}</Text>
         {body ? <Text style={styles.modalBody}>{body}</Text> : null}
-        {buttons.map((b) => (
-          <TouchableOpacity
-            key={b.label}
-            activeOpacity={0.85}
-            onPress={b.onPress}
-            style={[styles.modalBtn, b.gray && styles.modalBtnGray]}
-            accessibilityRole="button"
-            accessibilityLabel={b.label}
-          >
-            <Text style={styles.modalBtnText}>{b.label}</Text>
-          </TouchableOpacity>
-        ))}
+        <View style={row ? styles.modalBtnRow : undefined}>
+          {buttons.map((b) => (
+            <TouchableOpacity
+              key={b.label}
+              activeOpacity={0.85}
+              onPress={b.onPress}
+              style={[styles.modalBtn, b.gray && styles.modalBtnGray, row && styles.modalBtnHalf]}
+              accessibilityRole="button"
+              accessibilityLabel={b.label}
+            >
+              <Text style={[styles.modalBtnText, b.gray && styles.modalBtnTextGray]}>{b.label}</Text>
+            </TouchableOpacity>
+          ))}
+        </View>
       </TouchableOpacity>
     </TouchableOpacity>
   </Modal>
@@ -80,6 +85,7 @@ export const FavorTracking = ({ navigation }: any) => {
 
   const [expanded, setExpanded] = useState(false);
   const [callVisible, setCallVisible] = useState(false);
+  const [feeAlertVisible, setFeeAlertVisible] = useState(false);
   const [cancelVisible, setCancelVisible] = useState(false);
   // Set after WE cancel: { charged } drives "Cancelled." with/without the
   // "Your account has been charged." line (w-o charge = reblast frame 149:10128).
@@ -327,7 +333,7 @@ export const FavorTracking = ({ navigation }: any) => {
             <TouchableOpacity
               style={styles.blackBtn}
               activeOpacity={0.85}
-              onPress={() => setCancelVisible(true)}
+              onPress={() => setFeeAlertVisible(true)}
               accessibilityRole="button"
               accessibilityLabel="Cancel this favor"
             >
@@ -361,6 +367,25 @@ export const FavorTracking = ({ navigation }: any) => {
         title={'Your Favor Pal\nhas arrived.'}
         buttons={[{ label: 'OK', onPress: () => setArrivedSeen(true) }]}
         onDismiss={() => setArrivedSeen(true)}
+      />
+
+      {/* Cancellation Alert (#125:9157) — fee-aware confirm, NO (gray) | YES (black) */}
+      <V2Modal
+        visible={feeAlertVisible}
+        title="Cancel favor?"
+        body={'If you decide to cancel the request after 5 minutes, you will be automatically charged a cancellation fee.\n\nService and Transaction Fee are non-refundable.'}
+        row
+        buttons={[
+          { label: 'NO', gray: true, onPress: () => setFeeAlertVisible(false) },
+          {
+            label: 'YES',
+            onPress: () => {
+              setFeeAlertVisible(false);
+              setCancelVisible(true);
+            },
+          },
+        ]}
+        onDismiss={() => setFeeAlertVisible(false)}
       />
 
       {/* Cancel Favor Modal (#125:10014) */}
@@ -423,6 +448,9 @@ const TIPS = [
 
 export const OrderComplete = ({ navigation }: any) => {
   const s = useStore();
+  // Poppins Regular isn't registered app-wide; expo-font caches globally so
+  // this resolves instantly after the first mount anywhere in the app.
+  const [fontsReady] = useFonts({ Poppins_400Regular });
   const [rating, setRating] = useState(0);
   const [feedback, setFeedback] = useState('');
   const [tipKey, setTipKey] = useState<string | null>(null);
@@ -434,7 +462,11 @@ export const OrderComplete = ({ navigation }: any) => {
   const isOther = tipKey === 'other';
   const presetTip = TIPS.find((t) => t.key === tipKey)?.value;
   const parsedCustom = Math.round(parseFloat(customTip) * 100) / 100;
-  const customValid = isOther && !Number.isNaN(parsedCustom) && parsedCustom > 0;
+  // Server caps tip at $1000 (favor.routes.ts). Enforce it here so an
+  // out-of-range tip can't 400 the whole (rating+feedback+tip) request.
+  const customOverMax = isOther && !Number.isNaN(parsedCustom) && parsedCustom > 1000;
+  const customValid =
+    isOther && !Number.isNaN(parsedCustom) && parsedCustom > 0 && parsedCustom <= 1000;
   const tip = isOther ? (customValid ? parsedCustom : undefined) : presetTip;
   const canSubmit = rating > 0 && (!isOther || customValid);
 
@@ -443,6 +475,8 @@ export const OrderComplete = ({ navigation }: any) => {
     if (tip && tip > 0) setTipSuccessVisible(true);
     else setDone(true);
   };
+
+  if (!fontsReady) return <View style={{ flex: 1, backgroundColor: WHITE }} />; // flash-guard
 
   // ---------------- Feedback Submitted Success (#125:9999) ----------------
   if (done) {
@@ -474,8 +508,8 @@ export const OrderComplete = ({ navigation }: any) => {
       <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
         <ScrollView contentContainerStyle={{ paddingBottom: 24 }} keyboardShouldPersistTaps="handled">
           <Text style={styles.thankYou}>Thank You!</Text>
-          {/* Copy matches the Figma text layer exactly (missing space included). */}
-          <Text style={styles.completedSub}>Favor Pal has completedyour favor.</Text>
+          {/* Figma layer reads "completedyour" — app policy fixes obvious design typos. */}
+          <Text style={styles.completedSub}>Favor Pal has completed your favor.</Text>
 
           <Image
             source={require('../../assets/img/tracking/celebration.png')}
@@ -540,6 +574,7 @@ export const OrderComplete = ({ navigation }: any) => {
               />
             </View>
           ) : null}
+          {customOverMax ? <Text style={styles.tipError}>Max tip is $1000.</Text> : null}
 
           <View style={[styles.hr, { marginTop: 18 }]} />
 
@@ -641,7 +676,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: 8,
     paddingVertical: 4,
   },
-  mapChipText: { fontFamily: fonts.robotoRegular, fontSize: 11, color: WHITE },
+  mapChipText: { fontFamily: POPPINS_M, fontSize: 11, color: WHITE },
   routeV: { position: 'absolute', width: 5, borderRadius: 3, backgroundColor: RED },
   routeH: { position: 'absolute', height: 5, borderRadius: 3, backgroundColor: RED },
   mapMarkerRow: { position: 'absolute', flexDirection: 'row', alignItems: 'center' },
@@ -699,8 +734,8 @@ const styles = StyleSheet.create({
   },
   palName: { fontFamily: POPPINS_M, fontSize: 16, color: BLACK },
   starRow: { flexDirection: 'row', alignItems: 'center', marginTop: 3 },
-  ratingText: { fontFamily: fonts.bodyRegular, fontSize: 13, color: BLACK, marginLeft: 5 },
-  distanceText: { fontFamily: fonts.bodyRegular, fontSize: 12, color: GRAY, marginTop: 3 },
+  ratingText: { fontFamily: POPPINS_M, fontSize: 13, color: BLACK, marginLeft: 5 },
+  distanceText: { fontFamily: POPPINS_M, fontSize: 12, color: GRAY, marginTop: 3 },
   etaSmall: { fontFamily: POPPINS_M, fontSize: 16, color: BLACK },
   etaBig: {
     fontFamily: POPPINS_M,
@@ -750,20 +785,20 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     paddingHorizontal: 4,
   },
-  unreadBadgeText: { fontFamily: fonts.bodySemiBold, fontSize: 11, color: WHITE },
+  unreadBadgeText: { fontFamily: POPPINS_SB, fontSize: 11, color: WHITE },
   blackBtn: {
     marginHorizontal: 20,
     marginTop: 16,
     marginBottom: 4,
-    height: 50,
-    borderRadius: 12,
+    height: 48,
+    borderRadius: 8,
     backgroundColor: BLACK,
     alignItems: 'center',
     justifyContent: 'center',
   },
   blackBtnText: {
     fontFamily: POPPINS_M,
-    fontSize: 14,
+    fontSize: 15,
     color: WHITE,
     letterSpacing: 0.8,
     textTransform: 'uppercase',
@@ -786,35 +821,38 @@ const styles = StyleSheet.create({
   },
   modalTitle: {
     fontFamily: POPPINS_M,
-    fontSize: 20,
-    lineHeight: 30,
+    fontSize: 24,
+    lineHeight: 36,
     color: BLACK,
     textAlign: 'center',
   },
   modalBody: {
     fontFamily: POPPINS_M,
-    fontSize: 14,
-    lineHeight: 21,
-    color: '#2E2E2E',
+    fontSize: 16,
+    lineHeight: 24,
+    color: BLACK,
     textAlign: 'center',
     marginTop: 14,
   },
   modalBtn: {
     marginTop: 20,
-    height: 47,
-    borderRadius: 10,
+    height: 48,
+    borderRadius: 8,
     backgroundColor: BLACK,
     alignItems: 'center',
     justifyContent: 'center',
   },
-  modalBtnGray: { marginTop: 10, backgroundColor: '#A5A5A5' },
+  modalBtnGray: { marginTop: 10, backgroundColor: '#E5E5E5' },
+  modalBtnHalf: { flex: 1, marginTop: 20 }, // side-by-side (NO | YES) — overrides gray's marginTop
   modalBtnText: {
     fontFamily: POPPINS_M,
-    fontSize: 13,
+    fontSize: 15,
     color: WHITE,
-    letterSpacing: 0.6,
+    letterSpacing: 0,
     textTransform: 'uppercase',
   },
+  modalBtnTextGray: { color: BLACK }, // dark ink label on the light #E5E5E5 fill
+  modalBtnRow: { flexDirection: 'row', gap: 12 },
 
   // ----- OrderComplete -----
   thankYou: {
@@ -862,7 +900,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
   },
-  tipChipText: { fontFamily: fonts.bodyRegular, fontSize: 13, color: BLACK },
+  tipChipText: { fontFamily: P_REGULAR, fontSize: 13, color: BLACK },
   otherField: {
     marginHorizontal: 20,
     marginTop: 16,
@@ -875,7 +913,7 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
   },
   otherInput: {
-    fontFamily: fonts.bodyRegular,
+    fontFamily: P_REGULAR,
     fontSize: 15,
     color: BLACK,
     textAlign: 'right',
@@ -890,7 +928,7 @@ const styles = StyleSheet.create({
     paddingVertical: 12,
   },
   textareaInput: {
-    fontFamily: fonts.bodyRegular,
+    fontFamily: P_REGULAR,
     fontSize: 15,
     color: BLACK,
     minHeight: 96,
@@ -898,12 +936,19 @@ const styles = StyleSheet.create({
     padding: 0,
   },
   charMax: {
-    fontFamily: fonts.bodyRegular,
+    fontFamily: P_REGULAR,
     fontSize: 11,
     color: GRAY,
     alignSelf: 'flex-end',
     marginRight: 20,
     marginTop: 8,
+  },
+  tipError: {
+    fontFamily: P_REGULAR,
+    fontSize: 11,
+    color: RED,
+    marginHorizontal: 20,
+    marginTop: 6,
   },
 
   // ----- Feedback Submitted Success -----

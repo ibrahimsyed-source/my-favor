@@ -1,10 +1,10 @@
 import React, { useState, useRef, useEffect } from 'react';
 import {
   View, Text, Image, TouchableOpacity, StyleSheet, ActivityIndicator, Share, ViewStyle,
-  useWindowDimensions,
+  ScrollView, useWindowDimensions,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
-import { Screen, Txt, Button, TopBar, InfoModal } from '../components';
+import { Screen, Txt, Button, Field } from '../components';
 import { useTheme, fonts, tokens } from '../theme';
 import { useStore } from '../store';
 
@@ -26,8 +26,8 @@ const PAGE_ROUTES = ['Launch', 'Welcome', 'SignupLogin'] as const;
 const INK = '#0D0A0A'; // near-black used for text, black buttons, active dot
 const GRAY_BTN = '#E5E5E5'; // gray button fill
 const DOT_BORDER = '#838383'; // inactive page-dot ring
-// Buttons in all three frames: 48pt tall, 6pt corner radius.
-const BTN = { height: 48, borderRadius: 6 } as const;
+// Buttons in all three frames: 48pt tall, 8pt corner radius (shared v.2 r8 spec).
+const BTN = { height: 48, borderRadius: 8 } as const;
 
 function Dots({ active, navigation, style }: { active: number; navigation: any; style?: ViewStyle }) {
   return (
@@ -184,19 +184,18 @@ export function SignupLogin({ navigation }: any) {
 }
 
 // ---------------------------------------------------------------------------
-// 4. Vetting — pal identity + background verification gate.
+// 4. Vetting — "Driver Information" pal background-check gate.
 //
-// A real launch wires ID + selfie + background-check vendors here; this is a
-// faithful MOCK of that gate. Strangers enter members' homes, so a pal must
-// clear all three checks before they can go online to earn. Completing the gate
-// flips the user into pal mode + online (the "go online" commitment).
+// Favor Pals enter members' homes, so a pal must pass identity + background
+// vetting before they can earn. This screen collects the applicant's legal
+// Personal Information (name / SSN / DOB) and walks the 5 Driver Requirements;
+// submitting "Finish applying" puts the application into an Approval-pending
+// state (a reviewer clears it) rather than an instant self-serve go-online.
+// The checks below are a faithful MOCK of the ID/selfie/background vendors.
 //
-// REACHABILITY: this is the informational verification step for pal sign-ups —
-// Welcome routes pals here once the navigator exposes it. True gating, though,
-// can't be enforced from the client alone: it needs a persisted server-side
-// `palVerified` flag checked in the favor accept/assign routes (and honored by
-// the post-auth SetStatus "go online" path) so it can't be bypassed. That flag
-// and the post-auth routing hop are DEFERRED (backend / cross-file).
+// REACHABILITY / GATING: routing pal sign-ups here, plus a persisted server-side
+// `palVerified` flag that gates the favor accept/assign + "go online" paths so
+// pal home stays locked until approval, is DEFERRED (backend / cross-file).
 // ---------------------------------------------------------------------------
 type Phase = 'todo' | 'pending' | 'done';
 
@@ -204,34 +203,37 @@ export function Vetting({ navigation }: any) {
   const { theme } = useTheme();
   const s = useStore();
 
-  const [idPhase, setIdPhase] = useState<Phase>('todo');
-  const [selfiePhase, setSelfiePhase] = useState<Phase>('todo');
-  const [bgPhase, setBgPhase] = useState<Phase>('todo');
+  // Personal Information — legal identity used for the background check.
+  const [firstName, setFirstName] = useState('');
+  const [middleName, setMiddleName] = useState('');
+  const [lastName, setLastName] = useState('');
+  const [ssn1, setSsn1] = useState('');
+  const [ssn2, setSsn2] = useState('');
+  const [ssn3, setSsn3] = useState('');
+  const [dob, setDob] = useState('');
+
+  // Driver Requirements checklist (5 items required) + background-check consent.
+  const [phases, setPhases] = useState<Record<string, Phase>>({
+    id: 'todo', selfie: 'todo', address: 'todo', background: 'todo', agreement: 'todo',
+  });
   const [consent, setConsent] = useState(false);
-  const [verified, setVerified] = useState(false);
+  const [submitted, setSubmitted] = useState(false);
 
   // Mock async checks — keep handles so we don't setState after unmount.
   const timers = useRef<ReturnType<typeof setTimeout>[]>([]);
   useEffect(() => () => timers.current.forEach(clearTimeout), []);
 
-  const runStep = (setPhase: (p: Phase) => void, ms: number) => {
-    setPhase('pending');
-    timers.current.push(setTimeout(() => setPhase('done'), ms));
+  const runStep = (key: string, ms: number) => {
+    setPhases((p) => ({ ...p, [key]: 'pending' }));
+    timers.current.push(setTimeout(() => setPhases((p) => ({ ...p, [key]: 'done' })), ms));
   };
-
-  const onId = () => idPhase === 'todo' && runStep(setIdPhase, 1200);
-  const onSelfie = () => idPhase === 'done' && selfiePhase === 'todo' && runStep(setSelfiePhase, 1200);
-  const onBackground = () =>
-    selfiePhase === 'done' && consent && bgPhase === 'todo' && runStep(setBgPhase, 1600);
 
   const steps = [
     {
       key: 'id',
       icon: 'card-outline' as const,
       title: 'Verify your ID',
-      phase: idPhase,
-      locked: false,
-      onPress: onId,
+      ms: 1200,
       body: {
         todo: 'Upload a government-issued photo ID.',
         pending: 'Checking your document…',
@@ -242,9 +244,7 @@ export function Vetting({ navigation }: any) {
       key: 'selfie',
       icon: 'camera-outline' as const,
       title: 'Take a selfie',
-      phase: selfiePhase,
-      locked: idPhase !== 'done',
-      onPress: onSelfie,
+      ms: 1200,
       body: {
         todo: 'Snap a selfie so we can match it to your ID.',
         pending: 'Matching your face to your ID…',
@@ -252,12 +252,21 @@ export function Vetting({ navigation }: any) {
       },
     },
     {
-      key: 'bg',
+      key: 'address',
+      icon: 'home-outline' as const,
+      title: 'Proof of address',
+      ms: 1200,
+      body: {
+        todo: 'Upload a utility bill or lease from the last 90 days.',
+        pending: 'Reviewing your document…',
+        done: 'Address confirmed.',
+      },
+    },
+    {
+      key: 'background',
       icon: 'shield-checkmark-outline' as const,
       title: 'Background check',
-      phase: bgPhase,
-      locked: selfiePhase !== 'done',
-      onPress: onBackground,
+      ms: 1600,
       body: {
         todo: consent
           ? 'Run a standard criminal background screening.'
@@ -266,78 +275,168 @@ export function Vetting({ navigation }: any) {
         done: 'Background check cleared.',
       },
     },
+    {
+      key: 'agreement',
+      icon: 'document-text-outline' as const,
+      title: 'Sign your pal agreement',
+      ms: 1000,
+      body: {
+        todo: 'Review and accept the Favor Pal agreement.',
+        pending: 'Recording your signature…',
+        done: 'Pal agreement signed.',
+      },
+    },
   ];
 
-  const doneCount = steps.filter((st) => st.phase === 'done').length;
+  const phaseOf = (key: string) => phases[key] ?? 'todo';
+  const doneCount = steps.filter((st) => phaseOf(st.key) === 'done').length;
   const allCleared = doneCount === steps.length;
 
-  const goOnline = () => {
-    // Completing the gate persists the pal role + online status (post-auth) and
-    // puts them ready to receive favors. NOTE: with no persisted `palVerified`
-    // flag yet, the online state alone doesn't prove vetting was cleared —
-    // enforcing that is deferred to the backend (see the header note above).
-    s.setRole('pal');
-    s.setStatus('online');
-    setVerified(true);
+  const ssnComplete = ssn1.length === 3 && ssn2.length === 2 && ssn3.length === 4;
+  const infoComplete = !!firstName.trim() && !!lastName.trim() && ssnComplete && !!dob.trim();
+  const canSubmit = allCleared && consent && infoComplete;
+
+  const digits = (t: string) => t.replace(/[^0-9]/g, '');
+
+  const onStep = (index: number) => {
+    const st = steps[index];
+    const prevDone = index === 0 || phaseOf(steps[index - 1].key) === 'done';
+    const needConsent = st.key === 'background' && !consent;
+    if (prevDone && !needConsent && phaseOf(st.key) === 'todo') runStep(st.key, st.ms);
   };
 
-  const finish = () => {
-    setVerified(false);
-    navigation.navigate('Tabs');
+  const submit = () => {
+    // Application complete → enter pal mode and hand the application off for
+    // review. The pal is NOT put online here: approval is pending, and true
+    // gating of pal home/earning on a persisted `palVerified` flag is deferred
+    // to the backend (see the header note above).
+    s.setRole('pal');
+    setSubmitted(true);
   };
+
+  // Approval-pending state (post-submission): pal home stays gated until a
+  // reviewer clears the application (dashboard gating deferred to the backend).
+  if (submitted) {
+    return (
+      <Screen padded={false}>
+        <View style={styles.pendingWrap}>
+          <View style={[styles.pendingIcon, { backgroundColor: theme.surfaceAlt }]}>
+            <Ionicons name="hourglass-outline" size={40} color={theme.primary} />
+          </View>
+          <Txt variant="h2" center style={{ marginTop: 24 }}>Approval pending</Txt>
+          <Txt variant="body" color={theme.textSecondary} center style={{ marginTop: 12, lineHeight: 24 }}>
+            Thanks for applying! We're reviewing your information and background check. We'll let you know
+            as soon as you're approved to start earning as a Favor Pal.
+          </Txt>
+          <Button
+            title="Back to dashboard"
+            uppercase={false}
+            onPress={() => navigation.navigate('Tabs')}
+            style={{ alignSelf: 'stretch', marginTop: 32 }}
+          />
+        </View>
+      </Screen>
+    );
+  }
 
   return (
     <Screen padded={false}>
-      <TopBar title="Get Verified" onBack={navigation.canGoBack() ? navigation.goBack : undefined} />
-      <View style={{ flex: 1, paddingHorizontal: tokens.spacing.lg, paddingTop: tokens.spacing.base }}>
-        <Txt variant="h2">Get verified to earn</Txt>
+      <View style={[styles.header, { borderBottomColor: theme.border }]}>
+        <TouchableOpacity
+          onPress={navigation.goBack}
+          hitSlop={12}
+          accessibilityRole="button"
+          accessibilityLabel="Close"
+        >
+          <Ionicons name="close" size={28} color={theme.text} />
+        </TouchableOpacity>
+        <Txt variant="h6">Driver Information</Txt>
+        <View style={{ width: 28 }} />
+      </View>
+
+      <ScrollView
+        contentContainerStyle={{
+          paddingHorizontal: tokens.spacing.lg,
+          paddingTop: tokens.spacing.base,
+          paddingBottom: tokens.spacing.lg,
+        }}
+        keyboardShouldPersistTaps="handled"
+      >
+        <Txt variant="h2">Driver Information</Txt>
         <Txt variant="body" color={theme.textSecondary} style={{ marginTop: 8 }}>
-          Favor Pals are identity-verified and background-checked before going online. It's how members
-          can trust letting someone into their home.
-        </Txt>
-        <Txt variant="caption" color={theme.textTertiary} style={{ marginTop: 14, marginBottom: 4 }}>
-          {doneCount} of {steps.length} steps complete
+          Favor Pals are identity-verified and background-checked before earning. It's how members can
+          trust letting someone into their home.
         </Txt>
 
-        {steps.map((st) => {
-          const needConsent = st.key === 'bg' && !consent;
-          const blocked = st.locked || needConsent;
-          const interactive = !blocked && st.phase === 'todo';
+        {/* ---- Personal Information ---- */}
+        <Txt variant="h4" style={{ marginTop: 24, marginBottom: 12 }}>Personal Information</Txt>
+        <Field label="Legal first name" value={firstName} onChangeText={setFirstName} placeholder="First name" autoCapitalize="words" />
+        <Field label="Legal middle name" value={middleName} onChangeText={setMiddleName} placeholder="Middle name (optional)" autoCapitalize="words" />
+        <Field label="Legal last name" value={lastName} onChangeText={setLastName} placeholder="Last name" autoCapitalize="words" />
+
+        <Txt variant="label" style={{ marginBottom: 8 }}>Social Security Number</Txt>
+        <View style={{ flexDirection: 'row', gap: 10 }}>
+          <View style={{ flex: 3 }}>
+            <Field value={ssn1} onChangeText={(t) => setSsn1(digits(t))} placeholder="XXX" keyboardType="number-pad" maxLength={3} />
+          </View>
+          <View style={{ flex: 2 }}>
+            <Field value={ssn2} onChangeText={(t) => setSsn2(digits(t))} placeholder="XX" keyboardType="number-pad" maxLength={2} />
+          </View>
+          <View style={{ flex: 4 }}>
+            <Field value={ssn3} onChangeText={(t) => setSsn3(digits(t))} placeholder="XXXX" keyboardType="number-pad" maxLength={4} />
+          </View>
+        </View>
+
+        <Field label="Date of birth" value={dob} onChangeText={setDob} placeholder="MM/DD/YYYY" keyboardType="numbers-and-punctuation" maxLength={10} />
+
+        {/* ---- Driver Requirements ---- */}
+        <Txt variant="h4" style={{ marginTop: 8 }}>Driver Requirements</Txt>
+        <Txt variant="body" color={theme.textSecondary} style={{ marginTop: 4 }}>Finish applying</Txt>
+        <Txt variant="caption" color={theme.textTertiary} style={{ marginTop: 4, marginBottom: 4 }}>
+          {allCleared ? 'All items complete' : `${steps.length} items required · ${doneCount} of ${steps.length} done`}
+        </Txt>
+
+        {steps.map((st, index) => {
+          const phase = phaseOf(st.key);
+          const prevDone = index === 0 || phaseOf(steps[index - 1].key) === 'done';
+          const needConsent = st.key === 'background' && !consent;
+          const blocked = !prevDone || needConsent;
+          const interactive = !blocked && phase === 'todo';
           const statusWord =
-            st.phase === 'done'
+            phase === 'done'
               ? 'Completed'
-              : st.phase === 'pending'
+              : phase === 'pending'
               ? 'In progress'
               : blocked
               ? 'Locked'
               : 'Ready, tap to start';
-          const iconColor = blocked ? theme.textTertiary : st.phase === 'done' ? theme.success : theme.primary;
+          const iconColor = blocked ? theme.textTertiary : phase === 'done' ? theme.success : theme.primary;
           return (
             <TouchableOpacity
               key={st.key}
               activeOpacity={interactive ? 0.7 : 1}
               disabled={!interactive}
-              onPress={st.onPress}
+              onPress={() => onStep(index)}
               accessibilityRole="button"
               accessibilityLabel={`${st.title}. ${statusWord}`}
-              accessibilityState={{ disabled: !interactive, busy: st.phase === 'pending', checked: st.phase === 'done' }}
+              accessibilityState={{ disabled: !interactive, busy: phase === 'pending', checked: phase === 'done' }}
               style={[styles.stepRow, { borderBottomColor: theme.divider }]}
             >
               <View
                 style={[
                   styles.stepIcon,
-                  { backgroundColor: st.phase === 'done' ? '#E6F9E6' : theme.surfaceAlt },
+                  { backgroundColor: phase === 'done' ? '#E6F9E6' : theme.surfaceAlt },
                 ]}
               >
                 <Ionicons name={st.icon} size={24} color={iconColor} />
               </View>
               <View style={{ flex: 1, marginRight: 12 }}>
                 <Txt variant="label">{st.title}</Txt>
-                <Txt variant="bodySm" color={theme.textSecondary}>{st.body[st.phase]}</Txt>
+                <Txt variant="bodySm" color={theme.textSecondary}>{st.body[phase]}</Txt>
               </View>
-              {st.phase === 'done' ? (
+              {phase === 'done' ? (
                 <Ionicons name="checkmark-circle" size={24} color={theme.success} />
-              ) : st.phase === 'pending' ? (
+              ) : phase === 'pending' ? (
                 <ActivityIndicator color={theme.primary} />
               ) : blocked ? (
                 <Ionicons name="lock-closed-outline" size={18} color={theme.textTertiary} />
@@ -352,7 +451,7 @@ export function Vetting({ navigation }: any) {
           activeOpacity={0.7}
           onPress={() => setConsent((c) => !c)}
           accessibilityRole="checkbox"
-          accessibilityLabel="I consent to identity verification and a background check"
+          accessibilityLabel="I certify my information is accurate and consent to a background check"
           accessibilityState={{ checked: consent }}
           style={styles.consentRow}
         >
@@ -365,32 +464,22 @@ export function Vetting({ navigation }: any) {
             {consent ? <Ionicons name="checkmark" size={15} color="#FFFFFF" /> : null}
           </View>
           <Txt variant="bodySm" color={theme.textSecondary} style={{ flex: 1 }}>
-            I consent to identity verification and a background check. This is a demo, no real data is collected.
+            I certify the information above is accurate and consent to identity verification and a background check. This is a demo, no real data is collected.
           </Txt>
         </TouchableOpacity>
 
-        <View style={{ flex: 1 }} />
-
-        <Txt variant="caption" color={theme.textSecondary} center style={{ marginBottom: 12 }}>
-          {allCleared
-            ? "All checks passed, you're ready to earn."
-            : "You can't receive favors until every check passes."}
+        <Txt variant="caption" color={theme.textSecondary} center style={{ marginTop: 8, marginBottom: 12 }}>
+          {canSubmit
+            ? "All set — submit your application for review."
+            : 'Complete all 5 requirements and your details to finish applying.'}
         </Txt>
         <Button
-          title="Go online to earn"
+          title="Finish applying"
           uppercase={false}
-          disabled={!allCleared}
-          onPress={goOnline}
+          disabled={!canSubmit}
+          onPress={submit}
         />
-      </View>
-
-      <InfoModal
-        visible={verified}
-        title="You're verified!"
-        message="Identity confirmed and background check cleared. You're now online and ready to start earning favors."
-        buttonLabel="Start earning"
-        onClose={finish}
-      />
+      </ScrollView>
     </Screen>
   );
 }
@@ -424,5 +513,26 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
     marginTop: 1,
+  },
+  header: {
+    height: 52,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: 16,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+  },
+  pendingWrap: {
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: tokens.spacing.lg,
+  },
+  pendingIcon: {
+    width: 88,
+    height: 88,
+    borderRadius: 44,
+    alignItems: 'center',
+    justifyContent: 'center',
   },
 });

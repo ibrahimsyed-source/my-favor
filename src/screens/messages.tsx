@@ -92,6 +92,7 @@ function timeAgo(ts: number): string {
 // ---------------------------------------------------------------------------
 export const Messages = ({ navigation }: any) => {
   const s = useStore();
+  usePoppinsRegular(); // register Poppins_400Regular so the inbox P_REGULAR text renders in Poppins even before a thread is opened
   const [onlyUnread, setOnlyUnread] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
 
@@ -144,7 +145,7 @@ export const Messages = ({ navigation }: any) => {
             <Txt
               variant="bodySm"
               color={onlyUnread ? C.ctaText : C.textSecondary}
-              style={{ fontFamily: tokens.typography.label.fontFamily }}
+              style={{ fontFamily: P_MEDIUM }}
             >
               Unread
             </Txt>
@@ -187,10 +188,10 @@ const ThreadRow = React.memo<{ thread: Thread; onPress: () => void }>(({ thread,
       <Avatar uri={thread.withUser.avatar} size={54} name={thread.withUser.name} />
       <View style={[lstyles.rowBody, { borderBottomColor: C.border }]}>
         <View style={lstyles.rowTop}>
-          <Txt variant="label" color={C.text} numberOfLines={1} style={{ flex: 1 }}>
+          <Txt variant="label" color={C.text} numberOfLines={1} style={{ flex: 1, fontFamily: P_MEDIUM }}>
             {thread.withUser.name}
           </Txt>
-          <Txt variant="caption" color={C.textTertiary}>
+          <Txt variant="caption" color={C.textTertiary} style={{ fontFamily: P_REGULAR }}>
             {timeAgo(thread.updatedAt)}
           </Txt>
         </View>
@@ -199,7 +200,7 @@ const ThreadRow = React.memo<{ thread: Thread; onPress: () => void }>(({ thread,
             variant="bodySm"
             color={unread ? C.text : C.textSecondary}
             numberOfLines={1}
-            style={{ flex: 1 }}
+            style={{ flex: 1, fontFamily: P_REGULAR }}
           >
             {thread.lastMessage}
           </Txt>

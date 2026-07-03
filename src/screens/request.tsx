@@ -331,7 +331,10 @@ const PriceSlider = React.memo(function PriceSlider({
         <View style={[styles.trackFill, { width: thumbLeft + THUMB / 2 }]} />
         <Slider
           style={{ width: '100%', height: THUMB, position: 'absolute' }}
-          minimumValue={0}
+          // A favor must cost something, so 1hr ($100) is the floor — this makes
+          // $0 unreachable and the onNext price guard can never dead-end the NEXT
+          // button (which can't dim on price since price lives in a ref).
+          minimumValue={1}
           maximumValue={MAX_HOURS}
           step={1}
           value={hours}
@@ -519,28 +522,38 @@ export function ConfirmAddress({ navigation }: any) {
             returnKeyType="done"
             accessibilityLabel="Favor address"
           />
-          <Ionicons name="chevron-down" size={12} color={INK} style={{ marginRight: 16 }} />
+          <TouchableOpacity
+            onPress={() => setAddress('')}
+            hitSlop={12}
+            accessibilityRole="button"
+            accessibilityLabel="Clear address"
+            style={{ marginRight: 16 }}
+          >
+            <Ionicons name="close" size={18} color={INK} />
+          </TouchableOpacity>
         </View>
         <BlackButton title="Confirm Address" disabled={!canConfirm} onPress={onConfirm} style={{ marginTop: 16 }} />
       </View>
 
       {/* Bottom tab bar (HOME / REQUEST A FAVOR) exactly as the frame */}
       <View style={[styles.tabBar, { paddingBottom: Math.max(insets.bottom, 8) }]}>
-        <TouchableOpacity
-          style={styles.tabItem}
-          onPress={() => navigation.navigate('Tabs')}
-          accessibilityRole="button"
-          accessibilityLabel="Home"
-        >
-          <Ionicons name="home" size={24} color={INK} />
-          <Text style={styles.tabLabelHome}>HOME</Text>
-        </TouchableOpacity>
-        <View style={styles.tabItem} accessibilityLabel="Request a favor">
-          <View style={styles.tabRequestBadge}>
-            <Text style={styles.tabRequestF}>f</Text>
+        <View style={styles.tabRow}>
+          <TouchableOpacity
+            style={styles.tabItem}
+            onPress={() => navigation.navigate('Tabs')}
+            accessibilityRole="button"
+            accessibilityLabel="Home"
+          >
+            <Ionicons name="home" size={24} color={WHITE} />
+            <Text style={styles.tabLabelHome}>HOME</Text>
+          </TouchableOpacity>
+          <View style={styles.tabItem} accessibilityLabel="Request a favor">
+            <Text style={styles.tabRequestF}>F</Text>
+            <Text style={styles.tabLabelRequest}>REQUEST A FAVOR</Text>
           </View>
-          <Text style={styles.tabLabelRequest}>REQUEST A FAVOR</Text>
         </View>
+        {/* white home-indicator line, part of the frame's bar */}
+        <View style={styles.tabIndicator} />
       </View>
     </View>
   );
@@ -804,12 +817,12 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
   },
   sliderThumbText: {
-    fontFamily: 'Roboto_400Regular',
+    fontFamily: 'Poppins_500Medium',
     fontSize: 12,
     color: WHITE,
   },
   sliderLabel: {
-    fontFamily: 'Roboto_400Regular',
+    fontFamily: 'Poppins_400Regular',
     fontSize: 18,
     color: INK,
   },
@@ -880,11 +893,13 @@ const styles = StyleSheet.create({
     left: 0,
     right: 0,
     bottom: 0,
-    backgroundColor: WHITE,
+    backgroundColor: '#0A0808',
+    paddingTop: 9,
+  },
+  tabRow: {
     flexDirection: 'row',
     justifyContent: 'center',
     columnGap: 24,
-    paddingTop: 9,
   },
   tabItem: {
     width: 138,
@@ -895,30 +910,28 @@ const styles = StyleSheet.create({
     fontFamily: 'Poppins_500Medium',
     fontSize: 8,
     lineHeight: 12,
-    color: INK,
-  },
-  tabRequestBadge: {
-    width: 40,
-    height: 32,
-    borderRadius: 8,
-    backgroundColor: RED,
-    alignItems: 'center',
-    justifyContent: 'center',
-    marginTop: -3,
+    color: WHITE,
   },
   tabRequestF: {
     fontFamily: 'Poppins_600SemiBold',
-    fontSize: 18,
+    fontSize: 20,
     lineHeight: 24,
-    color: WHITE,
-    fontStyle: 'italic',
+    color: RED,
   },
   tabLabelRequest: {
-    marginTop: 3,
-    fontFamily: 'Poppins_600SemiBold',
+    marginTop: 8,
+    fontFamily: 'Poppins_500Medium',
     fontSize: 8,
     lineHeight: 12,
     color: RED,
+  },
+  tabIndicator: {
+    alignSelf: 'center',
+    width: 134,
+    height: 5,
+    borderRadius: 2.5,
+    backgroundColor: WHITE,
+    marginTop: 8,
   },
   // reblast chrome
   mapMenuBtn: {

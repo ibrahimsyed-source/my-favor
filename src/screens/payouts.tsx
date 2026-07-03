@@ -7,7 +7,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { useFonts, Poppins_400Regular } from '@expo-google-fonts/poppins';
 import { useStore } from '../store';
-import { Transaction } from '../types';
+import { Favor, Transaction } from '../types';
 
 // ---------------------------------------------------------------------------
 // PROVIDER APP v.2 DARK design — "Accounts" (181:10039), "Earning History" and
@@ -54,6 +54,32 @@ const MON_SHORT = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep'
 function fmtDate(ms: number) {
   const d = new Date(ms);
   return `${d.getDate()} ${MON_SHORT[d.getMonth()]} ${d.getFullYear()}`;
+}
+
+// "24 Mar 2021, 12:00 PM" — receipt stamp for the Earning Detail Payment section.
+function fmtStamp(ms: number) {
+  const d = new Date(ms);
+  let h = d.getHours();
+  const m = d.getMinutes();
+  const ampm = h >= 12 ? 'PM' : 'AM';
+  h %= 12;
+  if (h === 0) h = 12;
+  const mm = m < 10 ? `0${m}` : `${m}`;
+  return `${d.getDate()} ${MON_SHORT[d.getMonth()]} ${d.getFullYear()}, ${h}:${mm} ${ampm}`;
+}
+
+// Stable, per-favor transaction id (FNV-1a) so each receipt shows its own
+// consistent id — mirrors the member Payment History Detail receipt.
+function txnId(id?: string): string {
+  if (!id) return 'N/A';
+  let h = 0x811c9dc5;
+  for (let i = 0; i < id.length; i += 1) {
+    h ^= id.charCodeAt(i);
+    h = Math.imul(h, 0x01000193) >>> 0;
+  }
+  const a = h.toString(36);
+  const b = (Math.imul(h ^ 0x5bd1e995, 0x01000193) >>> 0).toString(36);
+  return (a + b).padEnd(13, '0').slice(0, 13);
 }
 
 const money = (n: number) => `$${n.toFixed(2)}`;
@@ -149,6 +175,26 @@ function Radio({ selected }: { selected: boolean }) {
   return (
     <View style={dark.radioRing}>
       {selected ? <View style={dark.radioDot} /> : null}
+    </View>
+  );
+}
+
+// Rating stars for the Earning Detail Feedback section (amber, matching the
+// shared theme's rating-star colour).
+const STAR = '#FFBD00';
+function Stars({ value }: { value: number }) {
+  const filled = Math.round(value);
+  return (
+    <View style={{ flexDirection: 'row' }} accessibilityLabel={`${filled} out of 5 stars`}>
+      {[1, 2, 3, 4, 5].map((i) => (
+        <Ionicons
+          key={i}
+          name={i <= filled ? 'star' : 'star-outline'}
+          size={20}
+          color={STAR}
+          style={{ marginRight: 4 }}
+        />
+      ))}
     </View>
   );
 }
@@ -365,11 +411,13 @@ export function Earnings({ navigation }: any) {
             <Text style={dark.monthHeader}>{g.key}</Text>
             <View style={{ height: 1, backgroundColor: D.divider, marginTop: 14 }} />
             {g.items.map((item) => (
-              <View
+              <TouchableOpacity
                 key={item.id}
+                activeOpacity={0.7}
+                onPress={() => navigation.navigate('EarningDetail', { txId: item.id })}
                 style={dark.earnRow}
-                accessible
-                accessibilityLabel={`${fmtDate(item.date)}, Favor payout, ${money(item.amount)}`}
+                accessibilityRole="button"
+                accessibilityLabel={`${fmtDate(item.date)}, Favor payout, ${money(item.amount)}. View earning details`}
               >
                 <PayBadge />
                 <View style={{ flex: 1, marginLeft: 16 }}>
@@ -379,10 +427,120 @@ export function Earnings({ navigation }: any) {
                 </View>
                 <Text style={dark.earnAmount}>{money(item.amount)}</Text>
                 <Ionicons name="chevron-forward" size={20} color={D.text} style={{ marginTop: 3 }} />
-              </View>
+              </TouchableOpacity>
             ))}
           </View>
         ))}
+      </ScrollView>
+    </SafeAreaView>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// 1b. EarningDetail — "Earning History → Detailed View" (dark, v.2). Reached by
+//     tapping an Earning History row: the favor behind a payout, rendered in the
+//     navy-sheet language with Description / Address / Favor Member / Payment
+//     (amount + date-time + transaction id) / Feedback + Rating / Comment, wired
+//     to the Transaction + its Favor from the store.
+// ---------------------------------------------------------------------------
+export function EarningDetail({ navigation, route }: any) {
+  const { earnings, history, activeFavor } = useStore();
+  const fontsReady = usePoppinsRegular();
+
+  const txId: string | undefined = route?.params?.txId;
+  const tx: Transaction | undefined = earnings.find((t) => t.id === txId) ?? earnings[0];
+  const favor: Favor | undefined =
+    history.find((f) => f.id === tx?.favorId) ??
+    (activeFavor?.id === tx?.favorId ? activeFavor : undefined);
+
+  const ts = tx?.date ?? favor?.scheduledFor ?? favor?.createdAt ?? Date.now();
+  const amount = tx?.amount ?? favor?.total ?? 0;
+  const memberName = favor?.memberName ?? 'Favor Member';
+  const rating = favor?.rating ?? 0;
+
+  const Divider = () => <View style={dark.detailDivider} />;
+
+  if (!fontsReady) return <View style={{ flex: 1, backgroundColor: D.bg }} />; // flash-guard
+
+  return (
+    <SafeAreaView style={{ flex: 1, backgroundColor: D.bg }} edges={['top']}>
+      <DarkTopBar title="Earning Detail" onBack={navigation.canGoBack() ? navigation.goBack : undefined} />
+      <ScrollView
+        contentContainerStyle={{ paddingHorizontal: 20, paddingTop: 8, paddingBottom: 40 }}
+        showsVerticalScrollIndicator={false}
+      >
+        {/* Header — favor title + when it was completed */}
+        <View style={{ flexDirection: 'row', alignItems: 'center', marginTop: 12 }}>
+          <PayBadge />
+          <View style={{ flex: 1, marginLeft: 16 }}>
+            <Text style={dark.detailTitle}>{tx?.title ?? favor?.description ?? 'Favor payout'}</Text>
+            <Text style={dark.detailStamp}>{fmtStamp(ts)}</Text>
+          </View>
+        </View>
+
+        <Divider />
+
+        {/* Description */}
+        <View style={dark.detailSectionHead}>
+          <Ionicons name="document-text" size={20} color={D.text} />
+          <Text style={[dark.detailHeading, { marginLeft: 12 }]}>Description</Text>
+        </View>
+        <Text style={dark.detailBody}>
+          {favor?.description ?? 'Details for this favor are unavailable.'}
+        </Text>
+
+        <Divider />
+
+        {/* Address */}
+        <View style={dark.detailSectionHead}>
+          <Ionicons name="location" size={20} color={D.text} />
+          <Text style={[dark.detailHeading, { marginLeft: 12 }]}>Address</Text>
+        </View>
+        <Text style={dark.detailBody}>{favor?.location?.address ?? 'Address unavailable.'}</Text>
+
+        <Divider />
+
+        {/* Favor Member */}
+        <Text style={dark.detailHeading}>Favor Member</Text>
+        <View style={{ flexDirection: 'row', alignItems: 'center', marginTop: 14 }}>
+          <View style={dark.memberAvatar}>
+            <Ionicons name="person" size={22} color={D.text} />
+          </View>
+          <Text style={[dark.memberName, { marginLeft: 14 }]}>{memberName}</Text>
+        </View>
+
+        <Divider />
+
+        {/* Payment — amount + date/time + transaction id */}
+        <Text style={dark.detailHeading}>Payment</Text>
+        <View style={dark.detailPayRow}>
+          <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+            <PayBadge />
+            <Text style={[dark.memberName, { marginLeft: 14 }]}>Favor payout</Text>
+          </View>
+          <Text style={dark.detailAmount}>{`+${money(amount)}`}</Text>
+        </View>
+        <View style={[dark.detailMetaRow, { marginTop: 16 }]}>
+          <Text style={dark.detailRowLabel}>Date &amp; Time</Text>
+          <Text style={dark.detailRowValue}>{fmtStamp(ts)}</Text>
+        </View>
+        <View style={[dark.detailMetaRow, { marginTop: 8 }]}>
+          <Text style={dark.detailRowLabel}>Transaction ID</Text>
+          <Text style={dark.detailRowValue}>{txnId(tx?.id ?? favor?.id)}</Text>
+        </View>
+
+        <Divider />
+
+        {/* Feedback + Rating */}
+        <Text style={dark.detailHeading}>Feedback</Text>
+        <View style={{ flexDirection: 'row', alignItems: 'center', marginTop: 14 }}>
+          <Text style={[dark.detailHeading, { marginRight: 24 }]}>Rating</Text>
+          <Stars value={rating} />
+        </View>
+
+        {/* Comment */}
+        <Text style={[dark.detailHeading, { marginTop: 24 }]}>Comment</Text>
+        <Text style={dark.detailBody}>{favor?.feedback ?? 'No comment was left for this favor.'}</Text>
       </ScrollView>
     </SafeAreaView>
   );
@@ -624,9 +782,9 @@ export function BankInfo({ navigation }: any) {
 
       <DarkInfoModal
         visible={savedLast4 !== null}
-        title="Bank account connected"
-        message={`Your payouts will be deposited to ${bankLabel(savedLast4 ?? PAYOUT_LAST4)}. Funds arrive 2-3 business days after a favor is completed.`}
-        buttonLabel="DONE"
+        title="Card Added"
+        message={`You have successfully added your Bank Card information. Your payouts will be deposited to ${bankLabel(savedLast4 ?? PAYOUT_LAST4)}, arriving 2-3 business days after a favor is completed.`}
+        buttonLabel="OKAY"
         onClose={() => {
           setSavedLast4(null);
           // Return to the Accounts (StripeOnboarding) screen, which now reflects
@@ -726,6 +884,32 @@ const dark = StyleSheet.create({
     minHeight: 56,
     justifyContent: 'center',
   },
+  // Earning Detail (dark "Detailed View") sections
+  detailDivider: { height: 1, backgroundColor: D.divider, marginVertical: 20 },
+  detailSectionHead: { flexDirection: 'row', alignItems: 'center' },
+  detailTitle: { fontFamily: P_SEMI, fontSize: 20, color: D.text },
+  detailStamp: { fontFamily: P_REGULAR, fontSize: 14, color: D.gray, marginTop: 4 },
+  detailHeading: { fontFamily: P_MEDIUM, fontSize: 17, color: D.text },
+  detailBody: { fontFamily: P_REGULAR, fontSize: 15, lineHeight: 22, color: D.gray, marginTop: 8 },
+  detailPayRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginTop: 14,
+  },
+  detailAmount: { fontFamily: P_MEDIUM, fontSize: 19, color: D.text },
+  detailMetaRow: { flexDirection: 'row', alignItems: 'center' },
+  detailRowLabel: { fontFamily: P_REGULAR, fontSize: 14, color: D.gray, width: 120 },
+  detailRowValue: { fontFamily: P_REGULAR, fontSize: 14, color: D.text, flex: 1 },
+  memberAvatar: {
+    width: 46,
+    height: 46,
+    borderRadius: 23,
+    backgroundColor: D.field,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  memberName: { fontFamily: P_MEDIUM, fontSize: 18, color: D.text },
 });
 
 const acct = StyleSheet.create({

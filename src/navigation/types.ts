@@ -2,10 +2,7 @@
 // Typing is intentionally loose (params: any) so feature modules stay decoupled.
 
 export type RootStackParamList = {
-  // --- Auth ---
-  Launch: undefined;
-  Welcome: undefined;
-  SignupLogin: undefined;
+  // --- Auth --- (app opens on Login; onboarding carousel removed)
   Login: undefined;
   Signup: undefined;
   OtpVerify: { context?: 'signup' | 'reset' } | undefined;
@@ -36,6 +33,7 @@ export type RootStackParamList = {
   PalFavorComplete: undefined;
   PalFavorSuccess: { payout?: number } | undefined;
   Earnings: undefined;
+  EarningDetail: { txId: string };
   StripeOnboarding: undefined;
   BankInfo: undefined;
   Vetting: undefined; // pal identity/background verification

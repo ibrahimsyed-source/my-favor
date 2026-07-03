@@ -31,7 +31,7 @@ const TRACK = '#D7D7D7';      // modal switch track (off)
 // loaded locally, same pattern as messages.tsx.
 const P_REG = 'Poppins_400Regular';
 const P_MED = 'Poppins_500Medium';
-const P_BOLD = 'Poppins_700Bold';
+const P_SEMI = 'Poppins_600SemiBold';
 const P_ITALIC = 'Poppins_400Regular_Italic';
 
 // Pre-composited backdrop (map screenshot + pins + radial oval + user pin,
@@ -582,7 +582,7 @@ const styles = StyleSheet.create({
     color: INK,
   },
   profileName: {
-    fontFamily: P_BOLD,
+    fontFamily: P_SEMI,
     fontSize: 18,
     lineHeight: 27,
     color: INK,
@@ -606,7 +606,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   statValue: {
-    fontFamily: P_BOLD,
+    fontFamily: P_SEMI,
     fontSize: 32,
     lineHeight: 48,
     color: INK,
@@ -731,7 +731,7 @@ const styles = StyleSheet.create({
     height: 22,
     borderRadius: 11,
     backgroundColor: TRACK,
-    justifyContent: 'center',
+    justifyContent: 'flex-start',
     paddingHorizontal: 2,
   },
   switchKnob: {

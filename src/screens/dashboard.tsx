@@ -1,6 +1,7 @@
 import React from 'react';
 import {
   View, Text, Image, ScrollView, TouchableOpacity, StyleSheet, StatusBar,
+  Modal, Pressable,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useFocusEffect } from '@react-navigation/native';
@@ -87,6 +88,44 @@ const PIN_SPOTS = [
   { x: 0.72, y: 0.38 }, { x: 0.3, y: 0.62 }, { x: 0.66, y: 0.66 },
 ];
 
+// ---------------------------------------------------------------------------
+// Favor Member Modal v2 (provider #181:10516) — the navy dark twin of the user
+// side's "Be A Favor Pal" promo (providers.tsx › BeAFavorPalModal). It gates
+// PalHome's "Switch to request a favor" pill: tapping the pill opens this card
+// first, and confirming its embedded pill flips the role to member so the dark
+// provider map hands off to the light request-a-favor dashboard.
+// ---------------------------------------------------------------------------
+const FavorMemberModal: React.FC<{
+  visible: boolean;
+  onClose: () => void;
+  onSwitch: () => void;
+}> = ({ visible, onClose, onSwitch }) => (
+  <Modal visible={visible} transparent animationType="fade" onRequestClose={onClose}>
+    <Pressable style={palStyles.memberBackdrop} onPress={onClose} accessibilityLabel="Dismiss">
+      <Pressable style={palStyles.memberCard} onPress={() => undefined}>
+        <Text style={palStyles.memberTitle}>Request A Favor</Text>
+        <Text style={palStyles.memberBody}>
+          Request favors from other Favor Pals! Notifications may include alerts,
+          sounds, and icon badges. These can be configured in Settings.
+        </Text>
+        <TouchableOpacity
+          style={palStyles.memberPill}
+          activeOpacity={0.85}
+          onPress={onSwitch}
+          accessibilityRole="switch"
+          accessibilityState={{ checked: false }}
+          accessibilityLabel="Switch to request a favor"
+        >
+          <Text style={palStyles.memberPillText}>Switch to request a favor</Text>
+          <View style={palStyles.memberTrack}>
+            <View style={palStyles.memberKnob} />
+          </View>
+        </TouchableOpacity>
+      </Pressable>
+    </Pressable>
+  </Modal>
+);
+
 function PalHome({ navigation }: any) {
   const insets = useSafeAreaInsets();
   const s = useStore();
@@ -95,6 +134,14 @@ function PalHome({ navigation }: any) {
   const blast = incoming[0]; // newest request drives the Favor Blast sheet
   const [accepting, setAccepting] = React.useState(false);
   const [acceptError, setAcceptError] = React.useState<string | null>(null);
+  const [showMemberModal, setShowMemberModal] = React.useState(false);
+
+  // Confirm from the Favor Member Modal — flip role in place; the role-aware
+  // Home re-renders as the member request-a-favor dashboard.
+  const switchToMember = () => {
+    setShowMemberModal(false);
+    s.setRole('member');
+  };
 
   useFocusEffect(
     React.useCallback(() => {
@@ -171,7 +218,7 @@ function PalHome({ navigation }: any) {
 
         <TouchableOpacity
           activeOpacity={0.85}
-          onPress={() => s.setRole('member')}
+          onPress={() => setShowMemberModal(true)}
           accessibilityRole="switch"
           accessibilityState={{ checked: false }}
           accessibilityLabel="Switch to request a favor"
@@ -236,6 +283,13 @@ function PalHome({ navigation }: any) {
           </View>
         </View>
       ) : null}
+
+      {/* Favor Member Modal v2 — gates the "Switch to request a favor" pill */}
+      <FavorMemberModal
+        visible={showMemberModal}
+        onClose={() => setShowMemberModal(false)}
+        onSwitch={switchToMember}
+      />
     </View>
   );
 }
@@ -321,6 +375,70 @@ const palStyles = StyleSheet.create({
   },
   errTitle: { fontFamily: P500, fontSize: 20, lineHeight: 28, color: WHITE, textAlign: 'center' },
   errBody: { fontFamily: P400, fontSize: 14, lineHeight: 21, color: NAVY_SUB, textAlign: 'center', marginVertical: 14 },
+
+  // Favor Member Modal v2 (#181:10516) — navy promo card mirroring the user
+  // side's Be A Favor Pal modal, with a white "Switch to request a favor" pill.
+  memberBackdrop: {
+    flex: 1,
+    backgroundColor: 'rgba(0,0,0,0.5)',
+    justifyContent: 'center',
+    paddingHorizontal: 32,
+  },
+  memberCard: {
+    backgroundColor: NAVY,
+    borderRadius: 16,
+    paddingTop: 26,
+    paddingBottom: 28,
+    paddingHorizontal: 28,
+    alignItems: 'center',
+  },
+  memberTitle: { fontFamily: P500, fontSize: 24, lineHeight: 36, color: WHITE, textAlign: 'center' },
+  memberBody: {
+    fontFamily: P400,
+    fontSize: 15,
+    lineHeight: 22,
+    color: NAVY_SUB,
+    textAlign: 'center',
+    marginTop: 18,
+    maxWidth: 287,
+  },
+  memberPill: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    width: 244,
+    height: 40,
+    borderRadius: 20,
+    backgroundColor: WHITE,
+    paddingLeft: 20,
+    marginTop: 26,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.25,
+    shadowRadius: 10,
+    elevation: 4,
+  },
+  memberPillText: { fontFamily: P400, fontSize: 12, lineHeight: 18, color: INK },
+  memberTrack: {
+    position: 'absolute',
+    left: 182,
+    width: 38,
+    height: 22,
+    borderRadius: 11,
+    backgroundColor: '#D7D7D7',
+    justifyContent: 'center',
+    paddingHorizontal: 2,
+  },
+  memberKnob: {
+    width: 18,
+    height: 18,
+    borderRadius: 9,
+    backgroundColor: WHITE,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.2,
+    shadowRadius: 2,
+    elevation: 2,
+  },
 });
 
 // Home is role-aware: members get the request-a-favor dashboard (1660:15783),
@@ -431,7 +549,7 @@ function MemberHome({ navigation }: any) {
                   />
                 </View>
                 <Text style={styles.tileName}>{FAVOR_TIERS[key].label.replace(' Favor', '')}</Text>
-                <Text style={styles.tilePrice}>${FAVOR_TIERS[key].price.toFixed(2)}</Text>
+                <Text style={styles.tilePrice}>${FAVOR_TIERS[key].price}</Text>
               </TouchableOpacity>
             );
           })}

@@ -18,7 +18,7 @@ import { FAVOR_TIERS, computeFees, FavorTier } from '../types';
 // Colours / sizes / copy verified against the live Figma canvas:
 //   ink #0D0A0A · secondary #484747 · dividers #EEEEEE (368x1 @ x23)
 //   pay blue #2A7AFF · success green #34C45C · buttons 368x48 r8 (Poppins Medium 16)
-//   modals 351 wide r8 over rgba(0,0,0,0.5) scrim
+//   modals 351 wide r16 over rgba(0,0,0,0.5) scrim
 // ---------------------------------------------------------------------------
 const INK = '#0D0A0A';        // headings, black buttons, primary text
 const SUB = '#484747';        // secondary text (fees, bodies, "Edit")
@@ -585,7 +585,7 @@ const styles = StyleSheet.create({
   alertCard: {
     width: '100%',
     maxWidth: 351,
-    borderRadius: 8,
+    borderRadius: 16,
     backgroundColor: WHITE,
     paddingTop: 32,
     paddingHorizontal: 24,
@@ -596,7 +596,7 @@ const styles = StyleSheet.create({
     shadowRadius: 20,
     elevation: 12,
   },
-  alertTitle: { fontFamily: P600, fontSize: 20, lineHeight: 30, color: INK, textAlign: 'center' },
+  alertTitle: { fontFamily: P500, fontSize: 20, lineHeight: 30, color: INK, textAlign: 'center' },
   alertBody: { fontFamily: P400, fontSize: 14, lineHeight: 22, color: SUB, textAlign: 'center', marginTop: 16 },
   tooLong: { fontFamily: P500, fontSize: 14, lineHeight: 21, color: INK, textAlign: 'center', marginTop: 14 },
   // Scheduled-request modal date chip ("Feb 16, 12:00PM ASAP" on gray fill).
