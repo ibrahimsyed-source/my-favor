@@ -1,40 +1,47 @@
 import React, { useEffect, useState } from 'react';
 import {
-  View, TextInput, TouchableOpacity, ScrollView,
+  View, Text, TextInput, TouchableOpacity, ScrollView, Modal,
   StyleSheet, KeyboardAvoidingView, Platform, Linking,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
-import { Txt, Button, InfoModal } from '../components';
-import { tokens, fonts } from '../theme';
+import { useFonts, Poppins_400Regular } from '@expo-google-fonts/poppins';
 import { useStore } from '../store';
 import { Transaction } from '../types';
 
 // ---------------------------------------------------------------------------
-// "User App v.2" DARK design. These payout surfaces (Earning History, the
-// Account/Bank Information settings and the Bank Information form) are
-// intentionally DARK — the shared useTheme() palette is LIGHT (used by the auth
-// screens) and must NOT drive backgrounds/text here. Instead we drive every
-// colour from the local dark palette below, matching the v.2 reference exactly.
+// PROVIDER APP v.2 DARK design — "Accounts" (181:10039), "Earning History" and
+// "Bank Information" (figma-ref/v2/accounts-profile-v2.png,
+// earning-history-v2.png, bank-info-v2.png). Page fill #0D0A0A, navy sheets
+// #252A38 (fields a shade lighter #2E3442), white primary buttons with black
+// Poppins Medium labels, white Poppins headings, gray #B9B4B4 secondary.
+// The shared useTheme() palette is LIGHT and must NOT drive colours here.
 // ---------------------------------------------------------------------------
 const D = {
-  bg: '#0C0C0C', // screen background
-  card: '#171922', // summary card / raised panel
-  cardAlt: '#1B222C',
-  field: '#1C2331', // filled input field (navy)
-  fieldAlt: '#2E3A44',
+  bg: '#0D0A0A', // page background
+  sheet: '#252A38', // navy card / modal
+  field: '#2E3442', // filled input field (a shade lighter than the sheet)
   text: '#FFFFFF',
-  textSecondary: 'rgba(255,255,255,0.6)',
-  textTertiary: 'rgba(255,255,255,0.4)',
+  gray: '#B9B4B4', // secondary text
+  grayDim: 'rgba(255,255,255,0.4)',
+  divider: 'rgba(255,255,255,0.12)',
   border: 'rgba(255,255,255,0.10)',
-  divider: 'rgba(255,255,255,0.10)',
   red: '#ED1C24',
-  star: '#FFBD00',
   success: '#02CB00',
   ctaBg: '#FFFFFF', // v.2 primary CTA — white pill…
-  ctaText: '#141414', // …with dark text/icons
-  badgeBg: '#FFFFFF',
+  ctaText: '#000000', // …with black Poppins Medium label
 } as const;
+
+const P_REGULAR = 'Poppins_400Regular'; // loaded locally (App.tsx registers 500/600/700)
+const P_MEDIUM = 'Poppins_500Medium'; // registered app-wide in App.tsx
+const P_SEMI = 'Poppins_600SemiBold';
+
+// Poppins Regular isn't registered app-wide; expo-font caches globally so this
+// resolves instantly after the first mount anywhere in the app.
+function usePoppinsRegular() {
+  const [loaded] = useFonts({ Poppins_400Regular });
+  return loaded;
+}
 
 const DAY = 86400000;
 
@@ -78,12 +85,20 @@ function groupByMonth(items: Transaction[]) {
 const PAYOUT_LAST4 = '6789'; // matches the bank-info account (…789) the seed earnings paid to
 const bankLabel = (last4: string) => `Bank ****${last4}`;
 
-type PayoutAccount = { connected: boolean; last4: string };
-let _payout: PayoutAccount = { connected: false, last4: PAYOUT_LAST4 };
+type AccountType = 'Savings' | 'Checking';
+type PayoutAccount = { connected: boolean; last4: string; accountType: AccountType };
+let _payout: PayoutAccount = { connected: false, last4: PAYOUT_LAST4, accountType: 'Savings' };
 const _payoutSubs = new Set<() => void>();
 
 function connectPayout(last4: string) {
-  _payout = { connected: true, last4 };
+  _payout = { ..._payout, connected: true, last4 };
+  _payoutSubs.forEach((fn) => fn());
+}
+
+// v.2 Accounts frame carries a Savings ◉ / Checking ○ radio group — shared so
+// the choice made on Accounts and on the Bank Information form stay in sync.
+function setAccountType(t: AccountType) {
+  _payout = { ..._payout, accountType: t };
   _payoutSubs.forEach((fn) => fn());
 }
 
@@ -97,7 +112,7 @@ function usePayoutAccount(): PayoutAccount {
   return _payout;
 }
 
-// Top bar (chevron + centered title) for the dark payout screens.
+// Top bar per v.2 dark frames: back ARROW (not chevron) + centered title.
 function DarkTopBar({ title, onBack, right }: { title: string; onBack?: () => void; right?: React.ReactNode }) {
   return (
     <View style={dark.topbar}>
@@ -108,42 +123,90 @@ function DarkTopBar({ title, onBack, right }: { title: string; onBack?: () => vo
           accessibilityRole="button"
           accessibilityLabel="Go back"
         >
-          <Ionicons name="chevron-back" size={26} color={D.text} />
+          <Ionicons name="arrow-back" size={26} color={D.text} />
         </TouchableOpacity>
       ) : (
         <View style={{ width: 26 }} />
       )}
-      <Txt variant="h4" color={D.text}>{title}</Txt>
+      <Text style={dark.topbarTitle}>{title}</Text>
       <View style={{ width: 26, alignItems: 'flex-end' }}>{right}</View>
     </View>
   );
 }
 
-// Small white badge used on each earning row — a bank glyph, because pals are
-// paid out to their connected bank account (Apple Pay is how the MEMBER pays in,
-// never how the PAL is paid).
-function BankBadge() {
+// Small white payment badge on each row (v.2 frames show an Apple-Pay-style
+// white chip; we render a card glyph since pal payouts land in their bank).
+function PayBadge() {
   return (
     <View style={dark.payBadge}>
-      <Ionicons name="business" size={15} color={D.ctaText} />
+      <Ionicons name="card" size={15} color={D.ctaText} />
     </View>
   );
 }
 
-// Filled text field for the Bank Information form (navy raised field).
+// v.2 radio — white ring, white inner dot when selected (Accounts frame).
+function Radio({ selected }: { selected: boolean }) {
+  return (
+    <View style={dark.radioRing}>
+      {selected ? <View style={dark.radioDot} /> : null}
+    </View>
+  );
+}
+
+// v.2 primary button — white, 48h, r8, black Poppins Medium 15 label.
+function WhiteBtn({
+  label, onPress, disabled, accessibilityLabel, style,
+}: {
+  label: string; onPress: () => void; disabled?: boolean;
+  accessibilityLabel?: string; style?: any;
+}) {
+  return (
+    <TouchableOpacity
+      onPress={onPress}
+      disabled={disabled}
+      activeOpacity={0.85}
+      accessibilityRole="button"
+      accessibilityLabel={accessibilityLabel ?? label}
+      accessibilityState={{ disabled: !!disabled }}
+      style={[dark.whiteBtn, { opacity: disabled ? 0.5 : 1 }, style]}
+    >
+      <Text style={dark.whiteBtnLabel}>{label}</Text>
+    </TouchableOpacity>
+  );
+}
+
+// v.2 modal-card pattern for dark screens — centered navy card (#252A38, r16,
+// ~85% width), white Poppins Medium title, gray body, white primary button.
+function DarkInfoModal({
+  visible, title, message, buttonLabel, onClose,
+}: { visible: boolean; title: string; message: string; buttonLabel: string; onClose: () => void }) {
+  return (
+    <Modal visible={visible} transparent animationType="fade" onRequestClose={onClose}>
+      <View style={dark.scrim}>
+        <View style={dark.modalCard}>
+          <Text style={dark.modalTitle}>{title}</Text>
+          <Text style={dark.modalBody}>{message}</Text>
+          <WhiteBtn label={buttonLabel} onPress={onClose} style={{ marginTop: 24, alignSelf: 'stretch' }} />
+        </View>
+      </View>
+    </Modal>
+  );
+}
+
+// Filled text field for the Bank Information form (navy #2E3442 fill).
 function DarkField({
   label, value, onChangeText, keyboardType,
 }: { label: string; value: string; onChangeText: (t: string) => void; keyboardType?: any }) {
   return (
-    <View style={{ marginBottom: 18 }}>
-      <Txt variant="label" color={D.text} style={{ marginBottom: 8 }}>{label}</Txt>
+    <View style={{ marginBottom: 20 }}>
+      <Text style={dark.fieldLabel}>{label}</Text>
       <View style={dark.field}>
         <TextInput
-          style={{ color: D.text, fontSize: 18, fontFamily: fonts.bodyRegular }}
+          style={{ color: D.text, fontSize: 18, fontFamily: P_REGULAR }}
           value={value}
           onChangeText={onChangeText}
           keyboardType={keyboardType}
-          placeholderTextColor={D.textTertiary}
+          placeholderTextColor={D.grayDim}
           accessibilityLabel={label}
         />
       </View>
@@ -152,13 +215,15 @@ function DarkField({
 }
 
 // ---------------------------------------------------------------------------
-// 1. Earnings — "Earning History" (dark). Leads with a payout summary
-//    (available balance, pending, total earned, next-payout date + cadence) and
-//    each row names the real destination bank instead of the member's Apple Pay.
+// 1. Earnings — "Earning History" (dark, v.2): month section headers, rows of
+//    white pay-badge + date + gray sub-line + $amount + chevron. The payout
+//    summary (balance / pending / CASH OUT / next-payout) at the top is an
+//    app addition — no v2 frame — restyled to the navy-card language.
 // ---------------------------------------------------------------------------
 export function Earnings({ navigation }: any) {
   const { earnings, cashOut, paymentsLive, connectStatus } = useStore();
   const payout = usePayoutAccount();
+  const fontsReady = usePoppinsRegular();
   const groups = groupByMonth(earnings);
   const [cashing, setCashing] = useState(false);
   const [cashedOut, setCashedOut] = useState<number | null>(null);
@@ -199,8 +264,8 @@ export function Earnings({ navigation }: any) {
     ? Math.max(...pendingItems.map((e) => e.date)) + 3 * DAY
     : null;
   const destLabel = bankLabel(payout.last4);
-  // Never name a bank we aren't actually paying out to.
-  const rowDest = connected ? destLabel : 'Awaiting payout setup';
+
+  if (!fontsReady) return <View style={{ flex: 1, backgroundColor: D.bg }} />; // flash-guard
 
   return (
     <SafeAreaView style={{ flex: 1, backgroundColor: D.bg }} edges={['top']}>
@@ -208,6 +273,7 @@ export function Earnings({ navigation }: any) {
         title="Earning History"
         onBack={navigation.canGoBack() ? navigation.goBack : undefined}
         right={
+          // app addition — no v2 frame (quick hop to the Accounts screen)
           <TouchableOpacity
             onPress={() => navigation.navigate('StripeOnboarding')}
             hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
@@ -222,23 +288,24 @@ export function Earnings({ navigation }: any) {
         contentContainerStyle={{ paddingHorizontal: 20, paddingTop: 8, paddingBottom: 40 }}
         showsVerticalScrollIndicator={false}
       >
-        {/* Payout summary — answers "what's my balance and when do I get paid?" */}
+        {/* Payout summary — app addition, no v2 frame (balance + cash out).
+            Restyled to the v.2 navy card. */}
         <View
           style={dark.summary}
           accessible
           accessibilityLabel={`Available balance ${money(available)}. Pending ${money(pending)}. Total earned ${money(total)}.`}
         >
-          <Txt variant="bodySm" color={D.textSecondary}>Available balance</Txt>
-          <Txt variant="h1" color={D.text} style={{ marginTop: 2 }}>{money(available)}</Txt>
+          <Text style={dark.summaryLabel}>Available balance</Text>
+          <Text style={dark.summaryBalance}>{money(available)}</Text>
 
           <View style={{ flexDirection: 'row', marginTop: 16 }}>
             <View style={{ flex: 1 }}>
-              <Txt variant="caption" color={D.textTertiary}>Pending</Txt>
-              <Txt variant="h4" color={D.text} style={{ marginTop: 2 }}>{money(pending)}</Txt>
+              <Text style={dark.summaryCaption}>Pending</Text>
+              <Text style={dark.summaryStat}>{money(pending)}</Text>
             </View>
             <View style={{ flex: 1 }}>
-              <Txt variant="caption" color={D.textTertiary}>Total earned</Txt>
-              <Txt variant="h4" color={D.text} style={{ marginTop: 2 }}>{money(total)}</Txt>
+              <Text style={dark.summaryCaption}>Total earned</Text>
+              <Text style={dark.summaryStat}>{money(total)}</Text>
             </View>
           </View>
 
@@ -246,88 +313,72 @@ export function Earnings({ navigation }: any) {
               then we show an honest setup CTA (no fake bank, no cash-out). */}
           {connected ? (
             <>
-              <TouchableOpacity
+              <WhiteBtn
+                label={cashing ? 'CASHING OUT…' : available > 0 ? `CASH OUT ${money(available)}` : 'NO BALANCE TO CASH OUT'}
                 onPress={onCashOut}
                 disabled={cashing || available <= 0}
-                activeOpacity={0.85}
-                accessibilityRole="button"
                 accessibilityLabel={`Cash out ${money(available)}`}
-                accessibilityState={{ disabled: cashing || available <= 0 }}
-                style={[dark.cashBtn, { opacity: cashing || available <= 0 ? 0.5 : 1 }]}
-              >
-                <Ionicons name="cash-outline" size={18} color={D.ctaText} />
-                <Txt variant="button" color={D.ctaText} style={{ marginLeft: 8 }}>
-                  {cashing ? 'Cashing out…' : available > 0 ? `Cash out ${money(available)}` : 'No balance to cash out'}
-                </Txt>
-              </TouchableOpacity>
+                style={{ marginTop: 18 }}
+              />
               {cashError ? (
-                <Txt variant="caption" color={D.red} style={{ marginTop: 8 }}>{cashError}</Txt>
+                <Text style={dark.errorSm}>{cashError}</Text>
               ) : null}
             </>
           ) : (
-            <TouchableOpacity
+            <WhiteBtn
+              label="SET UP PAYOUTS TO GET PAID"
               onPress={() => navigation.navigate('StripeOnboarding')}
-              activeOpacity={0.85}
-              accessibilityRole="button"
               accessibilityLabel="Set up payouts to get paid"
-              style={dark.cashBtn}
-            >
-              <Ionicons name="card-outline" size={18} color={D.ctaText} />
-              <Txt variant="button" color={D.ctaText} style={{ marginLeft: 8 }}>
-                Set up payouts to get paid
-              </Txt>
-            </TouchableOpacity>
+              style={{ marginTop: 18 }}
+            />
           )}
 
           <View style={{ height: 1, backgroundColor: D.divider, marginVertical: 16 }} />
 
           <View style={{ flexDirection: 'row', alignItems: 'center' }}>
-            <Ionicons name="calendar-outline" size={16} color={D.textSecondary} />
-            <Txt variant="bodySm" color={D.text} style={{ marginLeft: 8, flex: 1 }}>
+            <Ionicons name="calendar-outline" size={16} color={D.gray} />
+            <Text style={dark.summaryNext}>
               {!connected
                 ? 'Connect a bank account to receive your earnings.'
                 : nextPayoutMs
                   ? `Next payout ${fmtDate(nextPayoutMs)} to ${destLabel}`
                   : 'No payouts scheduled'}
-            </Txt>
+            </Text>
           </View>
-          <Txt variant="caption" color={D.textTertiary} style={{ marginTop: 6 }}>
+          <Text style={dark.summaryFoot}>
             Payouts arrive 2-3 business days after a favor is completed.
-          </Txt>
+          </Text>
         </View>
 
-        <InfoModal
+        <DarkInfoModal
           visible={cashedOut != null}
           title="Cash out started"
           message={`${money(cashedOut ?? 0)} is on its way to ${destLabel}. It typically arrives in 2-3 business days.`}
-          buttonLabel="Got it"
+          buttonLabel="GOT IT"
           onClose={() => setCashedOut(null)}
         />
 
+        {/* v.2 Earning History list — "March 2021" month headers, then rows:
+            badge · "24 Mar 2021" / gray sub-line · $33.00 · chevron. */}
         {groups.map((g) => (
-          <View key={g.key} style={{ marginTop: 28 }}>
-            <Txt variant="h3" color={D.text}>{g.key}</Txt>
-            <View style={{ height: 1, backgroundColor: D.divider, marginTop: 16 }} />
+          <View key={g.key} style={{ marginTop: 32 }}>
+            <Text style={dark.monthHeader}>{g.key}</Text>
+            <View style={{ height: 1, backgroundColor: D.divider, marginTop: 14 }} />
             {g.items.map((item) => (
               <View
                 key={item.id}
                 style={dark.earnRow}
                 accessible
-                accessibilityLabel={`${fmtDate(item.date)}, ${money(item.amount)}${connected ? ` to ${destLabel}` : ', awaiting payout setup'}`}
+                accessibilityLabel={`${fmtDate(item.date)}, Favor payout, ${money(item.amount)}`}
               >
-                <BankBadge />
+                <PayBadge />
                 <View style={{ flex: 1, marginLeft: 16 }}>
-                  <Txt variant="body" color={D.text} style={{ fontSize: 19, lineHeight: 24 }}>
-                    {fmtDate(item.date)}
-                  </Txt>
-                  <Txt variant="body" color={D.textSecondary} style={{ fontSize: 16, marginTop: 2 }}>
-                    {rowDest}
-                  </Txt>
+                  <Text style={dark.earnDate}>{fmtDate(item.date)}</Text>
+                  {/* v.2 sub-line is the payment method; earnings carry none, so "Favor payout" */}
+                  <Text style={dark.earnSub}>Favor payout</Text>
                 </View>
-                <Txt variant="label" color={D.text} style={{ fontSize: 19, marginRight: 10 }}>
-                  {money(item.amount)}
-                </Txt>
-                <Ionicons name="chevron-forward" size={22} color={D.textTertiary} />
+                <Text style={dark.earnAmount}>{money(item.amount)}</Text>
+                <Ionicons name="chevron-forward" size={20} color={D.text} style={{ marginTop: 3 }} />
               </View>
             ))}
           </View>
@@ -338,14 +389,16 @@ export function Earnings({ navigation }: any) {
 }
 
 // ---------------------------------------------------------------------------
-// 2. StripeOnboarding — "Account" settings (dark, same v.2 language). Bank
-//    Information section. The first row reflects the REAL connection state: an
-//    honest "Set up payouts to get paid" prompt until the pal saves valid bank
-//    details (then it shows the connected bank), rather than pre-claiming a fake
-//    account.
+// 2. StripeOnboarding — "Accounts" (181:10039, dark). "Bank Information"
+//    section: Bank >, + Add Payment Method >, then Earning History >, then the
+//    Savings ◉ / Checking ○ radio group. The first row keeps the REAL
+//    connection behavior: it launches payout setup until the pal saves valid
+//    bank details (then it shows the connected bank), rather than pre-claiming
+//    a fake account.
 // ---------------------------------------------------------------------------
 export function StripeOnboarding({ navigation }: any) {
   const payout = usePayoutAccount();
+  const fontsReady = usePoppinsRegular();
   const { paymentsLive, connectOnboard, connectStatus } = useStore();
   const [conn, setConn] = useState<{ onboarded: boolean; payoutsEnabled: boolean } | null>(null);
   const [opening, setOpening] = useState(false);
@@ -374,86 +427,119 @@ export function StripeOnboarding({ navigation }: any) {
 
   const connected = paymentsLive ? !!conn?.payoutsEnabled : payout.connected;
 
+  if (!fontsReady) return <View style={{ flex: 1, backgroundColor: D.bg }} />; // flash-guard
+
   return (
     <SafeAreaView style={{ flex: 1, backgroundColor: D.bg }} edges={['top']}>
-      <DarkTopBar title="Account" onBack={navigation.canGoBack() ? navigation.goBack : undefined} />
+      <DarkTopBar title="Accounts" onBack={navigation.canGoBack() ? navigation.goBack : undefined} />
       <View style={{ paddingHorizontal: 20 }}>
-        <Txt variant="h4" color={D.textSecondary} style={{ marginTop: 20, marginBottom: 8 }}>
-          Bank Information
-        </Txt>
+        <Text style={acct.section}>Bank Information</Text>
         <View style={{ height: 1, backgroundColor: D.divider }} />
 
-        {/* Payout account — connected bank, or an honest not-yet-set-up prompt */}
-        {connected ? (
-          <View
-            style={acct.row}
-            accessible
-            accessibilityLabel={`Payout account connected: ${bankLabel(payout.last4)}`}
-          >
-            <Ionicons name="card-outline" size={24} color={D.textSecondary} style={{ width: 30, marginRight: 14 }} />
-            <Txt variant="body" color={D.text} style={{ flex: 1 }}>{paymentsLive ? 'Payouts active (Stripe)' : bankLabel(payout.last4)}</Txt>
-            <Ionicons name="checkmark-circle" size={20} color={D.success} />
+        {/* "Bank >" — the payout account. Not connected → launches payout setup
+            (Stripe Connect when live, the manual form otherwise). Connected →
+            opens the saved bank details for editing. */}
+        <TouchableOpacity
+          activeOpacity={0.7}
+          onPress={setupPayouts}
+          style={acct.row}
+          accessibilityRole="button"
+          accessibilityLabel={connected
+            ? `Bank. Payout account connected: ${paymentsLive ? 'Stripe payouts active' : bankLabel(payout.last4)}`
+            : 'Bank. Set up payouts to get paid'}
+        >
+          <PayBadge />
+          <View style={{ flex: 1, marginLeft: 16 }}>
+            <Text style={acct.rowLabel}>{opening ? 'Opening…' : 'Bank'}</Text>
+            {/* app addition — no v2 frame: honest connection status sub-line */}
+            <Text style={acct.rowSub}>
+              {connected
+                ? (paymentsLive ? 'Payouts active (Stripe)' : bankLabel(payout.last4))
+                : 'Set up payouts to get paid'}
+            </Text>
           </View>
-        ) : (
-          <TouchableOpacity
-            activeOpacity={0.7}
-            onPress={setupPayouts}
-            style={acct.row}
-            accessibilityRole="button"
-            accessibilityLabel="Set up payouts to get paid"
-          >
-            <Ionicons name="card-outline" size={24} color={D.textSecondary} style={{ width: 30, marginRight: 14 }} />
-            <Txt variant="body" color={D.text} style={{ flex: 1 }}>{opening ? 'Opening…' : 'Set up payouts to get paid'}</Txt>
-            <Ionicons name="chevron-forward" size={22} color={D.textTertiary} />
-          </TouchableOpacity>
-        )}
+          {connected ? (
+            <Ionicons name="checkmark-circle" size={18} color={D.success} style={{ marginRight: 8 }} />
+          ) : null}
+          <Ionicons name="chevron-forward" size={22} color={D.text} />
+        </TouchableOpacity>
 
-        {/* Edit / add bank info — Stripe Connect when live, else the manual form */}
+        {/* "+ Add Payment Method >" — add/edit bank info (Stripe Connect when
+            live, else the manual form). */}
         <TouchableOpacity
           activeOpacity={0.7}
           onPress={() => (paymentsLive ? setupPayouts() : navigation.navigate('BankInfo'))}
           style={acct.row}
           accessibilityRole="button"
-          accessibilityLabel={connected ? 'Edit bank information' : 'Add bank information'}
+          accessibilityLabel="Add Payment Method"
         >
-          <Ionicons name="pencil" size={22} color={D.textSecondary} style={{ width: 30, marginRight: 14 }} />
-          <Txt variant="body" color={D.text} style={{ flex: 1 }}>
-            {connected ? 'Edit Bank Information' : 'Add Bank Information'}
-          </Txt>
-          <Ionicons name="chevron-forward" size={22} color={D.textTertiary} />
+          <View style={acct.iconSlot}>
+            <Ionicons name="add" size={28} color={D.text} />
+          </View>
+          <Text style={[acct.rowLabel, { flex: 1, marginLeft: 16 }]}>Add Payment Method</Text>
+          <Ionicons name="chevron-forward" size={22} color={D.text} />
         </TouchableOpacity>
 
-        {/* Earning History → Earnings */}
+        {/* gap between the payment rows and Earning History, per frame */}
+        <View style={{ height: 34 }} />
+        <View style={{ height: 1, backgroundColor: D.divider }} />
+
+        {/* "Earning History >" */}
         <TouchableOpacity
           activeOpacity={0.7}
           onPress={() => navigation.navigate('Earnings')}
-          style={[acct.row, { marginTop: 18 }]}
+          style={acct.row}
           accessibilityRole="button"
           accessibilityLabel="Earning History"
         >
-          <Ionicons name="reader-outline" size={24} color={D.textSecondary} style={{ width: 30, marginRight: 14 }} />
-          <Txt variant="h4" color={D.text} style={{ flex: 1 }}>Earning History</Txt>
-          <Ionicons name="chevron-forward" size={24} color={D.textTertiary} />
+          <View style={acct.iconSlot}>
+            <Ionicons name="reader-outline" size={24} color={D.text} />
+          </View>
+          <Text style={[acct.rowLabel, { flex: 1, marginLeft: 16 }]}>Earning History</Text>
+          <Ionicons name="chevron-forward" size={22} color={D.text} />
         </TouchableOpacity>
+
+        {/* Savings ◉ / Checking ○ radio group, per frame */}
+        <View style={{ marginTop: 30 }}>
+          {(['Savings', 'Checking'] as const).map((opt) => {
+            const sel = payout.accountType === opt;
+            return (
+              <TouchableOpacity
+                key={opt}
+                activeOpacity={0.7}
+                onPress={() => setAccountType(opt)}
+                style={acct.radioRow}
+                accessibilityRole="radio"
+                accessibilityState={{ selected: sel }}
+                accessibilityLabel={`${opt} account`}
+              >
+                <Radio selected={sel} />
+                <Text style={acct.radioLabel}>{opt} account</Text>
+              </TouchableOpacity>
+            );
+          })}
+        </View>
       </View>
     </SafeAreaView>
   );
 }
 
 // ---------------------------------------------------------------------------
-// 3. BankInfo — "Bank Information" form (dark). Prefilled to match the
-//    reference, but SAVE VALIDATES (required fields, 9-digit routing,
-//    account == confirm) and, on success, marks the payout account connected
-//    and confirms it before returning — instead of silently navigating away.
+// 3. BankInfo — "Bank Information" form (dark, v.2 bank-info frame). Prefilled
+//    to match the reference, but SAVE VALIDATES (required fields, 9-digit
+//    routing, account == confirm) and, on success, marks the payout account
+//    connected and confirms it before returning — instead of silently
+//    navigating away.
 // ---------------------------------------------------------------------------
 export function BankInfo({ navigation }: any) {
   const { user } = useStore();
+  const payout = usePayoutAccount();
+  const fontsReady = usePoppinsRegular();
   const [accountName, setAccountName] = useState(user ? `${user.firstName} ${user.lastName}` : 'Anton Vanko');
   const [bankName, setBankName] = useState('Bank of America');
   const [routing, setRouting] = useState('123456789');
   const [accountNumber, setAccountNumber] = useState('123 - 456 - 789');
   const [confirmAccount, setConfirmAccount] = useState('123 - 456 - 789');
-  const [accountType, setAccountType] = useState<'Savings' | 'Checking'>('Checking');
   const [error, setError] = useState<string | null>(null);
   const [savedLast4, setSavedLast4] = useState<string | null>(null);
 
@@ -467,27 +553,29 @@ export function BankInfo({ navigation }: any) {
     const name = accountName.trim();
     const bank = bankName.trim();
     const rt = routing.replace(/\D/g, '');
-    const acct = accountNumber.replace(/\D/g, '');
+    const acctNo = accountNumber.replace(/\D/g, '');
     const conf = confirmAccount.replace(/\D/g, '');
 
     if (!name) return setError('Enter the account holder name.');
     if (!bank) return setError('Enter the bank name.');
     if (rt.length !== 9) return setError('Routing number must be 9 digits.');
-    if (acct.length < 4) return setError('Enter a valid account number.');
-    if (acct !== conf) return setError("Account numbers don't match.");
+    if (acctNo.length < 4) return setError('Enter a valid account number.');
+    if (acctNo !== conf) return setError("Account numbers don't match.");
 
     setError(null);
-    const last4 = acct.slice(-4);
+    const last4 = acctNo.slice(-4);
     connectPayout(last4);
     setSavedLast4(last4);
   };
+
+  if (!fontsReady) return <View style={{ flex: 1, backgroundColor: D.bg }} />; // flash-guard
 
   return (
     <SafeAreaView style={{ flex: 1, backgroundColor: D.bg }} edges={['top', 'bottom']}>
       <DarkTopBar title="Bank Information" onBack={navigation.canGoBack() ? navigation.goBack : undefined} />
       <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
         <ScrollView
-          contentContainerStyle={{ padding: 20, paddingTop: 24, paddingBottom: 24 }}
+          contentContainerStyle={{ padding: 20, paddingTop: 28, paddingBottom: 24 }}
           keyboardShouldPersistTaps="handled"
           showsVerticalScrollIndicator={false}
         >
@@ -497,37 +585,27 @@ export function BankInfo({ navigation }: any) {
           <DarkField label="Account Number" value={accountNumber} onChangeText={edit(setAccountNumber)} />
           <DarkField label="Confirm Account Number" value={confirmAccount} onChangeText={edit(setConfirmAccount)} />
 
-          <Txt variant="label" color={D.text} style={{ marginBottom: 10 }}>Account Type</Txt>
-          <View style={{ flexDirection: 'row', gap: 12 }}>
-            {(['Savings', 'Checking'] as const).map((opt) => {
-              const sel = accountType === opt;
-              return (
-                <TouchableOpacity
-                  key={opt}
-                  activeOpacity={0.8}
-                  onPress={() => setAccountType(opt)}
-                  accessibilityRole="button"
-                  accessibilityState={{ selected: sel }}
-                  accessibilityLabel={`${opt} account`}
-                  style={{
-                    flex: 1,
-                    height: 52,
-                    borderRadius: tokens.radius.md,
-                    flexDirection: 'row',
-                    alignItems: 'center',
-                    justifyContent: 'center',
-                    gap: 8,
-                    backgroundColor: sel ? D.ctaBg : D.field,
-                    borderWidth: sel ? 0 : 1,
-                    borderColor: D.border,
-                  }}
-                >
-                  {sel && <Ionicons name="checkmark-circle" size={18} color={D.ctaText} />}
-                  <Txt variant="label" color={sel ? D.ctaText : D.textSecondary}>{opt}</Txt>
-                </TouchableOpacity>
-              );
-            })}
-          </View>
+          {/* app addition — no v2 frame (v.2 shows this radio group on the
+              Accounts screen); kept here too, styled to the same radios and
+              synced with the Accounts selection. */}
+          <Text style={[dark.fieldLabel, { marginTop: 4, marginBottom: 12 }]}>Account Type</Text>
+          {(['Savings', 'Checking'] as const).map((opt) => {
+            const sel = payout.accountType === opt;
+            return (
+              <TouchableOpacity
+                key={opt}
+                activeOpacity={0.7}
+                onPress={() => setAccountType(opt)}
+                style={acct.radioRow}
+                accessibilityRole="radio"
+                accessibilityState={{ selected: sel }}
+                accessibilityLabel={`${opt} account`}
+              >
+                <Radio selected={sel} />
+                <Text style={acct.radioLabel}>{opt} account</Text>
+              </TouchableOpacity>
+            );
+          })}
         </ScrollView>
         <View style={{ paddingHorizontal: 20, paddingTop: 12, paddingBottom: 12 }}>
           {error ? (
@@ -536,22 +614,22 @@ export function BankInfo({ navigation }: any) {
               style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 12 }}
             >
               <Ionicons name="alert-circle" size={18} color={D.red} style={{ marginRight: 6 }} />
-              <Txt variant="bodySm" color={D.red} style={{ flex: 1 }}>{error}</Txt>
+              <Text style={[dark.errorSm, { flex: 1, marginTop: 0 }]}>{error}</Text>
             </View>
           ) : null}
-          {/* v.2 primary CTA — white pill with dark uppercase text */}
-          <Button title="Save" variant="white" onPress={onSave} />
+          {/* v.2 primary CTA — white, black Poppins Medium "SAVE" */}
+          <WhiteBtn label="SAVE" onPress={onSave} />
         </View>
       </KeyboardAvoidingView>
 
-      <InfoModal
+      <DarkInfoModal
         visible={savedLast4 !== null}
         title="Bank account connected"
         message={`Your payouts will be deposited to ${bankLabel(savedLast4 ?? PAYOUT_LAST4)}. Funds arrive 2-3 business days after a favor is completed.`}
-        buttonLabel="Done"
+        buttonLabel="DONE"
         onClose={() => {
           setSavedLast4(null);
-          // Return to the Account (StripeOnboarding) screen, which now reflects
+          // Return to the Accounts (StripeOnboarding) screen, which now reflects
           // the connected payout account via the usePayoutAccount() subscription.
           if (navigation.canGoBack()) navigation.goBack();
           else navigation.navigate('StripeOnboarding');
@@ -563,7 +641,7 @@ export function BankInfo({ navigation }: any) {
 
 const dark = StyleSheet.create({
   topbar: {
-    height: 52,
+    height: 56,
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
@@ -571,48 +649,97 @@ const dark = StyleSheet.create({
     borderBottomWidth: StyleSheet.hairlineWidth,
     borderBottomColor: D.border,
   },
+  topbarTitle: { fontFamily: P_MEDIUM, fontSize: 21, color: D.text },
+  // Payout summary (app addition) — navy v.2 card
   summary: {
     marginTop: 12,
-    backgroundColor: D.card,
-    borderRadius: tokens.radius.lg,
-    borderWidth: 1,
-    borderColor: D.border,
+    backgroundColor: D.sheet,
+    borderRadius: 16,
     padding: 20,
   },
-  cashBtn: {
-    marginTop: 18,
+  summaryLabel: { fontFamily: P_REGULAR, fontSize: 14, color: D.gray },
+  summaryBalance: { fontFamily: P_SEMI, fontSize: 30, color: D.text, marginTop: 2 },
+  summaryCaption: { fontFamily: P_REGULAR, fontSize: 13, color: D.gray },
+  summaryStat: { fontFamily: P_MEDIUM, fontSize: 20, color: D.text, marginTop: 2 },
+  summaryNext: { fontFamily: P_REGULAR, fontSize: 14, color: D.text, marginLeft: 8, flex: 1 },
+  summaryFoot: { fontFamily: P_REGULAR, fontSize: 13, color: D.gray, marginTop: 6 },
+  errorSm: { fontFamily: P_REGULAR, fontSize: 13, color: D.red, marginTop: 8 },
+  whiteBtn: {
     height: 48,
-    borderRadius: tokens.radius.md,
+    borderRadius: 8,
     backgroundColor: D.ctaBg,
-    flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
   },
+  whiteBtnLabel: { fontFamily: P_MEDIUM, fontSize: 15, color: D.ctaText, letterSpacing: 0.5 },
   payBadge: {
-    width: 40,
+    width: 38,
     height: 26,
     borderRadius: 5,
-    backgroundColor: D.badgeBg,
-    flexDirection: 'row',
+    backgroundColor: '#FFFFFF',
     alignItems: 'center',
     justifyContent: 'center',
+    marginTop: 2,
   },
+  monthHeader: { fontFamily: P_MEDIUM, fontSize: 20, color: D.text },
   earnRow: {
     flexDirection: 'row',
-    alignItems: 'center',
-    paddingVertical: 18,
+    alignItems: 'flex-start',
+    paddingVertical: 20,
     borderBottomWidth: 1,
     borderBottomColor: D.divider,
   },
+  earnDate: { fontFamily: P_MEDIUM, fontSize: 19, lineHeight: 26, color: D.text },
+  earnSub: { fontFamily: P_REGULAR, fontSize: 16, color: D.gray, marginTop: 6 },
+  earnAmount: { fontFamily: P_MEDIUM, fontSize: 19, lineHeight: 26, color: D.text, marginRight: 12 },
+  radioRing: {
+    width: 24,
+    height: 24,
+    borderRadius: 12,
+    borderWidth: 2,
+    borderColor: '#FFFFFF',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  radioDot: { width: 11, height: 11, borderRadius: 6, backgroundColor: '#FFFFFF' },
+  scrim: {
+    flex: 1,
+    backgroundColor: 'rgba(0,0,0,0.55)',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  modalCard: {
+    width: '85%',
+    backgroundColor: D.sheet,
+    borderRadius: 16,
+    paddingHorizontal: 24,
+    paddingVertical: 28,
+    alignItems: 'center',
+  },
+  modalTitle: { fontFamily: P_MEDIUM, fontSize: 22, color: D.text, textAlign: 'center' },
+  modalBody: { fontFamily: P_REGULAR, fontSize: 15, lineHeight: 22, color: D.gray, textAlign: 'center', marginTop: 12 },
+  fieldLabel: { fontFamily: P_REGULAR, fontSize: 17, color: D.text, marginBottom: 8 },
   field: {
     backgroundColor: D.field,
-    borderRadius: tokens.radius.md,
-    paddingHorizontal: 16,
+    borderRadius: 10,
+    paddingHorizontal: 18,
     minHeight: 56,
     justifyContent: 'center',
   },
 });
 
 const acct = StyleSheet.create({
-  row: { flexDirection: 'row', alignItems: 'center', paddingVertical: 18, borderBottomWidth: 1, borderBottomColor: D.divider },
+  section: { fontFamily: P_MEDIUM, fontSize: 18, color: D.text, marginTop: 28, marginBottom: 14 },
+  row: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingVertical: 20,
+    borderBottomWidth: 1,
+    borderBottomColor: D.divider,
+  },
+  iconSlot: { width: 38, alignItems: 'center', marginTop: 2 },
+  rowLabel: { fontFamily: P_MEDIUM, fontSize: 19, color: D.text },
+  rowSub: { fontFamily: P_REGULAR, fontSize: 13, color: D.gray, marginTop: 2 },
+  radioRow: { flexDirection: 'row', alignItems: 'center', paddingVertical: 12 },
+  radioLabel: { fontFamily: P_REGULAR, fontSize: 19, color: D.text, marginLeft: 16 },
 });

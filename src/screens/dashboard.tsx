@@ -53,7 +53,285 @@ const PalPin: React.FC<{ x: number; y: number }> = ({ x, y }) => (
   </View>
 );
 
-export function Home({ navigation }: any) {
+// ---------------------------------------------------------------------------
+// Pal-mode Home — provider "Dashboard - Main v2" (dark): full-bleed dark map,
+// white menu bars, "Switch to request a favor" pill, red price pins for open
+// favors, the pal's avatar in a red ring at the centre of the radius circle,
+// and the "Favor Blast" navy bottom sheet for the newest incoming request.
+// ---------------------------------------------------------------------------
+const NAVY = '#252A38';       // provider sheet/modal surface
+const NAVY_SUB = '#B9B4B4';
+
+const DARK_MAP = require('../../assets/img/dashboard/map-dark.png');
+// Baked-in radius circle centre of the dark map export (asset px, 1.5x).
+const DM = { w: 621, h: 1212, px: 310, py: 671.5 };
+
+// Red rounded price tag with a pin tail (provider dashboard pins).
+const PricePin: React.FC<{ price: number; x: number; y: number; onPress?: () => void }> = ({ price, x, y, onPress }) => (
+  <TouchableOpacity
+    onPress={onPress}
+    activeOpacity={0.85}
+    accessibilityRole="button"
+    accessibilityLabel={`Open favor, $${price}`}
+    style={{ position: 'absolute', left: `${x * 100}%`, top: `${y * 100}%`, alignItems: 'center' }}
+  >
+    <View style={palStyles.priceTag}>
+      <Text style={palStyles.priceText}>${Math.round(price)}</Text>
+    </View>
+    <View style={palStyles.pinTail} />
+  </TouchableOpacity>
+);
+
+const PIN_SPOTS = [
+  { x: 0.16, y: 0.16 }, { x: 0.62, y: 0.12 }, { x: 0.12, y: 0.42 },
+  { x: 0.72, y: 0.38 }, { x: 0.3, y: 0.62 }, { x: 0.66, y: 0.66 },
+];
+
+function PalHome({ navigation }: any) {
+  const insets = useSafeAreaInsets();
+  const s = useStore();
+
+  const incoming = s.incomingFavors;
+  const blast = incoming[0]; // newest request drives the Favor Blast sheet
+  const [accepting, setAccepting] = React.useState(false);
+  const [acceptError, setAcceptError] = React.useState<string | null>(null);
+
+  useFocusEffect(
+    React.useCallback(() => {
+      StatusBar.setBarStyle('light-content');
+      void s.refreshIncoming();
+      return () => StatusBar.setBarStyle('dark-content');
+    }, []) // eslint-disable-line react-hooks/exhaustive-deps
+  );
+
+  const [box, setBox] = React.useState({ w: 0, h: 0 });
+  const scale = box.w > 0 ? Math.max(box.w / DM.w, box.h / DM.h) : 0;
+  const pin = {
+    x: (box.w - DM.w * scale) / 2 + DM.px * scale,
+    y: (box.h - DM.h * scale) / 2 + DM.py * scale,
+  };
+
+  const acceptBlast = async () => {
+    if (!blast || accepting) return;
+    setAccepting(true);
+    try {
+      const r = await s.acceptFavor(blast.id);
+      if (r.ok) navigation.navigate('Navigation');
+      else setAcceptError(r.reason ?? 'This favor is no longer available.');
+    } finally {
+      setAccepting(false);
+    }
+  };
+
+  const fmtWhen = (ms: number) => {
+    const d = new Date(ms);
+    const day = d.toLocaleDateString(undefined, { day: '2-digit', month: 'short', year: 'numeric' });
+    const time = d.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' });
+    return `${day}, ${time}`;
+  };
+
+  return (
+    <View
+      style={{ flex: 1, backgroundColor: INK }}
+      onLayout={(e) => setBox({ w: e.nativeEvent.layout.width, h: e.nativeEvent.layout.height })}
+    >
+      <Image source={DARK_MAP} style={StyleSheet.absoluteFill} resizeMode="cover" accessible={false} />
+
+      {/* the pal's avatar inside the baked red ring */}
+      {box.w > 0 && (
+        <View pointerEvents="none" style={[palStyles.avatarRing, { left: pin.x - 20, top: pin.y - 20 }]}>
+          <Avatar uri={s.user?.avatar} size={33} name={s.user?.firstName ?? '?'} />
+        </View>
+      )}
+
+      {/* open favors as red price pins */}
+      {incoming.slice(0, PIN_SPOTS.length).map((f, i) => (
+        <PricePin
+          key={f.id}
+          price={f.price}
+          x={PIN_SPOTS[i].x}
+          y={PIN_SPOTS[i].y}
+          onPress={() => navigation.navigate('PalFavorDetail', { favorId: f.id })}
+        />
+      ))}
+
+      {/* top controls — white menu bars + "Switch to request a favor" pill */}
+      <View style={[styles.headerRow, { position: 'absolute', top: insets.top + 12, left: 23, right: 23 }]}>
+        <TouchableOpacity
+          activeOpacity={0.85}
+          onPress={() => navigation.navigate('SideDrawer')}
+          accessibilityRole="button"
+          accessibilityLabel="Open menu"
+          style={styles.menuBtn}
+        >
+          <View style={[styles.menuBar, { width: 22 }]} />
+          <View style={[styles.menuBar, { width: 18, marginTop: 4 }]} />
+          <View style={[styles.menuBar, { width: 14, marginTop: 4 }]} />
+        </TouchableOpacity>
+
+        <TouchableOpacity
+          activeOpacity={0.85}
+          onPress={() => s.setRole('member')}
+          accessibilityRole="switch"
+          accessibilityState={{ checked: false }}
+          accessibilityLabel="Switch to request a favor"
+          style={styles.pill}
+        >
+          <Text style={styles.pillText}>Switch to request a favor</Text>
+          <View style={styles.track}>
+            <View style={styles.thumb} />
+          </View>
+        </TouchableOpacity>
+      </View>
+
+      {/* Favor Blast — navy bottom sheet for the newest open request */}
+      {blast ? (
+        <View style={[palStyles.blastSheet, { paddingBottom: 16 + (insets.bottom ? 0 : 4) }]}>
+          <View style={palStyles.sheetHandle} />
+          <Text style={palStyles.blastTitle}>
+            {(FAVOR_TIERS[blast.tier as keyof typeof FAVOR_TIERS]?.label ?? 'Favor').replace(' Favor', '')} Favor ${blast.price}
+          </Text>
+          <View style={{ flexDirection: 'row', alignItems: 'center', marginTop: 14 }}>
+            <Avatar size={44} name={blast.memberName ?? 'Member'} />
+            <View style={{ marginLeft: 12, flex: 1 }}>
+              <Text style={palStyles.blastName}>{blast.memberName ?? 'A member nearby'}</Text>
+              <Text style={palStyles.blastDesc} numberOfLines={2}>{blast.description || 'No description provided.'}</Text>
+              <Text style={palStyles.blastWhen}>{fmtWhen(blast.createdAt)}</Text>
+              <TouchableOpacity
+                onPress={() => navigation.navigate('PalFavorDetail', { favorId: blast.id })}
+                hitSlop={8}
+                accessibilityRole="button"
+              >
+                <Text style={palStyles.viewMore}>View More</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+          <TouchableOpacity
+            activeOpacity={0.85}
+            onPress={acceptBlast}
+            disabled={accepting}
+            accessibilityRole="button"
+            accessibilityState={{ disabled: accepting }}
+            style={palStyles.acceptBtn}
+          >
+            <Text style={palStyles.acceptText}>{accepting ? 'ACCEPTING…' : 'ACCEPT'}</Text>
+          </TouchableOpacity>
+        </View>
+      ) : null}
+
+      {/* accept failed — navy modal card (v.2 dark modal pattern) */}
+      {acceptError ? (
+        <View style={palStyles.errScrim}>
+          <View style={palStyles.errCard}>
+            <Text style={palStyles.errTitle}>Can’t accept this favor</Text>
+            <Text style={palStyles.errBody}>{acceptError}</Text>
+            <TouchableOpacity
+              activeOpacity={0.85}
+              onPress={() => setAcceptError(null)}
+              accessibilityRole="button"
+              style={palStyles.acceptBtn}
+            >
+              <Text style={palStyles.acceptText}>CLOSE</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      ) : null}
+    </View>
+  );
+}
+
+const palStyles = StyleSheet.create({
+  priceTag: {
+    minWidth: 38,
+    height: 26,
+    borderRadius: 6,
+    backgroundColor: RED,
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: 6,
+  },
+  priceText: { fontFamily: P500, fontSize: 12, color: WHITE },
+  pinTail: {
+    width: 0,
+    height: 0,
+    borderLeftWidth: 5,
+    borderRightWidth: 5,
+    borderTopWidth: 7,
+    borderLeftColor: 'transparent',
+    borderRightColor: 'transparent',
+    borderTopColor: RED,
+  },
+  avatarRing: {
+    position: 'absolute',
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    backgroundColor: RED,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  blastSheet: {
+    position: 'absolute',
+    left: 0,
+    right: 0,
+    bottom: 0,
+    backgroundColor: NAVY,
+    borderTopLeftRadius: 16,
+    borderTopRightRadius: 16,
+    paddingHorizontal: 23,
+    paddingTop: 8,
+  },
+  sheetHandle: {
+    alignSelf: 'center',
+    width: 44,
+    height: 4,
+    borderRadius: 2,
+    backgroundColor: 'rgba(255,255,255,0.35)',
+    marginBottom: 14,
+  },
+  blastTitle: { fontFamily: P600, fontSize: 20, lineHeight: 28, color: WHITE, textAlign: 'center' },
+  blastName: { fontFamily: P500, fontSize: 15, lineHeight: 22, color: WHITE },
+  blastDesc: { fontFamily: P400, fontSize: 12, lineHeight: 17, color: NAVY_SUB, marginTop: 2 },
+  blastWhen: { fontFamily: P400, fontSize: 11, lineHeight: 16, color: NAVY_SUB, marginTop: 4 },
+  viewMore: { fontFamily: P500, fontSize: 12, lineHeight: 18, color: WHITE, textDecorationLine: 'underline', marginTop: 4 },
+  acceptBtn: {
+    height: 48,
+    borderRadius: 8,
+    backgroundColor: WHITE,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginTop: 16,
+  },
+  acceptText: { fontFamily: P500, fontSize: 15, color: INK, letterSpacing: 0.3 },
+  errScrim: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+    backgroundColor: 'rgba(0,0,0,0.5)',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  errCard: {
+    width: '86%',
+    borderRadius: 16,
+    backgroundColor: NAVY,
+    padding: 22,
+  },
+  errTitle: { fontFamily: P500, fontSize: 20, lineHeight: 28, color: WHITE, textAlign: 'center' },
+  errBody: { fontFamily: P400, fontSize: 14, lineHeight: 21, color: NAVY_SUB, textAlign: 'center', marginVertical: 14 },
+});
+
+// Home is role-aware: members get the request-a-favor dashboard (1660:15783),
+// pals get the dark provider map (provider Dashboard - Main v2). The switch
+// pills flip s.setRole, which re-renders the other home in place.
+export function Home(props: any) {
+  const s = useStore();
+  return s.user?.role === 'pal' ? <PalHome {...props} /> : <MemberHome {...props} />;
+}
+
+function MemberHome({ navigation }: any) {
   const insets = useSafeAreaInsets();
   const s = useStore();
   const [fontsLoaded] = useFonts({ Poppins_400Regular });
@@ -75,8 +353,8 @@ export function Home({ navigation }: any) {
   };
 
   const switchToPal = () => {
+    // Flips Home into the provider dashboard in place (design toggle metaphor).
     s.setRole('pal');
-    navigation.navigate('BrowseFavors');
   };
 
   const resumeActive = () => {

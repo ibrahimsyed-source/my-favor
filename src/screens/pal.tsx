@@ -1,56 +1,71 @@
 import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import {
-  View, Text, TextInput, TouchableOpacity, ScrollView, Image, StyleSheet, FlatList, RefreshControl,
+  View, Text, TextInput, TouchableOpacity, ScrollView, Image, StyleSheet, FlatList, RefreshControl, Modal,
 } from 'react-native';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
-import { Txt, InfoModal, Avatar } from '../components';
+import { useFonts, Poppins_400Regular } from '@expo-google-fonts/poppins';
+import { Avatar } from '../components';
 import { useStore } from '../store';
 import { getIncomingApi } from '../api/endpoints';
 import { computePayout, FAVOR_TIERS, Favor } from '../types';
-import { fonts, tokens } from '../theme';
 
-// Favor Pal (provider) active-favor flow — "User App v.2" DARK design.
-// These screens are intentionally dark navy sheets over a dark map (the app's
-// shared useTheme() is LIGHT and only drives the auth/onboarding screens), so
-// we pin a fixed dark palette here instead of reading the light theme.
-const PAGE_BG = '#0C0C0C';                 // content screen background (near-black)
-const MAP_BG = '#0C0C0C';                  // dark map backdrop base
-const SHEET = '#171922';                   // bottom-sheet / card surface (dark navy)
-const SHEET_ALT = '#1C2331';               // raised field / pill / chip
-const FIELD = '#1B222C';                   // feedback input / dark field
-const RED = '#ED1C24';                     // brand red accent
+// Favor Pal (provider) active-favor flow — "Provider App v.2" DARK design.
+// Palette verified on the v.2 canvas: page/map ink #0D0A0A, navy sheets/modals
+// #252A38 (fields a shade lighter #2E3442), white primary buttons w/ black
+// Poppins Medium labels, red accents #D40000 (pins/route) + #ED1C24 (brand).
+// The app's shared useTheme() is LIGHT and only drives auth/onboarding, so we
+// pin the fixed dark palette here.
+const PAGE_BG = '#0D0A0A';                 // page / map ink (v.2 provider bg)
+const MAP_BG = '#0D0A0A';                  // dark map backdrop base
+const SHEET = '#252A38';                   // bottom-sheet / card / modal navy
+const SHEET_ALT = '#2E3442';               // raised field / pill / chip (a shade lighter)
+const FIELD = '#2E3442';                   // feedback input / dark field
+const RED = '#ED1C24';                     // brand red (rows / active chips)
+const PIN_RED = '#D40000';                 // map pins + route red
 const STAR = '#FFBD00';                    // rating amber
 const TEXT = '#FFFFFF';                    // primary text
-const SUBTLE = 'rgba(255,255,255,0.6)';    // secondary text
-const MUTED = 'rgba(255,255,255,0.4)';     // tertiary / placeholder text
+const SUBTLE = '#B9B4B4';                  // secondary gray (v.2)
+const MUTED = 'rgba(255,255,255,0.45)';    // tertiary / placeholder text
 const DIVIDER = 'rgba(255,255,255,0.10)';  // hairline dividers
 const BORDER = 'rgba(255,255,255,0.10)';   // card / field borders
 const SUCCESS = '#02CB00';                 // success checkmark green
 const CTA_BG = '#FFFFFF';                  // primary CTA button bg (white-on-dark)
-const CTA_TEXT = '#141414';                // primary CTA button text (dark)
-const DARK_BTN = '#1C2331';                // secondary / destructive dark pill
+const CTA_TEXT = '#0D0A0A';                // primary CTA label (black)
+const DARK_BTN = '#1C2331';                // secondary dark button
 
-const CHARACTERS = require('../../assets/img/onboarding/launch-people.png');
+// Poppins: 500/600 are registered app-wide in App.tsx; 400 is loaded locally
+// per screen (same fallback pattern the other v.2 screens use).
+const P400 = 'Poppins_400Regular';
+const P500 = 'Poppins_500Medium';
+const P600 = 'Poppins_600SemiBold';
+function usePoppins() {
+  const [loaded] = useFonts({ Poppins_400Regular });
+  return loaded;
+}
 
-// Tier illustration per favor tier (custom/negotiate fall back to the small icon).
-const TIER_IMG: Record<string, ReturnType<typeof require>> = {
-  tiny: require('../../assets/img/request/tier-tiny.png'),
-  small: require('../../assets/img/request/tier-small.png'),
-  big: require('../../assets/img/request/tier-big.png'),
-  huge: require('../../assets/img/request/tier-huge.png'),
-};
-const tierImage = (tier?: string) => TIER_IMG[tier ?? ''] ?? TIER_IMG.small;
+const CELEBRATION = require('../../assets/img/tracking/celebration.png');
 
 // ---- shared dark-map backdrop -------------------------------------------------
-function MapBackdrop() {
+function MapBackdrop({ route }: { route?: boolean }) {
   return (
     <View style={StyleSheet.absoluteFill}>
       <View style={[StyleSheet.absoluteFill, { backgroundColor: MAP_BG }]} />
-      <View style={{ position: 'absolute', top: 90, left: 40, width: 3, height: 600, backgroundColor: '#1A1D26', transform: [{ rotate: '8deg' }] }} />
-      <View style={{ position: 'absolute', top: 120, left: -20, right: 0, height: 8, backgroundColor: '#23262F', opacity: 0.7 }} />
-      <View style={{ position: 'absolute', top: 240, left: 120, width: 3, height: 500, backgroundColor: '#1A1D26' }} />
-      <View style={{ position: 'absolute', top: 260, left: 0, right: 30, height: 3, backgroundColor: '#1A1D26' }} />
+      <View style={{ position: 'absolute', top: 90, left: 40, width: 3, height: 600, backgroundColor: '#1A1F2B', transform: [{ rotate: '8deg' }] }} />
+      <View style={{ position: 'absolute', top: 120, left: -20, right: 0, height: 8, backgroundColor: '#1C2331', opacity: 0.7 }} />
+      <View style={{ position: 'absolute', top: 240, left: 120, width: 3, height: 500, backgroundColor: '#1A1F2B' }} />
+      <View style={{ position: 'absolute', top: 260, left: 0, right: 30, height: 3, backgroundColor: '#1A1F2B' }} />
+      {route ? (
+        <>
+          {/* Red route to the favor destination + car marker (v.2 en-route frames). */}
+          <View style={{ position: 'absolute', top: '20%', left: '48%', width: 4, height: '22%', backgroundColor: PIN_RED, borderRadius: 2 }} />
+          <View style={{ position: 'absolute', top: '42%', left: '22%', width: '27%', height: 4, backgroundColor: PIN_RED, borderRadius: 2 }} />
+          <Ionicons name="location" size={40} color={PIN_RED} style={{ position: 'absolute', top: '15%', left: '44%' }} />
+          <View style={{ position: 'absolute', top: '40%', left: '18%', width: 36, height: 36, borderRadius: 18, backgroundColor: SHEET, alignItems: 'center', justifyContent: 'center', borderWidth: StyleSheet.hairlineWidth, borderColor: BORDER }}>
+            <Ionicons name="car" size={20} color={TEXT} />
+          </View>
+        </>
+      ) : null}
     </View>
   );
 }
@@ -61,8 +76,8 @@ function MapTopBar({ navigation, banner, onBack }: any) {
     <View style={{ position: 'absolute', top: insets.top + 8, left: 0, right: 0, paddingHorizontal: 16 }}>
       {banner ? (
         <View style={st.navBanner}>
-          <Ionicons name="arrow-up" size={20} color="#fff" />
-          <Text style={{ color: '#fff', fontSize: 16, fontWeight: '600', marginLeft: 10, fontFamily: fonts.bodySemiBold }}>{banner}</Text>
+          <Ionicons name="arrow-up" size={20} color={TEXT} />
+          <Text style={{ color: TEXT, fontSize: 16, marginLeft: 10, fontFamily: P500 }}>{banner}</Text>
         </View>
       ) : (
         <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
@@ -87,10 +102,48 @@ function Handle() {
   return <View style={st.handle} />;
 }
 
+// Navy modal card — v.2 dark-screen modal pattern (#252A38 card, r16, ~85%
+// width, white Poppins Medium title, gray body, white primary button).
+function NavyModal({ visible, title, message, primaryLabel, onPrimary, dismissLabel, onDismiss }: {
+  visible: boolean;
+  title: string;
+  message: string;
+  primaryLabel: string;
+  onPrimary: () => void;
+  dismissLabel?: string;
+  onDismiss?: () => void;
+}) {
+  return (
+    <Modal transparent visible={visible} animationType="fade" onRequestClose={onDismiss ?? onPrimary}>
+      <View style={st.modalScrim}>
+        <View style={st.modalCard}>
+          <Text style={st.modalTitle}>{title}</Text>
+          <Text style={st.modalBody}>{message}</Text>
+          <TouchableOpacity
+            style={[st.whiteBtn, { alignSelf: 'stretch' }]}
+            onPress={onPrimary}
+            accessibilityRole="button"
+            accessibilityLabel={primaryLabel}
+          >
+            <Text style={st.whiteBtnTxt}>{primaryLabel}</Text>
+          </TouchableOpacity>
+          {dismissLabel && onDismiss ? (
+            // app addition — no v2 frame (escape hatch so the modal isn't a trap)
+            <TouchableOpacity onPress={onDismiss} style={{ marginTop: 14, paddingVertical: 4 }} accessibilityRole="button" accessibilityLabel={dismissLabel}>
+              <Text style={{ color: SUBTLE, fontSize: 14, fontFamily: P500 }}>{dismissLabel}</Text>
+            </TouchableOpacity>
+          ) : null}
+        </View>
+      </View>
+    </Modal>
+  );
+}
+
 // ===========================================================================
 // 0. BrowseFavors — a board of ALL open favor requests a pal can browse and
 // pick from (backed by the live /favors/incoming feed in store.incomingFavors).
-// Not in the original Figma; styled to match the v.2 dark surfaces.
+// app addition — no v2 frame (the blast sheet is the designed incoming-favor
+// UX); palette aligned to v.2: #0D0A0A bg, navy cards, white primary buttons.
 // ===========================================================================
 const tierLabel = (f: Favor) =>
   (FAVOR_TIERS as Record<string, { label: string }>)[f.tier]?.label ?? 'Custom Favor';
@@ -156,7 +209,7 @@ function FavorCard({ favor, onPress }: { favor: Favor; onPress: () => void }) {
         <Text style={bw.earn}>You earn <Text style={bw.earnAmt}>${payout.toFixed(2)}</Text></Text>
         <View style={bw.viewBtn}>
           <Text style={bw.viewText}>View</Text>
-          <Ionicons name="chevron-forward" size={15} color="#fff" />
+          <Ionicons name="chevron-forward" size={15} color={CTA_TEXT} />
         </View>
       </View>
     </TouchableOpacity>
@@ -199,6 +252,7 @@ export const BrowseFavors = ({ navigation }: any) => {
   const [errored, setErrored] = useState(false);
   const [sort, setSort] = useState<SortKey>('new');
   const [tier, setTier] = useState('all');
+  const fontsLoaded = usePoppins();
   const favors = s.incomingFavors;
 
   // The store's refreshIncoming() swallows network errors, so a probe of the
@@ -236,6 +290,8 @@ export const BrowseFavors = ({ navigation }: any) => {
   const subtitle = shown.length === favors.length
     ? `${favors.length} ${favors.length === 1 ? 'request' : 'requests'} near you`
     : `${shown.length} of ${favors.length} requests`;
+
+  if (!fontsLoaded) return <View style={{ flex: 1, backgroundColor: PAGE_BG }} />;
 
   return (
     <View style={{ flex: 1, backgroundColor: PAGE_BG, paddingTop: insets.top }}>
@@ -278,7 +334,7 @@ export const BrowseFavors = ({ navigation }: any) => {
               <Text style={bw.emptyTitle}>Couldn{'’'}t load favors</Text>
               <Text style={bw.emptySub}>Check your connection and try again.</Text>
               <TouchableOpacity onPress={onRefresh} style={bw.retryBtn} accessibilityRole="button" accessibilityLabel="Retry loading favors">
-                <Ionicons name="refresh" size={16} color="#fff" />
+                <Ionicons name="refresh" size={16} color={CTA_TEXT} />
                 <Text style={bw.retryText}>Retry</Text>
               </TouchableOpacity>
             </View>
@@ -299,46 +355,49 @@ export const BrowseFavors = ({ navigation }: any) => {
 
 const bw = StyleSheet.create({
   header: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: 16, paddingVertical: 14 },
-  title: { color: TEXT, fontSize: 20, fontWeight: '700', fontFamily: fonts.display },
-  subtitle: { color: SUBTLE, fontSize: 13, marginTop: 2, fontFamily: fonts.bodyRegular },
+  title: { color: TEXT, fontSize: 20, fontFamily: P600 },
+  subtitle: { color: SUBTLE, fontSize: 13, marginTop: 2, fontFamily: P400 },
   chipRows: { paddingBottom: 4 },
   chipRow: { paddingHorizontal: 16, paddingVertical: 6, gap: 8, alignItems: 'center' },
   chipSep: { width: 1, height: 22, backgroundColor: DIVIDER, marginHorizontal: 4 },
   chip: { backgroundColor: SHEET_ALT, borderRadius: 999, paddingHorizontal: 14, paddingVertical: 7 },
   chipActive: { backgroundColor: RED },
-  chipText: { color: SUBTLE, fontSize: 13, fontWeight: '600', fontFamily: fonts.bodySemiBold },
-  chipTextActive: { color: '#fff' },
+  chipText: { color: SUBTLE, fontSize: 13, fontFamily: P500 },
+  chipTextActive: { color: TEXT },
   card: { backgroundColor: SHEET, borderRadius: 16, padding: 16, marginBottom: 12, borderWidth: StyleSheet.hairlineWidth, borderColor: BORDER },
   cardTop: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
   tierPill: { backgroundColor: 'rgba(237,28,36,0.18)', borderRadius: 999, paddingHorizontal: 10, paddingVertical: 4 },
-  tierPillText: { color: '#FF6B70', fontSize: 12, fontWeight: '700', fontFamily: fonts.bodyBold },
-  price: { color: TEXT, fontSize: 22, fontWeight: '800', fontFamily: fonts.display },
-  desc: { color: TEXT, fontSize: 15, marginTop: 12, lineHeight: 21, fontFamily: fonts.bodyRegular },
+  tierPillText: { color: '#FF6B70', fontSize: 12, fontFamily: P600 },
+  price: { color: TEXT, fontSize: 22, fontFamily: P600 },
+  desc: { color: TEXT, fontSize: 15, marginTop: 12, lineHeight: 21, fontFamily: P400 },
   metaRow: { flexDirection: 'row', alignItems: 'center', marginTop: 10, gap: 5 },
-  meta: { color: SUBTLE, fontSize: 13, fontFamily: fonts.bodyRegular },
-  dot: { color: SUBTLE, fontSize: 13, marginHorizontal: 2, fontFamily: fonts.bodyRegular },
+  meta: { color: SUBTLE, fontSize: 13, fontFamily: P400 },
+  dot: { color: SUBTLE, fontSize: 13, marginHorizontal: 2, fontFamily: P400 },
   schedRow: { flexDirection: 'row', alignItems: 'center', marginTop: 8, gap: 5 },
-  schedText: { color: '#FF6B70', fontSize: 13, fontWeight: '600', fontFamily: fonts.bodySemiBold },
+  schedText: { color: '#FF6B70', fontSize: 13, fontFamily: P500 },
   cardFooter: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginTop: 14, borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: DIVIDER, paddingTop: 14 },
-  earn: { color: SUBTLE, fontSize: 14, fontFamily: fonts.bodyRegular },
-  earnAmt: { color: TEXT, fontWeight: '700', fontFamily: fonts.bodyBold },
-  viewBtn: { flexDirection: 'row', alignItems: 'center', gap: 2, backgroundColor: RED, borderRadius: 999, paddingLeft: 14, paddingRight: 10, paddingVertical: 8 },
-  viewText: { color: '#fff', fontWeight: '700', fontSize: 14, fontFamily: fonts.bodyBold },
+  earn: { color: SUBTLE, fontSize: 14, fontFamily: P400 },
+  earnAmt: { color: TEXT, fontFamily: P600 },
+  viewBtn: { flexDirection: 'row', alignItems: 'center', gap: 2, backgroundColor: CTA_BG, borderRadius: 8, paddingLeft: 14, paddingRight: 10, paddingVertical: 8 },
+  viewText: { color: CTA_TEXT, fontSize: 14, fontFamily: P500 },
   empty: { flex: 1, alignItems: 'center', justifyContent: 'center', paddingTop: 80, paddingHorizontal: 32 },
-  emptyTitle: { color: TEXT, fontSize: 17, fontWeight: '700', marginTop: 16, fontFamily: fonts.display },
-  emptySub: { color: SUBTLE, fontSize: 14, textAlign: 'center', marginTop: 8, lineHeight: 20, fontFamily: fonts.bodyRegular },
-  retryBtn: { flexDirection: 'row', alignItems: 'center', gap: 6, backgroundColor: RED, borderRadius: 999, paddingHorizontal: 18, paddingVertical: 10, marginTop: 18 },
-  retryText: { color: '#fff', fontWeight: '700', fontSize: 14, fontFamily: fonts.bodyBold },
+  emptyTitle: { color: TEXT, fontSize: 17, marginTop: 16, fontFamily: P600 },
+  emptySub: { color: SUBTLE, fontSize: 14, textAlign: 'center', marginTop: 8, lineHeight: 20, fontFamily: P400 },
+  retryBtn: { flexDirection: 'row', alignItems: 'center', gap: 6, backgroundColor: CTA_BG, borderRadius: 8, paddingHorizontal: 18, paddingVertical: 10, marginTop: 18 },
+  retryText: { color: CTA_TEXT, fontSize: 14, fontFamily: P500 },
 });
 
 // ===========================================================================
-// 1. PalFavorDetail — incoming favor quick view (pal-quickview-v2)
+// 1. PalFavorDetail — "Favor Quick View" (v.2 181:10645): navy bottom sheet
+// over the dark map — "{Tier} Favor $X", requester name + description +
+// posted datetime + View More, white ACCEPT.
 // ===========================================================================
 export const PalFavorDetail = ({ navigation, route }: any) => {
   const s = useStore();
   const [expanded, setExpanded] = useState(false);
   const [accepting, setAccepting] = useState(false);
   const [acceptError, setAcceptError] = useState('');
+  const fontsLoaded = usePoppins();
 
   const onAccept = async (favorId: string) => {
     if (accepting) return;
@@ -355,9 +414,9 @@ export const PalFavorDetail = ({ navigation, route }: any) => {
   const favor = favorId ? s.incomingFavors.find((f) => f.id === favorId) : s.incomingFavors[0];
   const gone = !!favorId && !favor;
   const base = favor?.price ?? 20;
-  // Real favor framing. The requester stays anonymous until the pal accepts
-  // (privacy), so we show the request itself, not a fake person.
-  const title = favor ? `${tierLabel(favor)} · $${base}` : 'Favor request';
+  // v.2 quick view shows the requester's (first) name above the description.
+  const requester = favor?.memberName ?? 'Favor Member';
+  const title = favor ? `${tierLabel(favor)} $${base}` : 'Favor request';
   // Pal-side economics: what THEY take home (never the member invoice total).
   const { payout } = computePayout(base);
   const area = favor?.location?.address ?? 'Nearby';
@@ -366,6 +425,8 @@ export const PalFavorDetail = ({ navigation, route }: any) => {
     : favor?.createdAt
       ? `Requested ${relTime(favor.createdAt)}`
       : 'As soon as possible';
+
+  if (!fontsLoaded) return <View style={{ flex: 1, backgroundColor: PAGE_BG }} />;
 
   if (gone) {
     return (
@@ -376,10 +437,10 @@ export const PalFavorDetail = ({ navigation, route }: any) => {
           <Handle />
           <View style={{ alignItems: 'center', paddingVertical: 24 }}>
             <Ionicons name="time-outline" size={48} color={SUBTLE} />
-            <Txt variant="h4" color={TEXT} center style={{ marginTop: 14 }}>This favor was just taken</Txt>
-            <Txt variant="body" color={SUBTLE} center style={{ marginTop: 8 }}>
+            <Text style={{ color: TEXT, fontSize: 19, fontFamily: P500, textAlign: 'center', marginTop: 14 }}>This favor was just taken</Text>
+            <Text style={{ color: SUBTLE, fontSize: 14, lineHeight: 21, fontFamily: P400, textAlign: 'center', marginTop: 8 }}>
               Another Favor Pal accepted it, or the member cancelled. Browse other open favors.
-            </Txt>
+            </Text>
             <TouchableOpacity style={[st.whiteBtn, { alignSelf: 'stretch' }]} onPress={() => navigation.goBack()}>
               <Text style={st.whiteBtnTxt}>BACK TO FAVORS</Text>
             </TouchableOpacity>
@@ -395,21 +456,20 @@ export const PalFavorDetail = ({ navigation, route }: any) => {
       <MapTopBar navigation={navigation} onBack={() => navigation.goBack()} />
       <View style={st.sheet}>
         <Handle />
-        <Txt variant="h3" color={TEXT} center style={{ marginVertical: 14 }}>{title}</Txt>
+        <Text style={{ color: TEXT, fontSize: 19, fontFamily: P500, textAlign: 'center', marginVertical: 14 }}>{title}</Text>
         <View style={st.divider} />
         <View style={{ flexDirection: 'row', marginTop: 16 }}>
-          <View style={[st.avatar, { backgroundColor: SHEET_ALT, alignItems: 'center', justifyContent: 'center' }]}>
-            <Ionicons name="cube" size={26} color={TEXT} />
-          </View>
+          <Avatar uri={undefined} size={56} name={requester} />
           <View style={{ flex: 1, marginLeft: 14 }}>
-            <Text style={{ color: TEXT, fontWeight: '700', fontSize: 18, fontFamily: fonts.bodyBold }}>New favor request</Text>
-            <Text style={{ color: SUBTLE, fontSize: 14, marginTop: 4, fontFamily: fonts.bodyRegular }} numberOfLines={expanded ? undefined : 2}>
+            <Text style={{ color: TEXT, fontSize: 16, fontFamily: P500 }}>{requester}</Text>
+            <Text style={{ color: SUBTLE, fontSize: 14, lineHeight: 20, marginTop: 4, fontFamily: P400 }} numberOfLines={expanded ? undefined : 2}>
               {favor?.description || 'No details provided yet.'}
             </Text>
-            <Text style={{ color: SUBTLE, fontSize: 13, marginTop: 6, fontFamily: fonts.bodyRegular }}>{when}</Text>
-            <Text style={{ fontSize: 14, marginTop: 6, fontFamily: fonts.bodyRegular }}>
-              <Text style={{ color: TEXT, fontWeight: '700', fontFamily: fonts.bodyBold }}>{`You earn $${payout.toFixed(2)}`}</Text>
-              <Text style={{ color: SUBTLE, fontFamily: fonts.bodyRegular }}>{`   ·   ${area}`}</Text>
+            <Text style={{ color: SUBTLE, fontSize: 13, marginTop: 6, fontFamily: P400 }}>{when}</Text>
+            {/* app addition — no v2 frame (pal-side payout + area at a glance) */}
+            <Text style={{ fontSize: 14, marginTop: 6, fontFamily: P400 }}>
+              <Text style={{ color: TEXT, fontFamily: P500 }}>{`You earn $${payout.toFixed(2)}`}</Text>
+              <Text style={{ color: SUBTLE, fontFamily: P400 }}>{`   ·   ${area}`}</Text>
             </Text>
             <TouchableOpacity
               onPress={() => setExpanded((v) => !v)}
@@ -417,7 +477,7 @@ export const PalFavorDetail = ({ navigation, route }: any) => {
               accessibilityState={{ expanded }}
               accessibilityLabel={expanded ? 'View less favor detail' : 'View more favor detail'}
             >
-              <Text style={{ color: TEXT, fontWeight: '700', fontSize: 14, marginTop: 8, fontFamily: fonts.bodyBold }}>
+              <Text style={{ color: TEXT, fontSize: 14, marginTop: 8, fontFamily: P500 }}>
                 {expanded ? 'View Less' : 'View More'}
               </Text>
             </TouchableOpacity>
@@ -443,12 +503,12 @@ export const PalFavorDetail = ({ navigation, route }: any) => {
         >
           <Text style={st.whiteBtnTxt}>{accepting ? 'ACCEPTING…' : 'ACCEPT'}</Text>
         </TouchableOpacity>
-        <InfoModal
+        <NavyModal
           visible={!!acceptError}
           title="Can't accept this favor"
           message={acceptError}
-          buttonLabel="OK"
-          onClose={() => setAcceptError('')}
+          primaryLabel="OK"
+          onPrimary={() => setAcceptError('')}
         />
         <TouchableOpacity
           onPress={() => { if (favor) s.declineFavor(favor.id); navigation.goBack(); }}
@@ -456,7 +516,7 @@ export const PalFavorDetail = ({ navigation, route }: any) => {
           accessibilityRole="button"
           accessibilityLabel="Decline this favor"
         >
-          <Text style={{ color: SUBTLE, fontWeight: '600', fontFamily: fonts.bodySemiBold }}>decline this favor</Text>
+          <Text style={{ color: SUBTLE, fontSize: 14, fontFamily: P500 }}>decline this favor</Text>
         </TouchableOpacity>
       </View>
     </View>
@@ -466,24 +526,32 @@ export const PalFavorDetail = ({ navigation, route }: any) => {
 function QuickRow({ label, value }: any) {
   return (
     <View style={{ marginTop: 12 }}>
-      <Text style={{ color: SUBTLE, fontSize: 12, letterSpacing: 0.5, textTransform: 'uppercase', fontFamily: fonts.bodySemiBold }}>{label}</Text>
-      <Text style={{ color: TEXT, fontSize: 14, marginTop: 2, fontFamily: fonts.bodyRegular }}>{value}</Text>
+      <Text style={{ color: SUBTLE, fontSize: 12, letterSpacing: 0.5, textTransform: 'uppercase', fontFamily: P500 }}>{label}</Text>
+      <Text style={{ color: TEXT, fontSize: 14, marginTop: 2, fontFamily: P400 }}>{value}</Text>
     </View>
   );
 }
 
 // ===========================================================================
-// 2. Navigation — accepted favor w/ directions banner (favor-arrived-v2)
+// 2. Navigation — "Favor Booked" (v.2 181:10690): dark map + navy directions
+// banner + navy sheet: title, requester row, big arrival window + chip,
+// Call / red Message rows, white I AM HERE, dark CANCEL THIS FAVOR.
 // ===========================================================================
 export const Navigation = ({ navigation }: any) => {
   const s = useStore();
   const fav = s.activeFavor;
   const [callOpen, setCallOpen] = useState(false);
+  const [arriveOpen, setArriveOpen] = useState(false);
+  const [cancelOpen, setCancelOpen] = useState(false);
+  const [cancelledOpen, setCancelledOpen] = useState(false);
+  const fontsLoaded = usePoppins();
   const memberName = fav?.memberName ?? 'Favor Member';
   const tierName = fav ? tierLabel(fav) : 'Favor';
   const distance = fav ? fmtMiles(favorDistance(fav)) : '';
   const window = fav?.etaWindow
     ?? (fav?.scheduledFor ? new Date(fav.scheduledFor).toLocaleString([], { hour: 'numeric', minute: '2-digit' }) : 'As soon as possible');
+  // v.2 banner reads "↑ Head west on 2nd St." — steer to the favor's address.
+  const banner = fav?.location?.address ? `Head to ${fav.location.address}` : 'Head to the favor location.';
 
   const openMessage = async () => {
     if (!fav?.memberId) return;
@@ -491,24 +559,26 @@ export const Navigation = ({ navigation }: any) => {
     if (id) navigation.navigate('MessageThread', { threadId: id });
   };
 
+  if (!fontsLoaded) return <View style={{ flex: 1, backgroundColor: PAGE_BG }} />;
+
   return (
     <View style={{ flex: 1, backgroundColor: PAGE_BG }}>
-      <MapBackdrop />
-      <MapTopBar navigation={navigation} banner="Head to the favor location." />
+      <MapBackdrop route />
+      <MapTopBar navigation={navigation} banner={banner} />
       <View style={st.sheet}>
         <Handle />
-        <Txt variant="h6" color={TEXT} center style={{ marginVertical: 12 }}>Favor Booked</Txt>
+        <Text style={{ color: TEXT, fontSize: 18, fontFamily: P600, textAlign: 'center', marginVertical: 12 }}>Favor Booked</Text>
         <View style={st.divider} />
         <View style={{ flexDirection: 'row', alignItems: 'center', marginTop: 16 }}>
           <Avatar uri={undefined} size={56} name={memberName} />
           <View style={{ marginLeft: 14 }}>
-            <Text style={{ color: TEXT, fontWeight: '700', fontSize: 18, fontFamily: fonts.bodyBold }}>{memberName}</Text>
-            <Text style={{ color: SUBTLE, fontSize: 14, marginTop: 2, fontFamily: fonts.bodyRegular }}>{tierName}</Text>
-            {distance ? <Text style={{ color: SUBTLE, fontSize: 13, marginTop: 2, fontFamily: fonts.bodyRegular }}>{distance}</Text> : null}
+            <Text style={{ color: TEXT, fontSize: 17, fontFamily: P500 }}>{memberName}</Text>
+            <Text style={{ color: SUBTLE, fontSize: 14, marginTop: 2, fontFamily: P400 }}>{tierName}</Text>
+            {distance ? <Text style={{ color: SUBTLE, fontSize: 13, marginTop: 2, fontFamily: P400 }}>{distance} away</Text> : null}
           </View>
         </View>
-        <Text style={{ color: TEXT, fontSize: 26, fontWeight: '800', textAlign: 'center', marginTop: 18, fontFamily: fonts.display }}>{window}</Text>
-        <View style={st.windowPill}><Text style={{ color: SUBTLE, fontSize: 13, fontFamily: fonts.bodyRegular }}>Arrival Window</Text></View>
+        <Text style={{ color: TEXT, fontSize: 28, fontFamily: P500, textAlign: 'center', marginTop: 18 }}>{window}</Text>
+        <View style={st.windowPill}><Text style={{ color: SUBTLE, fontSize: 13, fontFamily: P400 }}>Arrival Window</Text></View>
 
         <ActionRow icon="call" label="Call About This Favor" onPress={() => setCallOpen(true)} />
         <ActionRow icon="mail" label="Message Favor Member" red onPress={openMessage} />
@@ -517,7 +587,7 @@ export const Navigation = ({ navigation }: any) => {
           style={st.whiteBtn}
           accessibilityRole="button"
           accessibilityLabel="I have arrived"
-          onPress={() => { s.advanceFavor('arrived'); navigation.navigate('PalFavorInProgress'); }}
+          onPress={() => setArriveOpen(true)}
         >
           <Text style={st.whiteBtnTxt}>I AM HERE</Text>
         </TouchableOpacity>
@@ -525,18 +595,47 @@ export const Navigation = ({ navigation }: any) => {
           style={st.darkBtn}
           accessibilityRole="button"
           accessibilityLabel="Cancel this favor"
-          onPress={() => { void s.abandonFavor(); navigation.reset({ index: 0, routes: [{ name: 'Tabs' }] }); }}
+          onPress={() => setCancelOpen(true)}
         >
           <Text style={st.darkBtnTxt}>CANCEL THIS FAVOR</Text>
         </TouchableOpacity>
       </View>
+
+      {/* Arrive confirm (v.2 Arrive Modal) — fires before marking arrived. */}
+      <NavyModal
+        visible={arriveOpen}
+        title="You have arrived to your destination"
+        message={`Notify ${memberName} that you have arrived.`}
+        primaryLabel="I AM HERE"
+        onPrimary={() => { setArriveOpen(false); s.advanceFavor('arrived'); navigation.navigate('PalFavorInProgress'); }}
+        dismissLabel="Not yet"
+        onDismiss={() => setArriveOpen(false)}
+      />
+      {/* Cancel confirm (v.2 Cancel Favor Modal — pal copy). */}
+      <NavyModal
+        visible={cancelOpen}
+        title="Are you sure you want to cancel?"
+        message="You will not receive payment for this favor if you cancel."
+        primaryLabel="AGREE"
+        onPrimary={() => { setCancelOpen(false); void s.abandonFavor(); setCancelledOpen(true); }}
+        dismissLabel="Keep this favor"
+        onDismiss={() => setCancelOpen(false)}
+      />
+      {/* Cancellation confirmed (v.2). */}
+      <NavyModal
+        visible={cancelledOpen}
+        title="Cancelled."
+        message="Notification of cancelled favor was sent to favor member."
+        primaryLabel="FIND ANOTHER FAVOR"
+        onPrimary={() => { setCancelledOpen(false); navigation.reset({ index: 0, routes: [{ name: 'Tabs' }] }); }}
+      />
       {/* Privacy: the call is relayed — the pal never sees the member's real number. */}
-      <InfoModal
+      <NavyModal
         visible={callOpen}
         title="Calling privately"
         message="We connect you and the Favor Member through a private relay, so neither of you ever sees the other's real phone number."
-        buttonLabel="OK"
-        onClose={() => setCallOpen(false)}
+        primaryLabel="OK"
+        onPrimary={() => setCallOpen(false)}
       />
     </View>
   );
@@ -552,62 +651,68 @@ function ActionRow({ icon, label, red, onPress }: any) {
       accessibilityLabel={label}
     >
       <Ionicons name={icon} size={20} color={red ? RED : TEXT} />
-      <Text style={{ color: TEXT, fontSize: 15, marginLeft: 14, flex: 1, fontFamily: fonts.bodyRegular }}>{label}</Text>
-      <Ionicons name="chevron-forward" size={18} color={SUBTLE} />
+      <Text style={{ color: red ? RED : TEXT, fontSize: 15, marginLeft: 14, flex: 1, fontFamily: P500 }}>{label}</Text>
+      <Ionicons name="chevron-forward" size={18} color={red ? RED : SUBTLE} />
     </TouchableOpacity>
   );
 }
 
 // ===========================================================================
-// 3. PalFavorInProgress — doing the favor (favor-inprogress-v2)
+// 3. PalFavorInProgress — "Favor In Progress / Arrived" (v.2 181:10783):
+// dark map + red route, "You have arrived." banner once arrived, bottom mini
+// card (requester, time window, distance) + white MARK AS DONE.
 // ===========================================================================
 export const PalFavorInProgress = ({ navigation }: any) => {
   const s = useStore();
+  const insets = useSafeAreaInsets();
+  const fontsLoaded = usePoppins();
   const fav = s.activeFavor;
   const base = fav?.price ?? 20;
   // Pal-side breakdown — what the pal takes home, NOT the member's invoice.
   const { payout, commission } = computePayout(base);
-  const description = fav?.description || 'No description provided.';
   // Exact address is appropriate here: the pal has already accepted the favor.
   const address = fav?.location?.address || 'Address shared by the member';
   const memberName = fav?.memberName ?? 'Favor Member';
   const tierName = fav ? tierLabel(fav) : 'Favor';
-  const when = fav?.scheduledFor
-    ? new Date(fav.scheduledFor).toLocaleString([], { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })
-    : fav?.createdAt
-      ? new Date(fav.createdAt).toLocaleString([], { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })
-      : '';
+  const distance = fav ? fmtMiles(favorDistance(fav)) : '';
+  const arrived = fav?.status === 'arrived' || fav?.status === 'in_progress';
+  const window = fav?.etaWindow
+    ?? (fav?.scheduledFor ? new Date(fav.scheduledFor).toLocaleString([], { hour: 'numeric', minute: '2-digit' }) : 'As soon as possible');
+  const banner = arrived
+    ? 'You have arrived.'
+    : (fav?.location?.address ? `Head to ${fav.location.address}` : 'Head to the favor location.');
+
+  if (!fontsLoaded) return <View style={{ flex: 1, backgroundColor: PAGE_BG }} />;
+
   return (
     <View style={{ flex: 1, backgroundColor: PAGE_BG }}>
-      <MapBackdrop />
-      <MapTopBar navigation={navigation} />
-      <ScrollView style={st.scrollSheet} contentContainerStyle={{ paddingBottom: 24 }}>
-        <Handle />
-        <Txt variant="h6" color={TEXT} center style={{ marginVertical: 12 }}>You are currently doing a favor.</Txt>
-        <View style={st.divider} />
-        <View style={{ flexDirection: 'row', marginTop: 16 }}>
-          <Avatar uri={undefined} size={56} name={memberName} />
-          <View style={{ flex: 1, marginLeft: 14 }}>
-            <Text style={{ color: TEXT, fontWeight: '700', fontSize: 18, fontFamily: fonts.bodyBold }}>{memberName}</Text>
-            <Text style={{ color: SUBTLE, fontSize: 14, marginTop: 4, fontFamily: fonts.bodyRegular }}>{description}</Text>
-            {when ? <Text style={{ color: SUBTLE, fontSize: 13, marginTop: 4, fontFamily: fonts.bodyRegular }}>{when}</Text> : null}
+      <MapBackdrop route />
+      <MapTopBar navigation={navigation} banner={banner} />
+      <View style={[st.miniCard, { bottom: insets.bottom + 16 }]}>
+        <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+          <Avatar uri={undefined} size={48} name={memberName} />
+          <View style={{ flex: 1, marginLeft: 12 }}>
+            <Text style={{ color: TEXT, fontSize: 16, fontFamily: P500 }}>{memberName}</Text>
+            <Text style={{ color: SUBTLE, fontSize: 13, marginTop: 2, fontFamily: P400 }}>{tierName}</Text>
+          </View>
+          <View style={{ alignItems: 'flex-end' }}>
+            <Text style={{ color: TEXT, fontSize: 15, fontFamily: P500 }}>{window}</Text>
+            <Text style={{ color: SUBTLE, fontSize: 13, marginTop: 2, fontFamily: P400 }}>{arrived ? '0 mile away' : distance ? `${distance} away` : ''}</Text>
           </View>
         </View>
-        <View style={[st.divider, { marginTop: 18 }]} />
-        <View style={{ flexDirection: 'row', alignItems: 'center', marginTop: 16 }}>
-          <View style={st.tierThumb}>
-            <Image source={tierImage(fav?.tier)} style={{ width: 48, height: 48 }} resizeMode="contain" />
-          </View>
-          <View style={{ flex: 1 }}>
-            <CostRow label={tierName} value={`$${base.toFixed(2)}`} bold />
-            <CostRow label="Platform commission (20%)" value={`-$${commission.toFixed(2)}`} />
-            <CostRow label="You earn" value={`$${payout.toFixed(2)}`} bold />
-          </View>
+        {/* app addition — no v2 frame (destination + pal-side payout breakdown) */}
+        <View style={[st.divider, { marginTop: 14 }]} />
+        <View style={{ flexDirection: 'row', alignItems: 'center', marginTop: 10 }}>
+          <Ionicons name="location" size={15} color={SUBTLE} />
+          <Text style={{ color: SUBTLE, fontSize: 13, marginLeft: 6, flex: 1, fontFamily: P400 }} numberOfLines={1}>{address}</Text>
         </View>
-        <Section icon="document-text" title="Description" body={description} />
-        <Section icon="location" title="Address" body={address} />
+        <View style={{ marginTop: 8 }}>
+          <CostRow label={tierName} value={`$${base.toFixed(2)}`} bold />
+          <CostRow label="Platform commission (20%)" value={`-$${commission.toFixed(2)}`} />
+          <CostRow label="You earn" value={`$${payout.toFixed(2)}`} bold />
+        </View>
         <TouchableOpacity
-          style={[st.whiteBtn, { opacity: fav ? 1 : 0.5 }]}
+          style={[st.whiteBtn, { marginTop: 16, opacity: fav ? 1 : 0.5 }]}
           disabled={!fav}
           accessibilityRole="button"
           accessibilityLabel="Mark favor done and get paid"
@@ -621,9 +726,9 @@ export const PalFavorInProgress = ({ navigation }: any) => {
             navigation.reset({ index: 1, routes: [{ name: 'Tabs' }, { name: 'PalFavorSuccess', params: { payout: earned } }] });
           }}
         >
-          <Text style={st.whiteBtnTxt}>MARK FAVOR DONE</Text>
+          <Text style={st.whiteBtnTxt}>MARK AS DONE</Text>
         </TouchableOpacity>
-      </ScrollView>
+      </View>
     </View>
   );
 };
@@ -631,41 +736,33 @@ export const PalFavorInProgress = ({ navigation }: any) => {
 function CostRow({ label, value, bold }: any) {
   return (
     <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginVertical: 2 }}>
-      <Text style={{ color: bold ? TEXT : SUBTLE, fontSize: 14, fontWeight: bold ? '700' : '400', fontFamily: bold ? fonts.bodyBold : fonts.bodyRegular }}>{label}</Text>
-      <Text style={{ color: bold ? TEXT : SUBTLE, fontSize: 14, fontWeight: bold ? '700' : '400', fontFamily: bold ? fonts.bodyBold : fonts.bodyRegular }}>{value}</Text>
-    </View>
-  );
-}
-
-function Section({ icon, title, body }: any) {
-  return (
-    <View style={{ marginTop: 18 }}>
-      <View style={{ flexDirection: 'row', alignItems: 'center' }}>
-        <Ionicons name={icon} size={18} color={TEXT} />
-        <Text style={{ color: TEXT, fontWeight: '700', fontSize: 16, marginLeft: 8, fontFamily: fonts.bodyBold }}>{title}</Text>
-      </View>
-      <Text style={{ color: SUBTLE, fontSize: 14, marginTop: 6, marginLeft: 26, fontFamily: fonts.bodyRegular }}>{body}</Text>
+      <Text style={{ color: bold ? TEXT : SUBTLE, fontSize: 14, fontFamily: bold ? P500 : P400 }}>{label}</Text>
+      <Text style={{ color: bold ? TEXT : SUBTLE, fontSize: 14, fontFamily: bold ? P500 : P400 }}>{value}</Text>
     </View>
   );
 }
 
 // ===========================================================================
-// 4. PalFavorSuccess — "You just got paid!" confirmation (favor-complete-v2)
+// 4. PalFavorSuccess — "Favor Success" (v.2): black full screen, green check
+// circle, "You just got paid!", white ADD FEEDBACK + dark FIND ANOTHER FAVOR.
 // ===========================================================================
 export const PalFavorSuccess = ({ navigation, route }: any) => {
+  const fontsLoaded = usePoppins();
   const payout = route?.params?.payout;
   const paid = typeof payout === 'number';
+  if (!fontsLoaded) return <View style={{ flex: 1, backgroundColor: PAGE_BG }} />;
   return (
     <SafeAreaView edges={['top', 'bottom']} style={{ flex: 1, backgroundColor: PAGE_BG }}>
       <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 24 }}>
-        <Ionicons name="checkmark-circle-outline" size={120} color={SUCCESS} />
-        <Txt variant="h2" color={TEXT} center style={{ marginTop: 24 }}>
-          {paid ? `You just got paid $${payout.toFixed(2)}!` : 'You just got paid!'}
-        </Txt>
+        <Ionicons name="checkmark-circle" size={120} color={SUCCESS} />
+        <Text style={{ color: TEXT, fontSize: 24, fontFamily: P500, textAlign: 'center', marginTop: 24 }}>
+          You just got paid!
+        </Text>
         {paid && (
-          <Txt variant="body" color={SUBTLE} center style={{ marginTop: 10 }}>
+          // app addition — no v2 frame (surface the exact amount + ledger note)
+          <Text style={{ color: SUBTLE, fontSize: 15, lineHeight: 22, fontFamily: P400, textAlign: 'center', marginTop: 10 }}>
             {`$${payout.toFixed(2)} was added to your Earning History.`}
-          </Txt>
+          </Text>
         )}
       </View>
       <View style={{ paddingHorizontal: 24, paddingBottom: 12 }}>
@@ -681,10 +778,10 @@ export const PalFavorSuccess = ({ navigation, route }: any) => {
         <TouchableOpacity
           style={st.darkBtn}
           accessibilityRole="button"
-          accessibilityLabel="Done"
+          accessibilityLabel="Find another favor"
           onPress={() => navigation.reset({ index: 0, routes: [{ name: 'Tabs' }] })}
         >
-          <Text style={st.darkBtnTxt}>DONE</Text>
+          <Text style={st.darkBtnTxt}>FIND ANOTHER FAVOR</Text>
         </TouchableOpacity>
       </View>
     </SafeAreaView>
@@ -692,13 +789,16 @@ export const PalFavorSuccess = ({ navigation, route }: any) => {
 };
 
 // ===========================================================================
-// 5. PalFavorComplete — Thank You / feedback (favor-feedback-v2)
+// 5. PalFavorComplete — "Favor Complete" (v.2 181:11282): "Thank You!" +
+// celebration illustration + Rating stars + navy feedback field + white
+// SUBMIT FEEDBACK, on the dark page bg.
 // ===========================================================================
 export const PalFavorComplete = ({ navigation }: any) => {
   const s = useStore();
   const [rating, setRating] = useState(0);
   const [feedback, setFeedback] = useState('');
-  // The favor itself was completed at MARK FAVOR DONE; here the pal rates the
+  const fontsLoaded = usePoppins();
+  // The favor itself was completed at MARK AS DONE; here the pal rates the
   // MEMBER (the reverse review), persisted via rateMember().
   const onSubmit = () => {
     if (rating) s.rateMember(rating, feedback);
@@ -706,14 +806,15 @@ export const PalFavorComplete = ({ navigation }: any) => {
   };
   // Rating the member is optional — let the pal leave without being forced to rate.
   const skip = () => navigation.reset({ index: 0, routes: [{ name: 'Tabs' }] });
+  if (!fontsLoaded) return <View style={{ flex: 1, backgroundColor: PAGE_BG }} />;
   return (
     <SafeAreaView edges={['top', 'bottom']} style={{ flex: 1, backgroundColor: PAGE_BG }}>
       <ScrollView contentContainerStyle={{ paddingHorizontal: 24, paddingBottom: 24, flexGrow: 1 }}>
-        <Txt variant="h2" color={TEXT} center style={{ marginTop: 24 }}>Thank You!</Txt>
-        <Image source={CHARACTERS} style={{ width: '100%', height: 320, marginTop: 12 }} resizeMode="contain" />
+        <Text style={{ color: TEXT, fontSize: 26, fontFamily: P600, textAlign: 'center', marginTop: 24 }}>Thank You!</Text>
+        <Image source={CELEBRATION} style={{ width: '100%', height: 280, marginTop: 12 }} resizeMode="contain" />
         <View style={[st.divider, { marginTop: 8 }]} />
         <View style={{ flexDirection: 'row', alignItems: 'center', marginTop: 20 }}>
-          <Txt variant="h4" color={TEXT} style={{ marginRight: 24 }}>Rating</Txt>
+          <Text style={{ color: TEXT, fontSize: 20, fontFamily: P500, marginRight: 24 }}>Rating</Text>
           <View style={{ flexDirection: 'row', gap: 6 }}>
             {[1, 2, 3, 4, 5].map((i) => (
               <TouchableOpacity
@@ -729,10 +830,10 @@ export const PalFavorComplete = ({ navigation }: any) => {
           </View>
         </View>
         <View style={[st.divider, { marginTop: 20 }]} />
-        <Txt variant="body" color={TEXT} style={{ marginTop: 20 }}>Tell us about your experience</Txt>
+        <Text style={{ color: TEXT, fontSize: 15, fontFamily: P400, marginTop: 20 }}>Tell us about your experience</Text>
         <View style={st.feedbackBox}>
           <TextInput
-            style={[tokens.typography.body, { color: TEXT, minHeight: 120, textAlignVertical: 'top' }]}
+            style={{ color: TEXT, fontSize: 15, lineHeight: 22, fontFamily: P400, minHeight: 120, textAlignVertical: 'top' }}
             multiline
             maxLength={700}
             value={feedback}
@@ -758,7 +859,7 @@ export const PalFavorComplete = ({ navigation }: any) => {
           accessibilityRole="button"
           accessibilityLabel="Skip rating and return home"
         >
-          <Text style={{ color: SUBTLE, fontWeight: '600', fontFamily: fonts.bodySemiBold }}>Maybe later</Text>
+          <Text style={{ color: SUBTLE, fontSize: 14, fontFamily: P500 }}>Maybe later</Text>
         </TouchableOpacity>
       </ScrollView>
     </SafeAreaView>
@@ -767,19 +868,20 @@ export const PalFavorComplete = ({ navigation }: any) => {
 
 const st = StyleSheet.create({
   iconBtn: { width: 40, height: 40, borderRadius: 12, backgroundColor: SHEET_ALT, alignItems: 'center', justifyContent: 'center', borderWidth: StyleSheet.hairlineWidth, borderColor: BORDER },
-  navBanner: { backgroundColor: SHEET, borderRadius: 14, paddingHorizontal: 18, paddingVertical: 14, flexDirection: 'row', alignItems: 'center', borderWidth: StyleSheet.hairlineWidth, borderColor: BORDER },
-  sheet: { position: 'absolute', left: 0, right: 0, bottom: 0, backgroundColor: SHEET, borderTopLeftRadius: 24, borderTopRightRadius: 24, paddingHorizontal: 24, paddingTop: 12, paddingBottom: 36, borderTopWidth: StyleSheet.hairlineWidth, borderColor: BORDER, shadowColor: '#000', shadowOffset: { width: 0, height: -3 }, shadowOpacity: 0.4, shadowRadius: 12, elevation: 16 },
-  scrollSheet: { position: 'absolute', left: 0, right: 0, bottom: 0, maxHeight: '78%', backgroundColor: SHEET, borderTopLeftRadius: 24, borderTopRightRadius: 24, paddingHorizontal: 24, paddingTop: 12, borderTopWidth: StyleSheet.hairlineWidth, borderColor: BORDER, shadowColor: '#000', shadowOffset: { width: 0, height: -3 }, shadowOpacity: 0.4, shadowRadius: 12, elevation: 16 },
+  navBanner: { backgroundColor: SHEET, borderRadius: 8, paddingHorizontal: 18, paddingVertical: 14, flexDirection: 'row', alignItems: 'center', borderWidth: StyleSheet.hairlineWidth, borderColor: BORDER },
+  sheet: { position: 'absolute', left: 0, right: 0, bottom: 0, backgroundColor: SHEET, borderTopLeftRadius: 20, borderTopRightRadius: 20, paddingHorizontal: 24, paddingTop: 12, paddingBottom: 36, borderTopWidth: StyleSheet.hairlineWidth, borderColor: BORDER, shadowColor: '#000', shadowOffset: { width: 0, height: -3 }, shadowOpacity: 0.4, shadowRadius: 12, elevation: 16 },
+  miniCard: { position: 'absolute', left: 16, right: 16, backgroundColor: SHEET, borderRadius: 16, padding: 16, borderWidth: StyleSheet.hairlineWidth, borderColor: BORDER, shadowColor: '#000', shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.4, shadowRadius: 12, elevation: 16 },
   handle: { alignSelf: 'center', width: 44, height: 5, borderRadius: 3, backgroundColor: 'rgba(255,255,255,0.25)' },
   divider: { height: StyleSheet.hairlineWidth, backgroundColor: DIVIDER },
-  avatar: { width: 56, height: 56, borderRadius: 28 },
-  redBadge: { position: 'absolute', top: -4, right: -4, width: 22, height: 22, borderRadius: 11, backgroundColor: RED, alignItems: 'center', justifyContent: 'center', borderWidth: 2, borderColor: SHEET },
-  tierThumb: { width: 64, height: 64, borderRadius: 14, backgroundColor: '#FFFFFF', alignItems: 'center', justifyContent: 'center', marginRight: 14 },
   windowPill: { alignSelf: 'center', backgroundColor: SHEET_ALT, borderRadius: 999, paddingHorizontal: 16, paddingVertical: 6, marginTop: 8 },
   actionRow: { flexDirection: 'row', alignItems: 'center', paddingVertical: 16, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: DIVIDER },
-  whiteBtn: { backgroundColor: CTA_BG, borderRadius: 14, height: 54, alignItems: 'center', justifyContent: 'center', marginTop: 22 },
-  whiteBtnTxt: { color: CTA_TEXT, fontWeight: '700', fontSize: 16, letterSpacing: 0.5, fontFamily: fonts.bodySemiBold },
-  darkBtn: { backgroundColor: DARK_BTN, borderRadius: 14, height: 54, alignItems: 'center', justifyContent: 'center', marginTop: 12, borderWidth: StyleSheet.hairlineWidth, borderColor: BORDER },
-  darkBtnTxt: { color: TEXT, fontWeight: '700', fontSize: 16, letterSpacing: 0.5, fontFamily: fonts.bodySemiBold },
-  feedbackBox: { backgroundColor: FIELD, borderRadius: 16, padding: 16, marginTop: 12, borderWidth: StyleSheet.hairlineWidth, borderColor: BORDER },
+  whiteBtn: { backgroundColor: CTA_BG, borderRadius: 8, height: 48, alignItems: 'center', justifyContent: 'center', marginTop: 22 },
+  whiteBtnTxt: { color: CTA_TEXT, fontSize: 15, letterSpacing: 0.5, fontFamily: P500 },
+  darkBtn: { backgroundColor: DARK_BTN, borderRadius: 8, height: 48, alignItems: 'center', justifyContent: 'center', marginTop: 12, borderWidth: StyleSheet.hairlineWidth, borderColor: BORDER },
+  darkBtnTxt: { color: TEXT, fontSize: 15, letterSpacing: 0.5, fontFamily: P500 },
+  modalScrim: { flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', alignItems: 'center', justifyContent: 'center', paddingHorizontal: 24 },
+  modalCard: { width: '88%', backgroundColor: SHEET, borderRadius: 16, paddingHorizontal: 24, paddingVertical: 28, alignItems: 'center', borderWidth: StyleSheet.hairlineWidth, borderColor: BORDER },
+  modalTitle: { color: TEXT, fontSize: 22, lineHeight: 30, fontFamily: P500, textAlign: 'center' },
+  modalBody: { color: SUBTLE, fontSize: 15, lineHeight: 22, fontFamily: P400, textAlign: 'center', marginTop: 12 },
+  feedbackBox: { backgroundColor: FIELD, borderRadius: 12, padding: 16, marginTop: 12, borderWidth: StyleSheet.hairlineWidth, borderColor: BORDER },
 });

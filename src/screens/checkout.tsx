@@ -421,10 +421,16 @@ export const Searching = ({ navigation }: any) => {
         <View style={styles.alertCard}>
           {isScheduled ? (
             <>
-              <Text style={styles.alertTitle}>Favor scheduled</Text>
-              <Text style={styles.alertBody}>
-                {`We'll match you with a Favor Pal for ${formatSchedule(activeFavor?.scheduledFor)}.`}
+              {/* Scheduled-request modal (v.2): "YOUR FAVOR HAS BEEN REQUESTED" +
+                  date chip + "Please wait while we search for a favor pal near you!" */}
+              <Text style={[styles.alertTitle, { fontSize: 16, letterSpacing: 0.4 }]}>
+                YOUR FAVOR HAS BEEN REQUESTED
               </Text>
+              <View style={styles.scheduleChip}>
+                <Text style={styles.scheduleChipText}>{formatSchedule(activeFavor?.scheduledFor)}</Text>
+              </View>
+              <Text style={styles.alertBody}>Please wait while we search for a favor pal near you!</Text>
+              {/* app addition — no v2 frame shows an exit, but the member needs one */}
               <BlackButton title="BACK TO HOME" onPress={() => navigation.popToTop()} style={{ marginTop: 20 }} />
             </>
           ) : matched ? (
@@ -593,6 +599,18 @@ const styles = StyleSheet.create({
   alertTitle: { fontFamily: P600, fontSize: 20, lineHeight: 30, color: INK, textAlign: 'center' },
   alertBody: { fontFamily: P400, fontSize: 14, lineHeight: 22, color: SUB, textAlign: 'center', marginTop: 16 },
   tooLong: { fontFamily: P500, fontSize: 14, lineHeight: 21, color: INK, textAlign: 'center', marginTop: 14 },
+  // Scheduled-request modal date chip ("Feb 16, 12:00PM ASAP" on gray fill).
+  scheduleChip: {
+    alignSelf: 'stretch',
+    height: 40,
+    borderRadius: 6,
+    backgroundColor: '#EFEFEF',
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginTop: 16,
+    paddingHorizontal: 12,
+  },
+  scheduleChipText: { fontFamily: P500, fontSize: 15, color: INK },
 
   // --- Searching map -------------------------------------------------------
   pin: { position: 'absolute' },

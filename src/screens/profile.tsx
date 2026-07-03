@@ -520,11 +520,26 @@ export const Help = ({ navigation }: any) => {
 };
 
 // ===========================================================================
-// 5. SideDrawer — white left panel over the dimmed screen (#125:7342).
+// 5. SideDrawer — role-aware left panel over the dimmed screen.
+// member: white panel (User App v.2 "Side Drawer" #125:7342).
+// pal: dark panel (Provider App v.2 "Side Drawer (dark)") — #151313 panel on
+// the #0D0A0A provider ink, white text/icons, red "● Set Status" row, and an
+// Account item (→ StripeOnboarding, the dark "Accounts" #181:10039 screen)
+// instead of Payment.
 // ===========================================================================
+const DK = {
+  panel: '#151313',
+  text: '#FFFFFF',
+  sub: '#B9B4B4',
+  red: '#ED1C24',
+  divider: 'rgba(255,255,255,0.14)',
+} as const;
+
 export const SideDrawer = ({ navigation }: any) => {
   const s = useStore();
   const u = s.user;
+  const isPal = u?.role === 'pal';
+  const ink = isPal ? DK.text : L.text;
   const close = () => navigation.goBack();
   const go = (route: string, params?: any) => {
     navigation.goBack();
@@ -533,7 +548,7 @@ export const SideDrawer = ({ navigation }: any) => {
 
   return (
     <View style={{ flex: 1, flexDirection: 'row' }}>
-      <SafeAreaView edges={['top', 'bottom']} style={st.drawer}>
+      <SafeAreaView edges={['top', 'bottom']} style={[st.drawer, isPal && st.drawerDark]}>
         {/* Identity */}
         <View style={{ alignItems: 'center', marginTop: 18 }}>
           <View style={{ width: 132, height: 132 }}>
@@ -542,33 +557,52 @@ export const SideDrawer = ({ navigation }: any) => {
               <Ionicons name="pencil" size={15} color="#FFFFFF" />
             </TouchableOpacity>
           </View>
-          <Txt style={st.drawerName}>{u?.firstName ?? 'Anton'}</Txt>
+          <Txt style={{ ...st.drawerName, color: ink }}>{u?.firstName ?? 'Anton'}</Txt>
           <TouchableOpacity onPress={() => go('Tabs', { screen: 'Account' })} hitSlop={6} accessibilityRole="button" accessibilityLabel="View Profile">
-            <Txt style={st.drawerViewProfile}>View Profile</Txt>
+            <Txt style={isPal ? { ...st.drawerViewProfile, color: DK.sub } : st.drawerViewProfile}>View Profile</Txt>
           </TouchableOpacity>
+
+          {isPal ? (
+            <TouchableOpacity
+              onPress={() => go('SetStatus')}
+              style={st.drawerStatusRow}
+              activeOpacity={0.7}
+              accessibilityRole="button"
+              accessibilityLabel="Set Status"
+            >
+              <View style={st.statusDot} />
+              <Txt style={{ fontFamily: POPPINS_MEDIUM, fontSize: 13, color: DK.red }}>Set Status</Txt>
+            </TouchableOpacity>
+          ) : null}
         </View>
 
-        <View style={[st.divider, { marginTop: 24 }]} />
+        <View style={[st.divider, { marginTop: 24 }, isPal && { backgroundColor: DK.divider }]} />
 
         {/* Menu */}
         <View style={{ flex: 1, paddingTop: 8 }}>
-          <DrawerRow label="Favor History" onPress={() => go('History')}>
-            <MaterialIcons name="history" size={22} color={L.text} />
+          <DrawerRow label="Favor History" color={ink} onPress={() => go('History')}>
+            <MaterialIcons name="history" size={22} color={ink} />
           </DrawerRow>
-          <DrawerRow label="Help" onPress={() => go('Help')}>
-            <Ionicons name="help-circle" size={21} color={L.text} />
+          <DrawerRow label="Help" color={ink} onPress={() => go('Help')}>
+            <Ionicons name="help-circle" size={21} color={ink} />
           </DrawerRow>
-          <DrawerRow label="Settings" onPress={() => go('Settings')}>
-            <Ionicons name="settings-sharp" size={19} color={L.text} />
+          <DrawerRow label="Settings" color={ink} onPress={() => go('Settings')}>
+            <Ionicons name="settings-sharp" size={19} color={ink} />
           </DrawerRow>
-          <DrawerRow label="Payment" onPress={() => go('Payment')}>
-            <Ionicons name="card" size={20} color={L.text} />
-          </DrawerRow>
+          {isPal ? (
+            <DrawerRow label="Account" color={ink} onPress={() => go('StripeOnboarding')}>
+              <MaterialIcons name="account-balance" size={20} color={ink} />
+            </DrawerRow>
+          ) : (
+            <DrawerRow label="Payment" color={ink} onPress={() => go('Payment')}>
+              <Ionicons name="card" size={20} color={ink} />
+            </DrawerRow>
+          )}
 
           <View style={{ flex: 1 }} />
 
-          <DrawerRow label="Logout" onPress={() => s.logout()} style={{ marginBottom: 18 }}>
-            <Ionicons name="log-out-outline" size={21} color={L.text} />
+          <DrawerRow label="Logout" color={ink} onPress={() => s.logout()} style={{ marginBottom: 18 }}>
+            <Ionicons name="log-out-outline" size={21} color={ink} />
           </DrawerRow>
         </View>
       </SafeAreaView>
@@ -578,23 +612,24 @@ export const SideDrawer = ({ navigation }: any) => {
   );
 };
 
-function DrawerRow({ label, onPress, children, style }: any) {
+function DrawerRow({ label, onPress, children, style, color }: any) {
   return (
     <TouchableOpacity onPress={onPress} activeOpacity={0.7} style={[st.drawerRow, style]} accessibilityRole="button" accessibilityLabel={label}>
       <View style={{ width: 22, alignItems: 'center' }}>{children}</View>
-      <Txt style={st.drawerRowText}>{label}</Txt>
+      <Txt style={color ? { ...st.drawerRowText, color } : st.drawerRowText}>{label}</Txt>
     </TouchableOpacity>
   );
 }
 
 // ===========================================================================
-// 6. SetStatus — availability picker modal. No v.2 frame covers it, so it is
-// restyled to the light card language (white card, green/gray states).
+// 6. SetStatus — availability picker modal, Provider App v.2 "Set Status"
+// popup #181:10437: navy card (#252A38), white title + option labels,
+// ● Online (green) / Invisible / Offline.
 // ===========================================================================
 const STATUS_OPTIONS: { key: 'online' | 'invisible' | 'offline'; label: string; dot: string; ring: string; color: string }[] = [
-  { key: 'online', label: 'Online', dot: '#02CB00', ring: '#02CB00', color: '#02CB00' },
-  { key: 'invisible', label: 'Invisible', dot: 'transparent', ring: '#767676', color: L.text },
-  { key: 'offline', label: 'Offline', dot: '#9E9E9E', ring: '#9E9E9E', color: L.sub },
+  { key: 'online', label: 'Online', dot: '#02CB00', ring: '#02CB00', color: '#FFFFFF' },
+  { key: 'invisible', label: 'Invisible', dot: 'transparent', ring: DK.sub, color: '#FFFFFF' },
+  { key: 'offline', label: 'Offline', dot: '#9E9E9E', ring: '#9E9E9E', color: '#FFFFFF' },
 ];
 
 export const SetStatus = ({ navigation }: any) => {
@@ -608,7 +643,7 @@ export const SetStatus = ({ navigation }: any) => {
     <Pressable style={[st.scrim, { paddingHorizontal: 28 }]} onPress={() => navigation.goBack()}>
       <Pressable style={st.statusCard} onPress={() => {}}>
         <Txt style={st.statusTitle} center>Set Status</Txt>
-        <View style={st.divider} />
+        <View style={st.statusDivider} />
         {STATUS_OPTIONS.map((opt) => {
           const sel = current === opt.key;
           return (
@@ -626,7 +661,7 @@ export const SetStatus = ({ navigation }: any) => {
                   {opt.label}
                 </Txt>
               </View>
-              <View style={st.divider} />
+              <View style={st.statusDivider} />
             </TouchableOpacity>
           );
         })}
@@ -725,6 +760,8 @@ const st = StyleSheet.create({
     width: '72%', backgroundColor: L.bg,
     shadowColor: '#000', shadowOffset: { width: 2, height: 0 }, shadowOpacity: 0.12, shadowRadius: 8, elevation: 8,
   },
+  drawerDark: { backgroundColor: DK.panel, shadowOpacity: 0.4 },
+  drawerStatusRow: { flexDirection: 'row', alignItems: 'center', gap: 7, marginTop: 12 },
   drawerBadge: {
     position: 'absolute', right: 2, bottom: 4, width: 33, height: 33, borderRadius: 17,
     backgroundColor: L.red, alignItems: 'center', justifyContent: 'center',
@@ -735,9 +772,10 @@ const st = StyleSheet.create({
   drawerRowText: { fontFamily: POPPINS_MEDIUM, fontSize: 15, color: L.text },
   backdrop: { flex: 1, backgroundColor: 'rgba(0,0,0,0.55)' },
 
-  // SetStatus modal
-  statusCard: { width: '100%', borderRadius: 16, backgroundColor: '#FFFFFF', paddingVertical: 24, paddingHorizontal: 24 },
-  statusTitle: { fontFamily: fonts.display, fontSize: 20, color: L.text, marginBottom: 16 },
+  // SetStatus modal — navy card (Provider v.2 #181:10437)
+  statusCard: { width: '100%', borderRadius: 16, backgroundColor: '#252A38', paddingVertical: 24, paddingHorizontal: 24 },
+  statusTitle: { fontFamily: fonts.display, fontSize: 20, color: '#FFFFFF', marginBottom: 16 },
+  statusDivider: { height: StyleSheet.hairlineWidth, backgroundColor: DK.divider, alignSelf: 'stretch' },
   statusRow: { flexDirection: 'row', alignItems: 'center', gap: 14, paddingVertical: 17 },
   statusRadio: { width: 14, height: 14, borderRadius: 7, borderWidth: 1.5 },
 });

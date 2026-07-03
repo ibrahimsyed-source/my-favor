@@ -13,19 +13,20 @@ import { tokens } from '../theme';
 import { Message, Thread } from '../types';
 
 // ---------------------------------------------------------------------------
-// Inbox palette — the v.2 frames only define the detail view; the inbox list
-// keeps the current dark styling (per the build notes) so it stays consistent
-// with the dark map/dashboard surfaces it sits between.
+// Inbox palette — LIGHT, per FIDELITY_AUDIT "Messages" row: no dark inbox frame
+// exists on the v.2 canvas, so the inbox follows the light chat language of
+// the Detail View (125:11582): white bg, 1px #EEEEEE separators, ink #0D0A0A,
+// gray secondary, red #ED1C24 unread badge.
 // ---------------------------------------------------------------------------
 const C = {
-  bg: '#0C0C0C',                       // screen background
-  pill: '#1C2331',                     // filter chip
-  border: 'rgba(255,255,255,0.10)',    // dividers / borders
-  text: '#FFFFFF',                     // primary text / icons
-  textSecondary: 'rgba(255,255,255,0.6)',
-  textTertiary: 'rgba(255,255,255,0.4)',
-  ctaBg: '#FFFFFF',
-  ctaText: '#141414',
+  bg: '#FFFFFF',                       // screen background
+  pill: '#EEEEEE',                     // filter chip (light gray, matches dividers)
+  border: '#EEEEEE',                   // dividers / borders (detail-view line color)
+  text: '#0D0A0A',                     // primary text / icons (v.2 ink)
+  textSecondary: '#9E9E9E',            // gray secondary (detail-view placeholder gray)
+  textTertiary: '#C4C4C4',
+  ctaBg: '#0D0A0A',                    // selected chip = black on light surface
+  ctaText: '#FFFFFF',
   brand: '#ED1C24',
 } as const;
 
@@ -87,7 +88,7 @@ function timeAgo(ts: number): string {
 }
 
 // ---------------------------------------------------------------------------
-// Messages — tab screen. Dark iOS-style list of conversation threads.
+// Messages — tab screen. Light iOS-style list of conversation threads.
 // ---------------------------------------------------------------------------
 export const Messages = ({ navigation }: any) => {
   const s = useStore();
@@ -124,6 +125,7 @@ export const Messages = ({ navigation }: any) => {
 
   return (
     <SafeAreaView style={{ flex: 1, backgroundColor: C.bg }} edges={['top']}>
+      <StatusBar barStyle="dark-content" />
       <View style={{ flex: 1 }}>
         {/* Header: large title + Unread filter chip */}
         <View style={lstyles.header}>
@@ -487,7 +489,7 @@ const lstyles = StyleSheet.create({
     marginLeft: 12,
     paddingVertical: 14,
     paddingRight: tokens.spacing.lg,
-    borderBottomWidth: StyleSheet.hairlineWidth,
+    borderBottomWidth: 1, // 1px light-gray separator, matching the detail view's line
   },
   rowTop: { flexDirection: 'row', alignItems: 'center', marginBottom: 3 },
   rowBottom: { flexDirection: 'row', alignItems: 'center' },
