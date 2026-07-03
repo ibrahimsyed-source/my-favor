@@ -6,7 +6,7 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import * as ImagePicker from 'expo-image-picker';
-import { Screen, TopBar, Txt, Button, InfoModal } from '../components';
+import { Screen, TopBar, Txt, Button } from '../components';
 import { useTheme, tokens, fonts } from '../theme';
 import { useStore } from '../store';
 import { verifyOtpApi, resendOtpApi, forgotPasswordApi, resetPasswordApi } from '../api/endpoints';
@@ -393,6 +393,29 @@ export const NewPassword = ({ navigation, route }: any) => {
     navigation.reset({ index: 0, routes: [{ name: 'Login' }] });
   };
 
+  // Reset Password Success (#125:11567) — a full SCREEN, not a modal: big green
+  // check, "You've successfully updated your password.", black LOGIN TO YOUR
+  // ACCOUNT button at the bottom.
+  if (done) {
+    return (
+      <Screen padded={false}>
+        <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center', paddingHorizontal: PX }}>
+          <Ionicons name="checkmark-circle" size={96} color="#4CAF50" />
+          <Txt
+            variant="h1"
+            center
+            style={{ marginTop: tokens.spacing.xl, paddingHorizontal: tokens.spacing.lg }}
+          >
+            You’ve successfully updated your password.
+          </Txt>
+        </View>
+        <View style={{ paddingHorizontal: PX, paddingBottom: PX }}>
+          <Button title="LOGIN TO YOUR ACCOUNT" variant="primary" onPress={toLogin} style={{ height: 50 }} />
+        </View>
+      </Screen>
+    );
+  }
+
   return (
     <Screen padded={false}>
       <TopBar title="New Password" onBack={navigation.canGoBack() ? navigation.goBack : undefined} />
@@ -429,14 +452,6 @@ export const NewPassword = ({ navigation, route }: any) => {
         />
       </ScrollView>
 
-      {/* Reset Password Success (#125:11567) */}
-      <InfoModal
-        visible={done}
-        title="Password Reset"
-        message="You have successfully reset your password."
-        buttonLabel="LOGIN"
-        onClose={toLogin}
-      />
     </Screen>
   );
 };
