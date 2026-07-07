@@ -53,6 +53,25 @@ export type RootStackParamList = {
   Help: undefined;
   Notifications: undefined;
   Legal: { doc: 'privacy' | 'terms' };
+
+  // --- System / connectivity states (src/screens/system.tsx) ---
+  // Registered in BOTH the auth and app groups: these can surface whether or
+  // not the user is signed in.
+  Offline: undefined;
+  ServerError: undefined;
+  Maintenance: undefined;
+  UpdateRequired: undefined;
+  NotFound: undefined;
+  SessionExpired: undefined;
+
+  // --- Flow / permission dead-ends (src/screens/scenarios.tsx) ---
+  // Authed-only surfaces reached mid-flow.
+  PermissionDenied: { kind: 'camera' | 'photos' | 'location' | 'notifications' };
+  PaymentFailed: undefined;
+  NoPaymentMethod: undefined;
+  FavorUnavailable: undefined;
+  AccountSuspended: undefined;
+  PalApplicationRejected: undefined;
 };
 
 // Dashboard Main v2 (1660:15783) tab bar: HOME / ACCOUNT / ACTIVITY.

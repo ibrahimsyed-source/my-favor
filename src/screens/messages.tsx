@@ -8,6 +8,7 @@ import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context'
 import { Ionicons } from '@expo/vector-icons';
 import { useFonts, Poppins_400Regular } from '@expo-google-fonts/poppins';
 import { Txt, Avatar, ConfirmModal, InfoModal } from '../components';
+import { EmptyState, LoadingState } from '../components/states';
 import { useStore } from '../store';
 import { tokens } from '../theme';
 import { Message, Thread } from '../types';
@@ -95,10 +96,18 @@ export const Messages = ({ navigation }: any) => {
   usePoppinsRegular(); // register Poppins_400Regular so the inbox P_REGULAR text renders in Poppins even before a thread is opened
   const [onlyUnread, setOnlyUnread] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
+  // Track the first threads fetch so the list shows a spinner (not a premature
+  // "no conversations" flash) until we actually know the inbox is empty.
+  const [threadsLoaded, setThreadsLoaded] = useState(false);
 
-  // Keep the conversation list (and unread counts) fresh on focus.
+  // Keep the conversation list (and unread counts) fresh on focus. The initial
+  // fetch here also resolves the loading state — refreshThreads swallows errors
+  // and always resolves, so .then fires on both success and failure.
   useEffect(() => {
-    const unsub = navigation.addListener('focus', () => { void s.refreshThreads(); });
+    void s.refreshThreads().then(() => setThreadsLoaded(true));
+    const unsub = navigation.addListener('focus', () => {
+      void s.refreshThreads().then(() => setThreadsLoaded(true));
+    });
     return unsub;
   }, [navigation]); // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -162,12 +171,20 @@ export const Messages = ({ navigation }: any) => {
             <RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={C.text} />
           }
           ListEmptyComponent={
-            <View style={{ paddingTop: 80, alignItems: 'center' }}>
-              <Ionicons name="chatbubbles-outline" size={40} color={C.textTertiary} />
-              <Txt variant="body" color={C.textSecondary} style={{ marginTop: 12 }}>
-                {onlyUnread ? 'No unread messages' : 'No conversations yet'}
-              </Txt>
-            </View>
+            !threadsLoaded && !onlyUnread ? (
+              // Light inbox screen → light kit states (no `dark`).
+              <LoadingState label="Loading conversations…" />
+            ) : (
+              <EmptyState
+                icon="chatbubbles-outline"
+                title={onlyUnread ? 'No unread messages' : 'No conversations yet'}
+                message={
+                  onlyUnread
+                    ? 'You’re all caught up — no unread conversations.'
+                    : 'When you message a pal, your conversations show up here.'
+                }
+              />
+            )
           }
         />
       </View>
@@ -229,6 +246,10 @@ export const MessageThread = ({ navigation, route }: any) => {
   const [menuOpen, setMenuOpen] = useState(false);
   const [confirmBlock, setConfirmBlock] = useState(false);
   const [reportDone, setReportDone] = useState(false);
+  // First-load flag for this thread's messages: gates the loading vs empty kit
+  // state so an empty thread shows a spinner, then "no messages yet" (never a
+  // blank area). Reset whenever the open thread changes.
+  const [msgsLoaded, setMsgsLoaded] = useState(false);
 
   const myAvatar = s.user?.avatar ?? 'https://i.pravatar.cc/150?img=12';
   const theirAvatar = thread?.withUser.avatar;
@@ -237,7 +258,10 @@ export const MessageThread = ({ navigation, route }: any) => {
 
   // Live-ish chat: poll this thread's messages on open, on focus, and every 5s.
   useEffect(() => {
-    void s.refreshMessages(threadId);
+    setMsgsLoaded(false); // new thread → show loading until its first fetch resolves
+    // refreshMessages swallows errors and always resolves, so .then fires on
+    // both success and failure — enough to leave the loading state.
+    void s.refreshMessages(threadId).then(() => setMsgsLoaded(true));
     const unsub = navigation.addListener('focus', () => { void s.refreshMessages(threadId); });
     const id = setInterval(() => { void s.refreshMessages(threadId); }, 5000);
     return () => { unsub(); clearInterval(id); };
@@ -324,15 +348,36 @@ export const MessageThread = ({ navigation, route }: any) => {
           </TouchableOpacity>
         </View>
 
-        <FlatList
-          data={reversed}
-          inverted
-          keyExtractor={(m) => m.id}
-          renderItem={renderItem}
-          style={{ flex: 1 }}
-          contentContainerStyle={{ paddingVertical: 24, paddingHorizontal: 24 }}
-          keyboardShouldPersistTaps="handled"
-        />
+        {reversed.length === 0 ? (
+          // Was a blank area on an empty/loading thread. Render the light kit
+          // state instead (rendered outside the inverted FlatList so it isn't
+          // flipped upside-down). The composer below stays available.
+          <View style={{ flex: 1 }}>
+            {msgsLoaded ? (
+              <EmptyState
+                icon="chatbubble-ellipses-outline"
+                title="No messages yet"
+                message={
+                  thread
+                    ? `Say hello to start your conversation with ${thread.withUser.name}.`
+                    : 'Say hello to start the conversation.'
+                }
+              />
+            ) : (
+              <LoadingState label="Loading messages…" />
+            )}
+          </View>
+        ) : (
+          <FlatList
+            data={reversed}
+            inverted
+            keyExtractor={(m) => m.id}
+            renderItem={renderItem}
+            style={{ flex: 1 }}
+            contentContainerStyle={{ paddingVertical: 24, paddingHorizontal: 24 }}
+            keyboardShouldPersistTaps="handled"
+          />
+        )}
 
         {/* Report / Block action sheet (overflow menu) */}
         <Modal

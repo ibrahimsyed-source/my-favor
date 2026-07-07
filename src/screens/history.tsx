@@ -7,6 +7,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { useFonts, Poppins_400Regular } from '@expo-google-fonts/poppins';
 import { useTheme, tokens, fonts } from '../theme';
 import { Avatar, StarRating, InfoModal, TopBar } from '../components';
+import { EmptyState, ErrorState, LoadingState } from '../components/states';
 import { useStore } from '../store';
 import { getFavorsApi, rateFavorApi } from '../api/endpoints';
 import { FAVOR_TIERS, Favor } from '../types';
@@ -204,14 +205,24 @@ export const History = ({ navigation }: any) => {
   // source of truth.
   const [items, setItems] = useState<Favor[]>(s.history);
   const [refreshing, setRefreshing] = useState(false);
+  // Track the first-load status so the empty area can show a spinner (initial
+  // load) or an error+retry (network failure with nothing cached) instead of a
+  // bare message. Start idle when the store already seeded history; once any
+  // rows exist the list itself renders and this flag no longer surfaces.
+  const [status, setStatus] = useState<'idle' | 'loading' | 'error'>(
+    s.history.length ? 'idle' : 'loading',
+  );
   useEffect(() => { setItems(s.history); }, [s.history]);
 
   const refresh = useCallback(async () => {
     try {
       const { favors } = await getFavorsApi();
       setItems(favors);
+      setStatus('idle');
     } catch {
-      /* keep showing the cached list on a transient network failure */
+      // Keep showing the cached list on a transient network failure; only
+      // surface the error state when there was nothing cached to fall back to.
+      setStatus((prev) => (prev === 'loading' ? 'error' : prev));
     }
   }, []);
 
@@ -220,6 +231,21 @@ export const History = ({ navigation }: any) => {
     await refresh();
     setRefreshing(false);
   }, [refresh]);
+
+  // Retry from the error state: re-enter loading so the empty area shows the
+  // spinner while the re-pull is in flight.
+  const retry = useCallback(() => {
+    setStatus('loading');
+    void refresh();
+  }, [refresh]);
+
+  // Kick off an initial pull when we mounted without any cached history, so the
+  // loading state resolves to real data / empty / error (the focus listener
+  // below doesn't fire for the very first focus).
+  useEffect(() => {
+    if (s.history.length === 0) void refresh();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   // Refresh whenever the screen regains focus so a favor completed/cancelled
   // from another screen appears without a full app reload.
@@ -278,9 +304,21 @@ export const History = ({ navigation }: any) => {
         maxToRenderPerBatch={10}
         windowSize={7}
         ListEmptyComponent={
-          <Text style={[styles.emptyTxt, { color: theme.text }]}>
-            No record of payment history.
-          </Text>
+          status === 'loading' ? (
+            <LoadingState label="Loading your payment history..." />
+          ) : status === 'error' ? (
+            <ErrorState
+              title="Couldn't load history"
+              message="We couldn't load your payment history. Check your connection and try again."
+              onRetry={retry}
+            />
+          ) : (
+            <EmptyState
+              icon="receipt-outline"
+              title="No Payment History"
+              message="No record of payment history."
+            />
+          )
         }
       />
     </SafeAreaView>

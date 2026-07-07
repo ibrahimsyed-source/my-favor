@@ -23,6 +23,9 @@ import * as Pay from '../screens/payment';
 import * as Hist from '../screens/history';
 import * as Notif from '../screens/notifications';
 import * as LegalScr from '../screens/legal';
+import * as Sys from '../screens/system';
+import * as Scenario from '../screens/scenarios';
+import { OfflineBanner } from '../components/OfflineBanner';
 
 const Stack = createNativeStackNavigator<RootStackParamList>();
 const Tab = createBottomTabNavigator<TabParamList>();
@@ -162,6 +165,7 @@ export default function RootNavigator() {
   }
 
   return (
+    <View style={{ flex: 1 }}>
     <Stack.Navigator screenOptions={{ headerShown: false }}>
       {!isAuthenticated ? (
         <Stack.Group>
@@ -177,6 +181,13 @@ export default function RootNavigator() {
           <Stack.Screen name="NewPassword" component={AuthF.NewPassword} />
           {/* Reachable from the signup Terms link before authentication. */}
           <Stack.Screen name="Legal" component={LegalScr.Legal} />
+          {/* System / connectivity states can surface pre-auth too. */}
+          <Stack.Screen name="Offline" component={Sys.OfflineScreen} />
+          <Stack.Screen name="ServerError" component={Sys.ServerErrorScreen} />
+          <Stack.Screen name="Maintenance" component={Sys.MaintenanceScreen} />
+          <Stack.Screen name="UpdateRequired" component={Sys.UpdateRequiredScreen} />
+          <Stack.Screen name="NotFound" component={Sys.NotFoundScreen} />
+          <Stack.Screen name="SessionExpired" component={Scenario.SessionExpired} />
         </Stack.Group>
       ) : (
         <Stack.Group>
@@ -227,8 +238,25 @@ export default function RootNavigator() {
           <Stack.Screen name="Notifications" component={Notif.Notifications} />
           <Stack.Screen name="Vetting" component={Onb.Vetting} />
           <Stack.Screen name="Legal" component={LegalScr.Legal} />
+          {/* System / connectivity states (also registered in the auth group) */}
+          <Stack.Screen name="Offline" component={Sys.OfflineScreen} />
+          <Stack.Screen name="ServerError" component={Sys.ServerErrorScreen} />
+          <Stack.Screen name="Maintenance" component={Sys.MaintenanceScreen} />
+          <Stack.Screen name="UpdateRequired" component={Sys.UpdateRequiredScreen} />
+          <Stack.Screen name="NotFound" component={Sys.NotFoundScreen} />
+          <Stack.Screen name="SessionExpired" component={Scenario.SessionExpired} />
+          {/* Flow / permission dead-ends (authed only) */}
+          <Stack.Screen name="PermissionDenied" component={Scenario.PermissionDenied} />
+          <Stack.Screen name="PaymentFailed" component={Scenario.PaymentFailed} />
+          <Stack.Screen name="NoPaymentMethod" component={Scenario.NoPaymentMethod} />
+          <Stack.Screen name="FavorUnavailable" component={Scenario.FavorUnavailable} />
+          <Stack.Screen name="AccountSuspended" component={Scenario.AccountSuspended} />
+          <Stack.Screen name="PalApplicationRejected" component={Scenario.PalApplicationRejected} />
         </Stack.Group>
       )}
     </Stack.Navigator>
+      {/* Connectivity indicator overlays the whole stack (non-interactive). */}
+      <OfflineBanner />
+    </View>
   );
 }

@@ -1,8 +1,9 @@
-import React, { useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useState } from 'react';
 import { View, FlatList, TouchableOpacity, Modal, StyleSheet, Text } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { Ionicons } from '@expo/vector-icons';
 import { TopBar } from '../components';
+import { EmptyState, ErrorState, LoadingState } from '../components/states';
+import { getNotificationsApi } from '../api/endpoints';
 import { tokens, palette } from '../theme';
 import { useStore } from '../store';
 import { AppNotification } from '../types';
@@ -64,6 +65,18 @@ export function Notifications({ navigation }: any) {
   const now = Date.now();
   const hasUnread = notifications.some((n) => !n.read);
 
+  // The store's refreshNotifications() swallows network errors, so a probe of
+  // the same endpoint (run in parallel) tells us whether the fetch actually
+  // failed — letting us show the kit's ErrorState instead of a false "all
+  // caught up" empty. `loaded` gates the initial LoadingState.
+  const [errored, setErrored] = useState(false);
+  const [loaded, setLoaded] = useState(false);
+  const load = useCallback(async () => {
+    const [probe] = await Promise.allSettled([getNotificationsApi(), refreshNotifications()]);
+    setErrored(probe.status === 'rejected');
+    setLoaded(true);
+  }, [refreshNotifications]);
+
   // v.2 "Notifications  Modal" (#125:8532) — push-permission dialog.
   const [permVisible, setPermVisible] = useState(!permPromptShownThisSession);
   useEffect(() => {
@@ -101,8 +114,8 @@ export function Notifications({ navigation }: any) {
 
   // Pull fresh notifications on open + whenever the screen regains focus.
   useEffect(() => {
-    void refreshNotifications();
-    const unsub = navigation.addListener('focus', () => { void refreshNotifications(); });
+    void load();
+    const unsub = navigation.addListener('focus', () => { void load(); });
     return unsub;
   }, [navigation]); // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -122,13 +135,23 @@ export function Notifications({ navigation }: any) {
       ) : null}
 
       {notifications.length === 0 ? (
-        <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center', padding: 32 }}>
-          <Ionicons name="notifications-off-outline" size={48} color={palette.textTertiary} />
-          <Text style={[styles.alertTitle, { fontSize: 20, lineHeight: 30, marginTop: 14 }]}>You're all caught up</Text>
-          <Text style={[styles.rowBody, { color: palette.textSecondary, marginTop: 6 }]}>
-            Updates about your favors will show up here.
-          </Text>
-        </View>
+        // Light (member) screen — no `dark` prop. Loading on first fetch,
+        // ErrorState (with retry) on a failed probe, else the empty inbox.
+        !loaded ? (
+          <LoadingState label="Loading notifications…" />
+        ) : errored ? (
+          <ErrorState
+            title="Couldn’t load notifications"
+            message="Check your connection and try again."
+            onRetry={load}
+          />
+        ) : (
+          <EmptyState
+            icon="notifications-off-outline"
+            title="You're all caught up"
+            message="Updates about your favors will show up here."
+          />
+        )
       ) : (
         <FlatList
           data={notifications}
