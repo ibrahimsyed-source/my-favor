@@ -28,6 +28,14 @@ const rawSchema = z.object({
   // Email delivery for OTP codes (Resend). Leave blank in dev (codes are logged).
   RESEND_API_KEY: z.string().optional().default(''),
   OTP_FROM_EMAIL: z.string().optional().default('My Favor <onboarding@resend.dev>'),
+  // Operational gates surfaced to the app via GET /api/config (flip without a
+  // code change on the next boot). MAINTENANCE_MODE takes the app to a
+  // maintenance screen; MIN_APP_VERSION forces an update below that version.
+  MAINTENANCE_MODE: z
+    .enum(['true', 'false'])
+    .default('false')
+    .transform((v) => v === 'true'),
+  MIN_APP_VERSION: z.string().optional().default('0.0.0'),
 });
 
 const parsed = rawSchema.safeParse(process.env);
@@ -95,6 +103,10 @@ export const config = {
     resendApiKey: env.RESEND_API_KEY,
     from: env.OTP_FROM_EMAIL,
     enabled: env.RESEND_API_KEY.length > 0,
+  },
+  app: {
+    maintenance: env.MAINTENANCE_MODE,
+    minVersion: env.MIN_APP_VERSION,
   },
 } as const;
 

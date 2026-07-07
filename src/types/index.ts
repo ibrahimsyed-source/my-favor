@@ -19,6 +19,8 @@ export interface User {
   role: Role; // currently active role
   status: UserStatus;
   palVerified?: boolean; // passed pal identity/background vetting (gates favor acceptance)
+  palVetStatus?: 'none' | 'pending' | 'approved' | 'rejected';
+  suspended?: boolean; // moderation: account suspended/banned
   // Pal stats
   rating: number; // 0-5
   totalFavors: number;

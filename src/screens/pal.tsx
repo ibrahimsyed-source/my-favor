@@ -409,6 +409,7 @@ export const PalFavorDetail = ({ navigation, route }: any) => {
     const res = await s.acceptFavor(favorId);
     setAccepting(false);
     if (res.ok) setWaiting(true);
+    else if (res.code === 'unavailable') navigation.navigate('FavorUnavailable');
     else setAcceptError(res.reason || 'This favor is no longer available.');
   };
 

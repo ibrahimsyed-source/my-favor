@@ -196,14 +196,18 @@ function SummaryBody() {
 export const FavorSummary = ({ navigation }: any) => {
   const fontsReady = usePoppins();
   const insets = useSafeAreaInsets();
+  const { cards } = useStore();
   if (!fontsReady) return <View style={{ flex: 1, backgroundColor: WHITE }} />;
+  // Can't pay for a favor without a card on file — route to the "add a payment
+  // method" screen instead of a payment sheet with nothing to select.
+  const onRequest = () => navigation.navigate(cards.length === 0 ? 'NoPaymentMethod' : 'SelectPayment');
   return (
     <SafeAreaView style={{ flex: 1, backgroundColor: WHITE }} edges={['top']}>
       <ScrollView contentContainerStyle={{ flexGrow: 1, paddingBottom: 16 }} showsVerticalScrollIndicator={false}>
         <SummaryBody />
       </ScrollView>
       <View style={{ paddingHorizontal: 23, paddingTop: 8, paddingBottom: Math.max(insets.bottom, 18) + 16 }}>
-        <BlackButton title="REQUEST FAVOR NOW" onPress={() => navigation.navigate('SelectPayment')} />
+        <BlackButton title="REQUEST FAVOR NOW" onPress={onRequest} />
       </View>
     </SafeAreaView>
   );

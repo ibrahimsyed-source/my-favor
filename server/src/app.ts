@@ -88,6 +88,13 @@ export function createApp() {
     }
   });
 
+  // Public client bootstrap config: lets the app show a maintenance screen or
+  // force an update without shipping a build. Mounted before the rate limiter so
+  // the app-start poll is never throttled.
+  app.get('/api/config', (_req, res) => {
+    res.json({ maintenance: config.app.maintenance, minVersion: config.app.minVersion });
+  });
+
   // Global rate limit across the API (production only; see rateLimit.ts).
   app.use(globalLimiter);
 

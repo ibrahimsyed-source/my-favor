@@ -9,6 +9,10 @@ import {
 
 type Session = { user: User; accessToken: string; refreshToken: string };
 
+// --- app config (public, no auth) — maintenance + minimum-version gate ---
+export const getConfigApi = () =>
+  apiRequest<{ maintenance: boolean; minVersion: string }>('/api/config');
+
 // --- auth ---
 export const signupApi = (data: {
   firstName: string; lastName: string; email: string; phone: string; password: string; role?: Role;

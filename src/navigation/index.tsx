@@ -150,8 +150,12 @@ function Tabs() {
   );
 }
 
+// Synthetic navigation for the top-level gate screens, which render OUTSIDE the
+// stack (like the restoring splash) so nothing else can be reached while gated.
+const GATE_NAV = { canGoBack: () => false, goBack: () => {}, navigate: () => {}, reset: () => {} };
+
 export default function RootNavigator() {
-  const { isAuthenticated, restoring } = useStore();
+  const { isAuthenticated, restoring, maintenance, updateRequired, suspended, recheckConfig, logout } = useStore();
   const { theme } = useTheme();
 
   // While restoring a saved session on cold start, show a splash instead of
@@ -162,6 +166,20 @@ export default function RootNavigator() {
         <ActivityIndicator size="large" color={theme.primary} />
       </View>
     );
+  }
+
+  // App-wide gates (config- or moderation-driven) replace the whole navigator so
+  // the app is unusable until resolved. Maintenance/UpdateRequired come from
+  // GET /api/config; suspended is set by the login/authed-request signal.
+  if (maintenance) {
+    return <Sys.MaintenanceScreen navigation={GATE_NAV} route={{ params: { onRetry: recheckConfig } }} />;
+  }
+  if (updateRequired) {
+    return <Sys.UpdateRequiredScreen navigation={GATE_NAV} route={{ params: {} }} />;
+  }
+  if (suspended) {
+    // "Back to login" logs out — clearing the suspended gate + session.
+    return <Scenario.AccountSuspended navigation={{ ...GATE_NAV, reset: () => logout() }} route={{ params: {} }} />;
   }
 
   return (
@@ -188,6 +206,8 @@ export default function RootNavigator() {
           <Stack.Screen name="UpdateRequired" component={Sys.UpdateRequiredScreen} />
           <Stack.Screen name="NotFound" component={Sys.NotFoundScreen} />
           <Stack.Screen name="SessionExpired" component={Scenario.SessionExpired} />
+          {/* Photo-permission denial can happen at signup (avatar). */}
+          <Stack.Screen name="PermissionDenied" component={Scenario.PermissionDenied} />
         </Stack.Group>
       ) : (
         <Stack.Group>

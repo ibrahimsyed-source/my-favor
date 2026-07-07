@@ -38,6 +38,11 @@ model User {
   // accept favors (they enter members' homes). Gated server-side, not client trust.
   palVerified   Boolean   @default(false)
   palVerifiedAt DateTime?
+  palVetStatus  String    @default("none") // "none" | "pending" | "approved" | "rejected"
+
+  // Moderation: a suspended/banned account cannot log in or use the API.
+  suspended       Boolean   @default(false)
+  suspendedReason String?
 
   // Compliance: proof-of-consent + eligibility captured at signup (TCPA/terms + 18+).
   termsAcceptedAt DateTime?

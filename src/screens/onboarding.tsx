@@ -314,7 +314,7 @@ export function Vetting({ navigation }: any) {
     // Submit the vetting application to the server, which records the identity
     // info and (mock vendors) approves it — setting the persisted `palVerified`
     // flag that gates favor acceptance. Only then do we flip to pal mode.
-    const ok = await s.submitVetting({
+    const result = await s.submitVetting({
       legalFirstName: firstName.trim(),
       legalLastName: lastName.trim(),
       ssn: `${ssn1}${ssn2}${ssn3}`,
@@ -322,9 +322,12 @@ export function Vetting({ navigation }: any) {
       consent,
     });
     setSubmitting(false);
-    if (ok) {
+    if (result === 'approved') {
       s.setRole('pal');
       setSubmitted(true);
+    } else if (result === 'rejected') {
+      // Background check didn't clear (e.g. under 18) — show the rejection screen.
+      navigation.navigate('PalApplicationRejected');
     } else {
       setSubmitError('We couldn’t submit your application. Please check your details and try again.');
     }

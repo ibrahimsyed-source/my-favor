@@ -23,10 +23,10 @@ async function main() {
     where: { email: 'jordan@example.com' },
     // Backfill vetting on existing demo rows so seeded pals stay matchable/able
     // to accept after the palVerified gate was added.
-    update: { palVerified: true, palVerifiedAt: new Date() },
+    update: { palVerified: true, palVerifiedAt: new Date(), palVetStatus: 'approved' },
     create: {
       firstName: 'Jordan', lastName: 'Pal', email: 'jordan@example.com', phone: '+15550000002',
-      passwordHash, role: 'pal', verified: true, palVerified: true, palVerifiedAt: new Date(),
+      passwordHash, role: 'pal', verified: true, palVerified: true, palVerifiedAt: new Date(), palVetStatus: 'approved',
       city: 'Austin', state: 'TX',
       bio: 'Reliable and fast. Happy to help with errands.',
       rating: 4.8, totalFavors: 132, yearsActive: 3, reliability: 98, positiveReviews: 96,
@@ -35,10 +35,10 @@ async function main() {
 
   const pal2 = await prisma.user.upsert({
     where: { email: 'sam@example.com' },
-    update: { palVerified: true, palVerifiedAt: new Date() },
+    update: { palVerified: true, palVerifiedAt: new Date(), palVetStatus: 'approved' },
     create: {
       firstName: 'Sam', lastName: 'Helper', email: 'sam@example.com', phone: '+15550000003',
-      passwordHash, role: 'pal', verified: true, palVerified: true, palVerifiedAt: new Date(),
+      passwordHash, role: 'pal', verified: true, palVerified: true, palVerifiedAt: new Date(), palVetStatus: 'approved',
       city: 'Austin', state: 'TX',
       bio: 'Your friendly neighborhood Favor Pal.',
       rating: 4.6, totalFavors: 64, yearsActive: 2, reliability: 94, positiveReviews: 92,

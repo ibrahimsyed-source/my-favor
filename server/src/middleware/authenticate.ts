@@ -1,6 +1,6 @@
 import type { Request, Response, NextFunction } from 'express';
 import { verifyAccessToken } from '../lib/auth';
-import { unauthorized, forbidden } from '../lib/errors';
+import { unauthorized, forbidden, accountSuspended } from '../lib/errors';
 import { prisma } from '../db';
 
 // Augment Express's Request with the authenticated principal.
@@ -28,8 +28,11 @@ export async function authenticate(req: Request, _res: Response, next: NextFunct
       throw unauthorized('Invalid or expired token');
     }
 
-    const user = await prisma.user.findUnique({ where: { id: claims.sub }, select: { id: true, role: true } });
+    const user = await prisma.user.findUnique({ where: { id: claims.sub }, select: { id: true, role: true, suspended: true } });
     if (!user) throw unauthorized('Account no longer exists');
+    // A suspended account is cut off mid-session (distinct code so the client
+    // can show the Account Suspended screen).
+    if (user.suspended) throw accountSuspended();
 
     req.user = { id: user.id, role: user.role };
     next();

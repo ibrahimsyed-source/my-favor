@@ -502,7 +502,7 @@ export const Signup = ({ navigation, route }: any) => {
   const pickAvatar = async () => {
     try {
       const perm = await ImagePicker.requestMediaLibraryPermissionsAsync();
-      if (!perm.granted) return;
+      if (!perm.granted) { navigation.navigate('PermissionDenied', { kind: 'photos' }); return; }
       const res = await ImagePicker.launchImageLibraryAsync({ allowsEditing: true, quality: 0.8 });
       if (!res.canceled && res.assets && res.assets[0]) setAvatar(res.assets[0].uri);
     } catch {

@@ -4,10 +4,10 @@ import {
   User, Favor, PaymentCard, Transaction, Thread, Message, AppNotification,
   Role, UserStatus, FavorTier, GeoPoint, FavorStatus, computeFees, computePayout,
 } from '../types';
-import { setSession, clearSession, getStoredRefresh, getStoredUser, setStoredUser, ApiError, setOnSessionExpired } from '../api/client';
+import { setSession, clearSession, getStoredRefresh, getStoredUser, setStoredUser, ApiError, setOnSessionExpired, setOnAccountSuspended } from '../api/client';
 import {
   signupApi, verifyOtpApi, loginApi, logoutApi, deleteAccountApi, changePasswordApi,
-  getMeApi, updateProfileApi, setRoleApi, verifyPalApi, setStatusApi, getPalsApi, getPalApi,
+  getConfigApi, getMeApi, updateProfileApi, setRoleApi, verifyPalApi, setStatusApi, getPalsApi, getPalApi,
   createFavorApi, getFavorsApi, getActiveFavorApi, getFavorApi, getIncomingApi,
   acceptFavorApi, declineFavorApi, abandonFavorApi, assignPalApi, advanceFavorApi, finishFavorApi, cancelFavorApi, rateFavorApi, rateMemberApi,
   getCardsApi, addCardApi, removeCardApi, getTransactionsApi, getEarningsApi, cashoutApi,
@@ -58,10 +58,15 @@ interface StoreValue {
   user: User | null;
   isAuthenticated: boolean;
   restoring: boolean; // true while the app is restoring a saved session on cold start
+  // App-level gates surfaced by RootNavigator (config-driven + suspension).
+  maintenance: boolean;
+  updateRequired: boolean;
+  suspended: boolean;
+  recheckConfig: () => Promise<void>;
   signup: (data: Partial<User> & { password: string; ageAffirmed?: boolean; acceptedTerms?: boolean; dateOfBirth?: string }) => Promise<void>;
   verifyOtp: (code: string) => Promise<boolean>;
-  submitVetting: (data: { legalFirstName: string; legalLastName: string; ssn: string; dateOfBirth: string; consent: boolean }) => Promise<boolean>;
-  login: (email: string, password: string) => Promise<'ok' | 'unverified' | 'invalid' | 'error'>;
+  submitVetting: (data: { legalFirstName: string; legalLastName: string; ssn: string; dateOfBirth: string; consent: boolean }) => Promise<'approved' | 'rejected' | 'error'>;
+  login: (email: string, password: string) => Promise<'ok' | 'unverified' | 'invalid' | 'error' | 'suspended'>;
   logout: () => void;
   deleteAccount: () => Promise<void>;
   updateProfile: (patch: Partial<User>) => Promise<void>;
@@ -85,7 +90,7 @@ interface StoreValue {
   // pal side
   incomingFavors: Favor[];
   refreshIncoming: () => Promise<void>;
-  acceptFavor: (favorId: string) => Promise<{ ok: boolean; reason?: string }>;
+  acceptFavor: (favorId: string) => Promise<{ ok: boolean; reason?: string; code?: 'unavailable' | 'error' }>;
   declineFavor: (favorId: string) => void;
   abandonFavor: () => Promise<boolean>;
   assignPal: (palId: string) => void;
@@ -128,9 +133,31 @@ interface StoreValue {
 
 const StoreContext = createContext<StoreValue | null>(null);
 
+// This build's version — kept in sync with app.json's expo.version. Compared
+// against the server's minVersion to decide if a forced update is required.
+const APP_VERSION = '1.0.0';
+
+// Returns true if version `a` is strictly lower than `b` (numeric, dot-separated,
+// missing parts treated as 0). Non-numeric/garbage inputs never force an update.
+function versionLt(a: string, b: string): boolean {
+  const pa = a.split('.').map((n) => parseInt(n, 10));
+  const pb = b.split('.').map((n) => parseInt(n, 10));
+  for (let i = 0; i < Math.max(pa.length, pb.length); i += 1) {
+    const x = pa[i] || 0;
+    const y = pb[i] || 0;
+    if (Number.isNaN(x) || Number.isNaN(y)) return false;
+    if (x !== y) return x < y;
+  }
+  return false;
+}
+
 export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const [user, setUser] = useState<User | null>(null);
   const [restoring, setRestoring] = useState(true);
+  // App-level gates driven by GET /api/config + the suspended signal.
+  const [maintenance, setMaintenance] = useState(false);
+  const [updateRequired, setUpdateRequired] = useState(false);
+  const [suspended, setSuspended] = useState(false);
   const [pendingDest, setPendingDest] = useState<string | null>(null);
   const [draftFavor, setDraftFavor] = useState<Partial<Favor> | null>(null);
   const [activeFavor, setActiveFavor] = useState<Favor | null>(null);
@@ -203,6 +230,7 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     setUser(null); setPendingDest(null); setDraftFavor(null); setActiveFavor(null);
     setHistory([]); setIncomingFavors([]); setCards([]); setTransactions([]); setEarnings([]);
     setThreads([]); setMessages([]); setNotifications([]); setBlockedUsers([]); setPals([]);
+    setSuspended(false); // clear the gate so another account can sign in
   }, []);
 
   // If the API client hard-loses the session mid-flight (a refresh token is
@@ -211,8 +239,24 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
   // instead of stranding a tokenless "zombie" authenticated shell.
   useEffect(() => {
     setOnSessionExpired(() => resetState());
-    return () => setOnSessionExpired(null);
+    // A mid-session suspension gates the app to the Account Suspended screen.
+    setOnAccountSuspended(() => setSuspended(true));
+    return () => { setOnSessionExpired(null); setOnAccountSuspended(null); };
   }, [resetState]);
+
+  // Fetch the public app config: maintenance mode and the minimum supported
+  // version. Best-effort — a failure just leaves the app ungated. Exposed so the
+  // Maintenance screen's "Check again" can re-poll.
+  const recheckConfig = useCallback(async () => {
+    try {
+      const cfg = await getConfigApi();
+      setMaintenance(!!cfg.maintenance);
+      setUpdateRequired(!!cfg.minVersion && versionLt(APP_VERSION, cfg.minVersion));
+    } catch {
+      /* offline / server down → no gate; OfflineBanner covers connectivity */
+    }
+  }, []);
+  useEffect(() => { void recheckConfig(); }, [recheckConfig]);
 
   // ---- session bootstrap (restore on app start) ----
   useEffect(() => {
@@ -309,14 +353,14 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
   // becomes palVerified, unlocking favor acceptance. Returns true on success.
   const submitVetting = useCallback(async (data: {
     legalFirstName: string; legalLastName: string; ssn: string; dateOfBirth: string; consent: boolean;
-  }): Promise<boolean> => {
+  }): Promise<'approved' | 'rejected' | 'error'> => {
     try {
       const { user: u } = await verifyPalApi(data);
       setUser(u);
       await setStoredUser(u);
-      return true;
+      return u.palVerified ? 'approved' : 'rejected';
     } catch {
-      return false;
+      return 'error';
     }
   }, []);
 
@@ -335,7 +379,7 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     }
   }, [pendingDest, loadAll]);
 
-  const login = useCallback(async (email: string, password: string): Promise<'ok' | 'unverified' | 'invalid' | 'error'> => {
+  const login = useCallback(async (email: string, password: string): Promise<'ok' | 'unverified' | 'invalid' | 'error' | 'suspended'> => {
     try {
       const session = await loginApi(email.toLowerCase(), password);
       await setSession(session);
@@ -344,6 +388,12 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       await loadAll(session.user);
       return 'ok';
     } catch (e: any) {
+      // A suspended account (distinct 403 code) gates to the Account Suspended
+      // screen rather than looking like a wrong password.
+      if (e?.code === 'account_suspended') {
+        setSuspended(true);
+        return 'suspended';
+      }
       // Unverified accounts get a fresh code from the server; tell the screen to
       // route to OTP (pendingDest is what verifyOtp() will confirm).
       if (e?.status === 403) {
@@ -487,7 +537,7 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     return () => clearInterval(id);
   }, [user, refreshIncoming]);
 
-  const acceptFavor = useCallback(async (favorId: string): Promise<{ ok: boolean; reason?: string }> => {
+  const acceptFavor = useCallback(async (favorId: string): Promise<{ ok: boolean; reason?: string; code?: 'unavailable' | 'error' }> => {
     // One favor at a time: since a single account can both request and fulfill,
     // guard the single active-favor slot so a user mid-favor can't accept another
     // (which would silently overwrite their in-progress favor).
@@ -503,7 +553,9 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       // lost the race / already taken — refresh the feed + active state
       void getIncomingApi().then(({ favors }) => setIncomingFavors(favors)).catch(() => undefined);
       void getActiveFavorApi().then(({ favor }) => setActiveFavor(favor)).catch(() => undefined);
-      return { ok: false, reason: e?.message || 'This favor is no longer available.' };
+      // 409 (already matched) / 404 (deleted) => the favor is truly gone.
+      const gone = e?.status === 409 || e?.status === 404;
+      return { ok: false, reason: e?.message || 'This favor is no longer available.', code: gone ? 'unavailable' : 'error' };
     }
   }, [activeFavor]);
 
@@ -742,7 +794,8 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
 
   const value = useMemo<StoreValue>(
     () => ({
-      user, isAuthenticated: !!user, restoring, signup, verifyOtp, submitVetting, login, logout, deleteAccount, updateProfile, changePassword,
+      user, isAuthenticated: !!user, restoring, maintenance, updateRequired, suspended, recheckConfig,
+      signup, verifyOtp, submitVetting, login, logout, deleteAccount, updateProfile, changePassword,
       setRole, setStatus,
       pals, draftFavor, setDraft, clearDraft,
       activeFavor, activePal: palById(activeFavor?.palId) ?? null, palById, history,
@@ -754,7 +807,7 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       threads, messagesFor, sendMessage, refreshMessages, refreshThreads, openThreadWith,
       notifications, markNotificationRead, markAllNotificationsRead, refreshNotifications,
     }),
-    [user, restoring, signup, verifyOtp, submitVetting, login, logout, deleteAccount, updateProfile, changePassword, setRole, setStatus,
+    [user, restoring, maintenance, updateRequired, suspended, recheckConfig, signup, verifyOtp, submitVetting, login, logout, deleteAccount, updateProfile, changePassword, setRole, setStatus,
       pals, draftFavor, setDraft, clearDraft, activeFavor, palById, history, requestFavor, advanceFavor, cancelFavor,
       rateFavor, incomingFavors, refreshIncoming, acceptFavor, declineFavor, abandonFavor, assignPal, finishFavorAsPal, rateMember, blockedUsers, reportUser,
       blockUser, cards, addCard, removeCard, transactions, earnings, cashOut,

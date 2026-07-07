@@ -9,6 +9,15 @@ import { publicUser, publicPal } from '../lib/serialize';
 export const profileRouter = Router();
 profileRouter.use(authenticate); // every profile route requires auth
 
+// Whole years between a birth date and now (for the 18+ vetting check).
+function yearsSince(dob: Date): number {
+  const now = new Date();
+  let age = now.getFullYear() - dob.getFullYear();
+  const m = now.getMonth() - dob.getMonth();
+  if (m < 0 || (m === 0 && now.getDate() < dob.getDate())) age -= 1;
+  return age;
+}
+
 // GET /api/profile/me
 profileRouter.get(
   '/me',
@@ -75,13 +84,15 @@ profileRouter.post(
   asyncHandler(async (req, res) => {
     const { dateOfBirth } = req.body as z.infer<typeof vettingSchema>;
     const dob = new Date(dateOfBirth);
+    // Mock background check: applicants who are under 18 (or whose DOB doesn't
+    // parse) are REJECTED; everyone else is auto-approved. This makes the
+    // rejected outcome genuinely reachable (a real vendor would drive it).
+    const ageOk = !isNaN(dob.getTime()) && yearsSince(dob) >= 18;
     const user = await prisma.user.update({
       where: { id: req.user!.id },
-      data: {
-        palVerified: true,
-        palVerifiedAt: new Date(),
-        ...(isNaN(dob.getTime()) ? {} : { dateOfBirth: dob }),
-      },
+      data: ageOk
+        ? { palVerified: true, palVerifiedAt: new Date(), palVetStatus: 'approved', dateOfBirth: dob }
+        : { palVerified: false, palVetStatus: 'rejected', ...(isNaN(dob.getTime()) ? {} : { dateOfBirth: dob }) },
     });
     res.json({ user: publicUser(user) });
   }),

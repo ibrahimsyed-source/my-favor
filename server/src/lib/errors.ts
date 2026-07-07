@@ -25,6 +25,9 @@ export const forbidden = (msg = 'You do not have access to this resource') => ne
 export const notFound = (msg = 'Not found') => new AppError(404, 'not_found', msg);
 export const conflict = (msg: string) => new AppError(409, 'conflict', msg);
 export const tooMany = (msg = 'Too many requests') => new AppError(429, 'too_many_requests', msg);
+// Distinct code so the client can route to the Account Suspended screen.
+export const accountSuspended = (msg = 'This account has been suspended') =>
+  new AppError(403, 'account_suspended', msg);
 
 // Wrap async route handlers so thrown/rejected errors reach the error middleware.
 export function asyncHandler(

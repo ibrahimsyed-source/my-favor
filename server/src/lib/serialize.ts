@@ -21,6 +21,8 @@ export function publicUser(u: User) {
     role: u.role,
     status: u.status,
     palVerified: u.palVerified,
+    palVetStatus: u.palVetStatus,
+    suspended: u.suspended,
     rating: u.rating,
     totalFavors: u.totalFavors,
     yearsActive: u.yearsActive,

@@ -442,3 +442,38 @@ test('trust & safety: an unvetted account cannot accept a favor until verified',
   const ok = await api(`/api/favors/${favorId}/accept`, { method: 'POST', token: helper.token });
   assert.equal(ok.status, 200, 'vetted account can accept');
 });
+
+test('public /api/config returns maintenance + minVersion', async () => {
+  const res = await api('/api/config');
+  assert.equal(res.status, 200);
+  assert.equal(typeof res.json.maintenance, 'boolean');
+  assert.equal(typeof res.json.minVersion, 'string');
+});
+
+test('suspended accounts cannot log in and are cut off mid-session', async () => {
+  const u = await makeUser('member');
+  // Suspend directly in the DB, then a normal authed call is rejected with the
+  // distinct code, and login is blocked too.
+  await prisma.user.update({ where: { id: u.id }, data: { suspended: true } });
+
+  const me = await api('/api/profile/me', { token: u.token });
+  assert.equal(me.status, 403);
+  assert.equal(me.json.error.code, 'account_suspended', 'mid-session request is cut off');
+
+  const login = await api('/api/auth/login', { method: 'POST', body: { email: u.email, password: 'Password123' } });
+  assert.equal(login.status, 403);
+  assert.equal(login.json.error.code, 'account_suspended', 'suspended login is blocked');
+});
+
+test('pal vetting rejects an under-18 applicant', async () => {
+  const u = await makeUser('member');
+  const thisYear = new Date().getFullYear();
+  const minorDob = `${thisYear - 15}-01-01`;
+  const res = await api('/api/profile/verify-pal', {
+    method: 'POST', token: u.token,
+    body: { legalFirstName: 'Kid', legalLastName: 'Doe', ssn: '222334444', dateOfBirth: minorDob, consent: true },
+  });
+  assert.equal(res.status, 200);
+  assert.equal(res.json.user.palVerified, false, 'under-18 is not verified');
+  assert.equal(res.json.user.palVetStatus, 'rejected', 'under-18 application is rejected');
+});

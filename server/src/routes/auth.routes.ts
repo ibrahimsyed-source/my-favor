@@ -4,7 +4,7 @@ import bcrypt from 'bcryptjs';
 import { Prisma } from '@prisma/client';
 import { prisma } from '../db';
 import { validate } from '../lib/validate';
-import { asyncHandler, badRequest, conflict, unauthorized, forbidden, tooMany } from '../lib/errors';
+import { asyncHandler, badRequest, conflict, unauthorized, forbidden, tooMany, accountSuspended } from '../lib/errors';
 import {
   hashPassword,
   verifyPassword,
@@ -206,6 +206,9 @@ authRouter.post(
     // Constant-ish work + generic message to avoid user enumeration / timing.
     const ok = user ? await verifyPassword(password, user.passwordHash) : await verifyPassword(password, DUMMY_HASH);
     if (!user || !ok) throw unauthorized('Invalid email or password');
+
+    // Suspended accounts can't sign in (distinct code -> Account Suspended screen).
+    if (user.suspended) throw accountSuspended();
 
     if (!user.verified) {
       await issueOtp({ destination: user.email, purpose: 'signup', userId: user.id });

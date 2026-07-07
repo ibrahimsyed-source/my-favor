@@ -49,6 +49,14 @@ export function setOnSessionExpired(cb: (() => void) | null) {
   onSessionExpired = cb;
 }
 
+// Bridge a mid-session account SUSPENSION (any authed request returns
+// 403 account_suspended) back to the store so it can gate the app to the
+// Account Suspended screen instead of surfacing scattered 403 errors.
+let onAccountSuspended: (() => void) | null = null;
+export function setOnAccountSuspended(cb: (() => void) | null) {
+  onAccountSuspended = cb;
+}
+
 export function getAccessToken() {
   return accessToken;
 }
@@ -164,6 +172,9 @@ export async function apiRequest<T = any>(path: string, opts: ReqOpts = {}): Pro
 
   if (!res.ok) {
     const err = data?.error ?? {};
+    // A suspended account gets cut off on any authed call — notify the store to
+    // gate the whole app, then still throw so the caller's flow unwinds.
+    if (res.status === 403 && err.code === 'account_suspended') onAccountSuspended?.();
     throw new ApiError(res.status, err.code ?? 'error', err.message ?? `Request failed (${res.status})`);
   }
   return data as T;
