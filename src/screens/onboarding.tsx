@@ -218,6 +218,8 @@ export function Vetting({ navigation }: any) {
   });
   const [consent, setConsent] = useState(false);
   const [submitted, setSubmitted] = useState(false);
+  const [submitting, setSubmitting] = useState(false);
+  const [submitError, setSubmitError] = useState('');
 
   // Mock async checks — keep handles so we don't setState after unmount.
   const timers = useRef<ReturnType<typeof setTimeout>[]>([]);
@@ -305,13 +307,27 @@ export function Vetting({ navigation }: any) {
     if (prevDone && !needConsent && phaseOf(st.key) === 'todo') runStep(st.key, st.ms);
   };
 
-  const submit = () => {
-    // Application complete → enter pal mode and hand the application off for
-    // review. The pal is NOT put online here: approval is pending, and true
-    // gating of pal home/earning on a persisted `palVerified` flag is deferred
-    // to the backend (see the header note above).
-    s.setRole('pal');
-    setSubmitted(true);
+  const submit = async () => {
+    if (submitting) return;
+    setSubmitting(true);
+    setSubmitError('');
+    // Submit the vetting application to the server, which records the identity
+    // info and (mock vendors) approves it — setting the persisted `palVerified`
+    // flag that gates favor acceptance. Only then do we flip to pal mode.
+    const ok = await s.submitVetting({
+      legalFirstName: firstName.trim(),
+      legalLastName: lastName.trim(),
+      ssn: `${ssn1}${ssn2}${ssn3}`,
+      dateOfBirth: dob.trim(),
+      consent,
+    });
+    setSubmitting(false);
+    if (ok) {
+      s.setRole('pal');
+      setSubmitted(true);
+    } else {
+      setSubmitError('We couldn’t submit your application. Please check your details and try again.');
+    }
   };
 
   // Approval-pending state (post-submission): pal home stays gated until a
@@ -473,10 +489,14 @@ export function Vetting({ navigation }: any) {
             ? "All set — submit your application for review."
             : 'Complete all 5 requirements and your details to finish applying.'}
         </Txt>
+        {submitError ? (
+          <Txt variant="caption" color={theme.danger} center style={{ marginBottom: 10 }}>{submitError}</Txt>
+        ) : null}
         <Button
           title="Finish applying"
           uppercase={false}
-          disabled={!canSubmit}
+          disabled={!canSubmit || submitting}
+          loading={submitting}
           onPress={submit}
         />
       </ScrollView>

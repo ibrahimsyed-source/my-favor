@@ -32,6 +32,13 @@ import { fonts, useTheme } from '../theme';
 const CONTACT_EMAIL = 'support@myfavor.app';
 const COMPANY = 'My Favor';
 
+// LEGAL: The bracketed placeholder below MUST be replaced with the registered
+// company legal entity, its business address, and the governing-law
+// jurisdiction before publication. These Terms and this Privacy Policy are a
+// good-faith plain-English draft and still require review and sign-off by
+// qualified legal counsel prior to launch (App Store 5.1.1 / Play Store).
+const LEGAL_ENTITY = '[Company legal entity, address, and governing-law jurisdiction — confirm with counsel]';
+
 // Figma fills (fixed brand hexes — not themed).
 const BLUE = '#0452A5'; // masthead
 const STRIP = '#253246'; // language strip
@@ -50,23 +57,36 @@ type Block =
 // Top section verbatim from frame #125:8639; app-specific terms follow the
 // clipped "Definitions" section.
 const TERMS: Block[] = [
-  { intro: 'Please read these terms and conditions carefully before using Our Service.' },
+  { intro: 'Please read these Terms and Conditions carefully before using Our Service. They are a binding agreement between You and My Favor.' },
   { h1: 'Interpretation and Definitions' },
   { h: 'Interpretation' },
-  { p: 'The words of which the initial letter is capitalized have meanings defined under the following conditions. The following definitions shall have the same meaning regardless of whether they appear in singular or in plural.' },
+  { p: 'The words of which the initial letter is capitalized have meanings defined under the following conditions. The following definitions have the same meaning whether they appear in singular or in plural.' },
   { h: 'Definitions' },
   { p: 'For the purposes of these Terms and Conditions:' },
-  { li: 'Application means the software program provided by the Company downloaded by You on any electronic device, named MyFavor App.' },
+  { li: 'Application (or "App") means the My Favor software program that You download onto any electronic device.' },
+  { li: `Company (referred to as "the Company", "We", "Us", or "Our") means ${LEGAL_ENTITY}, the operator of My Favor.` },
+  { li: 'Service means the My Favor Application together with the marketplace, website, and related services We provide.' },
+  { li: 'Account means the unique account created for You to access and use the Service.' },
+  { li: 'User (or "You") means any individual who accesses or uses the Service, whether as a Favor Member, a Favor Pal, or both.' },
+  { li: 'Favor Member (or "Member") means a User who requests a Favor through the Service.' },
+  { li: 'Favor Pal (or "Pal") means an independent User who chooses to accept and perform a Favor in exchange for payment.' },
+  { li: 'Favor means an errand, task, or service that a Member requests and a Pal agrees to perform through the Service.' },
+  { li: 'Content means the text, photos, messages, and other material that Users submit to or through the Service.' },
+  { li: 'Personal Data means any information that relates to an identified or identifiable individual, as further described in Our Privacy Policy.' },
 
-  { p: `These Terms and Conditions ("Terms") are a binding agreement between you and ${COMPANY} governing your use of the MyFavor App and services (the "Service"). By creating an account you agree to these Terms.` },
+  { p: `These Terms and Conditions ("Terms") are a binding agreement between You and ${COMPANY} governing Your use of the Service. By creating an Account or otherwise using the Service, You agree to these Terms. If You do not agree, do not use the Service.` },
 
   { h: 'The Service' },
-  { p: 'My Favor is a marketplace that connects Members who request everyday favors and errands with Favor Pals who choose to perform them. My Favor provides the platform; it is not a party to the agreement between a Member and a Pal and does not itself perform favors.' },
+  { p: 'My Favor is a marketplace that connects Members who request everyday favors and errands with Favor Pals who choose to perform them. My Favor provides the platform only; it is not a party to the agreement between a Member and a Pal and does not itself perform favors.' },
 
   { h: 'Eligibility & Accounts' },
-  { li: 'You must be at least 18 years old and able to form a binding contract.' },
-  { li: 'You agree to provide accurate information and to keep your account credentials secure.' },
-  { li: 'You are responsible for activity that occurs under your account.' },
+  { li: 'You must be at least 18 years old and able to form a binding contract to use the Service.' },
+  { li: 'You agree to provide accurate, current information and to keep your account credentials secure.' },
+  { li: 'You are responsible for all activity that occurs under your account.' },
+  { li: 'You may not use the Service if We have previously banned you or if the law prohibits you from doing so.' },
+
+  { h: 'Independent-Contractor Relationship' },
+  { p: 'Favor Pals are independent contractors, not employees, agents, partners, or joint venturers of My Favor. Pals decide whether, when, and how to accept and perform Favors, and they use their own judgment and means to do so. Nothing in these Terms creates an employment, agency, partnership, or franchise relationship between My Favor and any Pal. As independent contractors, Pals are solely responsible for their own taxes and for any licenses, permits, or insurance their Favors require.' },
 
   { h: 'Payments, Fees & Payouts' },
   { li: 'Members are charged the favor price plus a service fee and a transaction (processing) fee, shown before you confirm.' },
@@ -82,31 +102,52 @@ const TERMS: Block[] = [
   { li: 'Circumvent the platform to avoid fees, or scrape or abuse the Service.' },
   { p: 'We use a zero-tolerance approach to objectionable content and abusive behavior. You can report or block users in the app, and we may remove content or suspend accounts that violate these Terms.' },
 
+  { h: 'Assumption of Risk' },
+  { p: 'Favors take place in the real world and involve people We do not control. You understand and voluntarily accept the risks of requesting or performing Favors, including meeting other users, entering homes or vehicles, and handling goods or money. You are responsible for using good judgment, following local laws, and taking sensible safety precautions. My Favor does not supervise Favors and is not responsible for the conduct of any User.' },
+
   { h: 'Favors Are Between Users' },
   { p: 'Members and Pals are independent of My Favor and of each other. We do not guarantee the quality, safety, legality, or completion of any favor. Use good judgment and follow local laws.' },
 
   { h: 'Disclaimers & Limitation of Liability' },
-  { p: 'The Service is provided "as is" without warranties of any kind. To the maximum extent permitted by law, My Favor is not liable for indirect, incidental, or consequential damages, or for the acts or omissions of users.' },
+  { p: 'The Service is provided "as is" and "as available" without warranties of any kind, whether express or implied, including any implied warranty of merchantability or fitness for a particular purpose. To the maximum extent permitted by law, My Favor is not liable for any indirect, incidental, special, consequential, or punitive damages, or for the acts or omissions of any User. Where our liability cannot be excluded, it is limited to the greater of the fees you paid to My Favor in the three months before the event giving rise to the claim, or USD 100.' },
+
+  { h: 'Indemnification' },
+  { p: 'You agree to indemnify and hold harmless My Favor and its officers, employees, and agents from any claim, damage, loss, or expense (including reasonable legal fees) arising out of your use of the Service, your Content, the Favors you request or perform, or your breach of these Terms or the law.' },
+
+  { h: 'Governing Law' },
+  { p: `These Terms are governed by the laws of ${LEGAL_ENTITY}, without regard to conflict-of-laws rules. Except where mandatory local consumer law provides otherwise, the courts of that jurisdiction have exclusive jurisdiction over any dispute arising from these Terms or the Service.` },
+
+  { h: 'Dispute Resolution' },
+  { p: `If a dispute arises, please contact Us first at ${CONTACT_EMAIL} so We can try to resolve it informally. If We cannot resolve it within 30 days, the dispute will be settled by binding arbitration or by the competent courts of the governing-law jurisdiction, to the extent permitted by law. Where required by local law, you keep the right to bring qualifying claims in small-claims court and any non-waivable right to participate in class or representative proceedings.` },
 
   { h: 'Termination' },
-  { p: 'You may stop using the Service and delete your account at any time from Settings. We may suspend or terminate accounts that violate these Terms or the law.' },
+  { p: 'You may stop using the Service and delete your account at any time from Settings. We may suspend or terminate accounts that violate these Terms or the law. Provisions that by their nature should survive termination — including payment obligations, disclaimers, limitation of liability, indemnification, and governing law — will survive.' },
 
   { h: 'Changes to These Terms' },
-  { p: 'We may update these Terms and will revise the effective date above. Continued use after changes means you accept the updated Terms.' },
+  { p: 'We may update these Terms and will revise the effective date above. Material changes will be notified in the app. Continued use after changes means you accept the updated Terms.' },
 
   { h: 'Contact' },
-  { p: `Questions about these Terms? Email us at ${CONTACT_EMAIL}.` },
+  { p: `Questions about these Terms? Email us at ${CONTACT_EMAIL}, or write to ${LEGAL_ENTITY}.` },
 ];
 
 // --- Privacy Policy ---------------------------------------------------------
 // Top section verbatim from frame #125:8663 ("Definitions" directly follows
 // "Interpretation" in the frame); app-specific policy follows the clip.
 const PRIVACY: Block[] = [
-  { p: 'This Privacy Policy describes Our policies and procedures on the collection, use and disclosure of Your information when You use the Service and tells You about Your privacy rights and how the law protects You.' },
-  { p: 'We use Your Personal data to provide and improve the Service. By using the Service, You agree to the collection and use of information in accordance with this Privacy Policy. This Privacy Policy has been created with the help of the Privacy Policy Generator.' },
+  { p: 'This Privacy Policy describes Our policies and procedures on the collection, use, and disclosure of Your information when You use the Service, and tells You about Your privacy rights and how the law protects You.' },
+  { p: 'We use Your Personal Data to provide and improve the Service. By using the Service, You agree to the collection and use of information in accordance with this Privacy Policy.' },
   { h1: 'Interpretation and Definitions' },
   { h: 'Interpretation' },
+  { p: 'The words of which the initial letter is capitalized have meanings defined under the following conditions. The following definitions have the same meaning whether they appear in singular or in plural.' },
   { h: 'Definitions' },
+  { p: 'For the purposes of this Privacy Policy:' },
+  { li: `Company (referred to as "We", "Us", or "Our") means ${LEGAL_ENTITY}, the operator of My Favor.` },
+  { li: 'Service means the My Favor Application, marketplace, website, and related services.' },
+  { li: 'User (or "You") means any individual who uses the Service, whether as a Favor Member, a Favor Pal, or both.' },
+  { li: 'Favor Member (or "Member") means a User who requests a Favor through the Service.' },
+  { li: 'Favor Pal (or "Pal") means an independent User who accepts and performs a Favor.' },
+  { li: 'Personal Data means any information relating to an identified or identifiable individual, such as your name, email address, phone number, or location.' },
+  { li: 'Usage Data means information collected automatically when You use the Service, such as device type, app version, and diagnostic logs.' },
 
   { h: 'Information We Collect' },
   { p: 'We collect information you provide and information generated as you use the Service:' },
@@ -198,7 +239,7 @@ export const Legal = ({ navigation, route }: any) => {
         bannerPadBottom: 20, // masthead 101px tall w/ 2-line title
         docTitle: 'Terms and Conditions',
         titleTop: 28,
-        updated: 'Last updated: March 24, 2022',
+        updated: 'Last updated: July 1, 2026',
         updatedTop: 44,
         body: { fontSize: 16, lineHeight: 28 },
         blocks: TERMS,
@@ -210,7 +251,7 @@ export const Legal = ({ navigation, route }: any) => {
         bannerPadBottom: 24, // masthead 76px tall w/ 1-line title
         docTitle: 'Privacy Policy',
         titleTop: 25,
-        updated: 'Last updated: October 08, 2021',
+        updated: 'Last updated: July 1, 2026',
         updatedTop: 17,
         body: { fontSize: 17, lineHeight: 26 },
         blocks: PRIVACY,

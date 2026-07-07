@@ -7,7 +7,7 @@ import {
 import { setSession, clearSession, getStoredRefresh, getStoredUser, setStoredUser, ApiError, setOnSessionExpired } from '../api/client';
 import {
   signupApi, verifyOtpApi, loginApi, logoutApi, deleteAccountApi, changePasswordApi,
-  getMeApi, updateProfileApi, setRoleApi, setStatusApi, getPalsApi, getPalApi,
+  getMeApi, updateProfileApi, setRoleApi, verifyPalApi, setStatusApi, getPalsApi, getPalApi,
   createFavorApi, getFavorsApi, getActiveFavorApi, getFavorApi, getIncomingApi,
   acceptFavorApi, declineFavorApi, abandonFavorApi, assignPalApi, advanceFavorApi, finishFavorApi, cancelFavorApi, rateFavorApi, rateMemberApi,
   getCardsApi, addCardApi, removeCardApi, getTransactionsApi, getEarningsApi, cashoutApi,
@@ -58,8 +58,9 @@ interface StoreValue {
   user: User | null;
   isAuthenticated: boolean;
   restoring: boolean; // true while the app is restoring a saved session on cold start
-  signup: (data: Partial<User> & { password: string }) => Promise<void>;
+  signup: (data: Partial<User> & { password: string; ageAffirmed?: boolean; acceptedTerms?: boolean; dateOfBirth?: string }) => Promise<void>;
   verifyOtp: (code: string) => Promise<boolean>;
+  submitVetting: (data: { legalFirstName: string; legalLastName: string; ssn: string; dateOfBirth: string; consent: boolean }) => Promise<boolean>;
   login: (email: string, password: string) => Promise<'ok' | 'unverified' | 'invalid' | 'error'>;
   logout: () => void;
   deleteAccount: () => Promise<void>;
@@ -286,15 +287,37 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
   const palById = useCallback((id?: string) => (id ? pals.find((p) => p.id === id) : undefined), [pals]);
 
   // ---- auth ----
-  const signup = useCallback(async (data: Partial<User> & { password: string }) => {
+  const signup = useCallback(async (
+    data: Partial<User> & { password: string; ageAffirmed?: boolean; acceptedTerms?: boolean; dateOfBirth?: string },
+  ) => {
     const res = await signupApi({
       firstName: data.firstName ?? '', lastName: data.lastName ?? '',
       email: (data.email ?? '').toLowerCase(), phone: data.phone ?? '',
       password: data.password, ...(data.role ? { role: data.role } : {}),
+      // Compliance: the server requires an explicit 18+ affirmation + terms
+      // acceptance; the signup screen collects both before calling this.
+      ageAffirmed: data.ageAffirmed === true,
+      acceptedTerms: data.acceptedTerms === true,
+      ...(data.dateOfBirth ? { dateOfBirth: data.dateOfBirth } : {}),
     });
     setPendingDest(res.destination);
     // In development the server returns the OTP so testing needs no SMS provider.
     if (res.devCode) console.log(`[dev OTP] ${res.devCode}`);
+  }, []);
+
+  // Submit the pal vetting application (Driver Information). On success the user
+  // becomes palVerified, unlocking favor acceptance. Returns true on success.
+  const submitVetting = useCallback(async (data: {
+    legalFirstName: string; legalLastName: string; ssn: string; dateOfBirth: string; consent: boolean;
+  }): Promise<boolean> => {
+    try {
+      const { user: u } = await verifyPalApi(data);
+      setUser(u);
+      await setStoredUser(u);
+      return true;
+    } catch {
+      return false;
+    }
   }, []);
 
   const verifyOtp = useCallback(async (code: string) => {
@@ -719,7 +742,7 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
 
   const value = useMemo<StoreValue>(
     () => ({
-      user, isAuthenticated: !!user, restoring, signup, verifyOtp, login, logout, deleteAccount, updateProfile, changePassword,
+      user, isAuthenticated: !!user, restoring, signup, verifyOtp, submitVetting, login, logout, deleteAccount, updateProfile, changePassword,
       setRole, setStatus,
       pals, draftFavor, setDraft, clearDraft,
       activeFavor, activePal: palById(activeFavor?.palId) ?? null, palById, history,
@@ -731,7 +754,7 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       threads, messagesFor, sendMessage, refreshMessages, refreshThreads, openThreadWith,
       notifications, markNotificationRead, markAllNotificationsRead, refreshNotifications,
     }),
-    [user, restoring, signup, verifyOtp, login, logout, deleteAccount, updateProfile, changePassword, setRole, setStatus,
+    [user, restoring, signup, verifyOtp, submitVetting, login, logout, deleteAccount, updateProfile, changePassword, setRole, setStatus,
       pals, draftFavor, setDraft, clearDraft, activeFavor, palById, history, requestFavor, advanceFavor, cancelFavor,
       rateFavor, incomingFavors, refreshIncoming, acceptFavor, declineFavor, abandonFavor, assignPal, finishFavorAsPal, rateMember, blockedUsers, reportUser,
       blockUser, cards, addCard, removeCard, transactions, earnings, cashOut,

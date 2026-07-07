@@ -471,6 +471,9 @@ function MemberHome({ navigation }: any) {
   };
 
   const switchToPal = () => {
+    // A pal must pass vetting before they can work. If not yet verified, send
+    // them through Driver Information instead of into pal mode.
+    if (!s.user?.palVerified) { navigation.navigate('Vetting'); return; }
     // Flips Home into the provider dashboard in place (design toggle metaphor).
     s.setRole('pal');
   };

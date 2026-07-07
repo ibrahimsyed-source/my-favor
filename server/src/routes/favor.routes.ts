@@ -6,7 +6,7 @@ import { asyncHandler, badRequest, notFound, forbidden, conflict } from '../lib/
 import { authenticate } from '../middleware/authenticate';
 import { publicFavor, publicFavorOpen } from '../lib/serialize';
 import { computeFees, computePayout, computeCancellation, FAVOR_TIERS } from '../lib/money';
-import { stripeEnabled, chargeFavor, chargeToPal } from '../lib/stripe';
+import { stripeEnabled, chargeFavor, chargeToPal, refundFavorCharge } from '../lib/stripe';
 
 export const favorRouter = Router();
 favorRouter.use(authenticate);
@@ -231,6 +231,14 @@ favorRouter.post(
     const favor = await prisma.favor.findUnique({ where: { id: req.params.id } });
     if (!favor) throw notFound('Favor not found');
     if (favor.memberId === me) throw forbidden('You cannot accept your own favor');
+
+    // Trust & safety gate: a pal must have passed identity/background vetting
+    // before entering a member's home. Enforced server-side so a client can't
+    // bypass it. (palVerified is set by POST /profile/verify-pal.)
+    const meUser = await prisma.user.findUnique({ where: { id: me }, select: { palVerified: true } });
+    if (!meUser?.palVerified) {
+      throw forbidden('Complete pal verification (Driver Information) before accepting favors.');
+    }
 
     // One favor at a time: a pal already mid-favor can't claim another (server-
     // side guard for the single active-favor slot; the client guards too).
@@ -460,6 +468,16 @@ favorRouter.post(
           memberId: me, palConnectId: cid, amount: cancellation.fee, paymentMethodId: pm,
           idempotencyKey: `favor_cancel_${favor.id}`, metadata: { favorId: favor.id },
         }),
+      });
+    }
+
+    // If this favor was already charged (pre-paid flow), refund the member their
+    // total. Best-effort: a refund failure shouldn't block the cancellation — the
+    // charge.refunded / dispute webhooks reconcile the ledger either way.
+    if (stripeEnabled() && favor.stripePaymentIntentId) {
+      await refundFavorCharge(favor.stripePaymentIntentId, { reason: 'requested_by_customer' }).catch((e) => {
+        // eslint-disable-next-line no-console
+        console.error('Refund on cancel failed for favor', favor.id, e);
       });
     }
 

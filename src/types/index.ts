@@ -18,6 +18,7 @@ export interface User {
   homeAddress?: string;
   role: Role; // currently active role
   status: UserStatus;
+  palVerified?: boolean; // passed pal identity/background vetting (gates favor acceptance)
   // Pal stats
   rating: number; // 0-5
   totalFavors: number;

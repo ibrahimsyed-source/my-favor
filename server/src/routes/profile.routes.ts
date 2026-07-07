@@ -57,6 +57,36 @@ profileRouter.post(
   }),
 );
 
+// POST /api/profile/verify-pal — submit the pal vetting application (legal name,
+// SSN, DOB, driver-requirements consent). In this build the identity/background
+// vendors are mocked, so a complete, consented submission is auto-approved and
+// sets palVerified. In production this endpoint would only RECORD the application
+// and a real vendor callback / admin review would flip palVerified.
+const vettingSchema = z.object({
+  legalFirstName: z.string().trim().min(1).max(80),
+  legalLastName: z.string().trim().min(1).max(80),
+  ssn: z.string().trim().regex(/^\d{9}$/, 'SSN must be 9 digits'),
+  dateOfBirth: z.string().trim().min(1).max(40),
+  consent: z.literal(true, { errorMap: () => ({ message: 'Background-check consent is required' }) }),
+});
+profileRouter.post(
+  '/verify-pal',
+  validate({ body: vettingSchema }),
+  asyncHandler(async (req, res) => {
+    const { dateOfBirth } = req.body as z.infer<typeof vettingSchema>;
+    const dob = new Date(dateOfBirth);
+    const user = await prisma.user.update({
+      where: { id: req.user!.id },
+      data: {
+        palVerified: true,
+        palVerifiedAt: new Date(),
+        ...(isNaN(dob.getTime()) ? {} : { dateOfBirth: dob }),
+      },
+    });
+    res.json({ user: publicUser(user) });
+  }),
+);
+
 // POST /api/profile/status — presence.
 profileRouter.post(
   '/status',
@@ -86,7 +116,9 @@ profileRouter.get(
       excluded.add(b.blockedId);
     }
     const pals = await prisma.user.findMany({
-      where: { role: 'pal', verified: true, id: { notIn: [...excluded] } },
+      // Only verified, vetted pals are matchable — palVerified gates the
+      // background check the same way `verified` gates email confirmation.
+      where: { role: 'pal', verified: true, palVerified: true, id: { notIn: [...excluded] } },
       orderBy: { rating: 'desc' },
       take: 50,
     });

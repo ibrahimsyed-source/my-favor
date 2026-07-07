@@ -4,7 +4,7 @@ import bcrypt from 'bcryptjs';
 import { Prisma } from '@prisma/client';
 import { prisma } from '../db';
 import { validate } from '../lib/validate';
-import { asyncHandler, badRequest, conflict, unauthorized, forbidden } from '../lib/errors';
+import { asyncHandler, badRequest, conflict, unauthorized, forbidden, tooMany } from '../lib/errors';
 import {
   hashPassword,
   verifyPassword,
@@ -17,7 +17,11 @@ import {
 import { issueOtp, verifyOtp } from '../lib/otp';
 import { publicUser } from '../lib/serialize';
 import { authenticate } from '../middleware/authenticate';
-import { authLimiter, otpLimiter } from '../middleware/rateLimit';
+import { authLimiter, otpLimiter, sessionLimiter } from '../middleware/rateLimit';
+
+// Current version of the Terms/Privacy the user consents to at signup. Bump when
+// the policies materially change so re-consent can be required.
+const TERMS_VERSION = '2026-07-01';
 
 export const authRouter = Router();
 
@@ -33,6 +37,12 @@ const signupSchema = z.object({
   phone: z.string().trim().min(7).max(32),
   password: passwordSchema,
   role: z.enum(['member', 'pal']).optional(),
+  // Compliance: the client must send an explicit 18+ affirmation and terms
+  // acceptance. A signup without these is rejected (proof-of-consent for TCPA /
+  // marketplace terms; eligibility for App Store age rating).
+  ageAffirmed: z.literal(true, { errorMap: () => ({ message: 'You must confirm you are 18 or older' }) }),
+  acceptedTerms: z.literal(true, { errorMap: () => ({ message: 'You must accept the Terms & Privacy Policy' }) }),
+  dateOfBirth: z.string().datetime().optional(),
 });
 
 async function issueSession(userId: string, role: string) {
@@ -47,13 +57,21 @@ authRouter.post(
   authLimiter,
   validate({ body: signupSchema }),
   asyncHandler(async (req, res) => {
-    const { firstName, lastName, email, phone, password, role } = req.body as z.infer<typeof signupSchema>;
+    const { firstName, lastName, email, phone, password, role, dateOfBirth } =
+      req.body as z.infer<typeof signupSchema>;
 
     const passwordHash = await hashPassword(password);
     let user;
     try {
       user = await prisma.user.create({
-        data: { firstName, lastName, email, phone, passwordHash, role: role ?? 'member' },
+        data: {
+          firstName, lastName, email, phone, passwordHash, role: role ?? 'member',
+          // Persist proof-of-consent + eligibility captured at signup.
+          ageAffirmed: true,
+          termsAcceptedAt: new Date(),
+          termsVersion: TERMS_VERSION,
+          ...(dateOfBirth ? { dateOfBirth: new Date(dateOfBirth) } : {}),
+        },
       });
     } catch (err) {
       // Unique constraint (email or phone already registered).
@@ -81,6 +99,7 @@ authRouter.post(
   asyncHandler(async (req, res) => {
     const { destination, code } = req.body as z.infer<typeof verifyOtpSchema>;
     const result = await verifyOtp({ destination, purpose: 'signup', code });
+    if (result.locked) throw tooMany('Too many incorrect codes. Try again in a few minutes.');
     if (!result.ok) throw badRequest('Invalid or expired code');
 
     const user = await prisma.user.update({
@@ -158,6 +177,7 @@ authRouter.post(
   asyncHandler(async (req, res) => {
     const { email, code, password } = req.body as z.infer<typeof resetSchema>;
     const result = await verifyOtp({ destination: email, purpose: 'reset', code });
+    if (result.locked) throw tooMany('Too many incorrect codes. Try again in a few minutes.');
     if (!result.ok) throw badRequest('Invalid or expired code');
     const user = await prisma.user.findUnique({ where: { email } });
     if (!user) throw badRequest('Invalid or expired code'); // generic, no enumeration
@@ -201,6 +221,7 @@ authRouter.post(
 const refreshSchema = z.object({ refreshToken: z.string().min(10).max(500) });
 authRouter.post(
   '/refresh',
+  sessionLimiter,
   validate({ body: refreshSchema }),
   asyncHandler(async (req, res) => {
     const { refreshToken } = req.body as z.infer<typeof refreshSchema>;
@@ -220,6 +241,7 @@ authRouter.post(
 // POST /api/auth/logout — revoke a refresh token.
 authRouter.post(
   '/logout',
+  sessionLimiter,
   validate({ body: refreshSchema }),
   asyncHandler(async (req, res) => {
     await revokeRefreshToken((req.body as z.infer<typeof refreshSchema>).refreshToken);
@@ -231,6 +253,7 @@ authRouter.post(
 const changePwSchema = z.object({ currentPassword: z.string().min(1), newPassword: passwordSchema });
 authRouter.post(
   '/change-password',
+  sessionLimiter,
   authenticate,
   validate({ body: changePwSchema }),
   asyncHandler(async (req, res) => {

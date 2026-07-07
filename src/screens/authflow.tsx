@@ -547,6 +547,10 @@ export const Signup = ({ navigation, route }: any) => {
         firstName, lastName, email, phone, password,
         ...(avatar ? { avatar } : {}),
         ...(role ? { role } : {}),
+        // The terms checkbox combines 18+ eligibility + terms acceptance; the
+        // server records both as proof-of-consent (TCPA / age rating).
+        ageAffirmed: agreeTerms,
+        acceptedTerms: agreeTerms,
       });
       navigation.navigate('OtpVerify', { destination: email.trim().toLowerCase(), password });
     } catch (e: any) {
@@ -654,12 +658,12 @@ export const Signup = ({ navigation, route }: any) => {
           activeOpacity={0.7}
           accessibilityRole="checkbox"
           accessibilityState={{ checked: agreeTerms }}
-          accessibilityLabel="I agree to MyFavor's Liability Waiver, Privacy Policy, and Terms and Conditions"
+          accessibilityLabel="I am 18 or older and agree to MyFavor's Liability Waiver, Privacy Policy, and Terms and Conditions"
           style={styles.checkRow}
         >
           <CheckBox checked={agreeTerms} />
           <Txt style={{ flex: 1, fontFamily: P_MEDIUM, fontSize: 15, lineHeight: 22 }}>
-            {'I agree to MyFavor’s '}
+            {'I confirm I am 18 or older and agree to MyFavor’s '}
             {legalLink('Liability Waiver', 'terms')}
             {', '}
             {legalLink('Privacy Policy', 'privacy')}

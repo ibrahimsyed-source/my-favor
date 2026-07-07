@@ -10,6 +10,11 @@
     "description": "My Favor is a two-sided marketplace to request everyday favors and errands, or earn money completing favors as a Favor Pal.",
     "primaryColor": "#ED1C24",
     "privacy": "public",
+    "splash": {
+      "image": "./assets/icon.png",
+      "resizeMode": "contain",
+      "backgroundColor": "#E6F4FE"
+    },
     "ios": {
       "supportsTablet": true,
       "bundleIdentifier": "com.myfavor.app",

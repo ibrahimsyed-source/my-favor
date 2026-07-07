@@ -113,7 +113,7 @@ const BeAFavorPalModal: React.FC<{
 // ProviderResults — blurred map + white bottom sheet with the nearby pals row.
 // ---------------------------------------------------------------------------
 export const ProviderResults = ({ navigation }: any) => {
-  const { pals, setRole } = useStore();
+  const { pals, setRole, user } = useStore();
   const { width } = useWindowDimensions();
   const insets = useSafeAreaInsets();
   const [fontsLoaded] = useFonts({ Poppins_400Regular, Poppins_400Regular_Italic });
@@ -125,6 +125,8 @@ export const ProviderResults = ({ navigation }: any) => {
 
   const switchToPal = () => {
     setShowPalModal(false);
+    // Gate on vetting: unverified pals go to Driver Information first.
+    if (!user?.palVerified) { navigation.navigate('Vetting'); return; }
     setRole('pal');
     navigation.navigate('Tabs');
   };

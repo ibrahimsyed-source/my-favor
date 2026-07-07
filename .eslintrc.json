@@ -1,0 +1,30 @@
+{
+  "root": true,
+  "env": {
+    "browser": true,
+    "node": true,
+    "es2022": true
+  },
+  "parserOptions": {
+    "ecmaVersion": 2022,
+    "sourceType": "module",
+    "ecmaFeatures": {
+      "jsx": true
+    }
+  },
+  "extends": ["eslint:recommended"],
+  "ignorePatterns": [
+    "node_modules/",
+    "dist/",
+    "web-build/",
+    ".expo/",
+    "babel.config.js"
+  ],
+  "rules": {
+    "no-undef": "off",
+    "no-unused-vars": "warn",
+    "no-empty": "warn",
+    "no-console": "off",
+    "no-constant-condition": "warn"
+  }
+}

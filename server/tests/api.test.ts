@@ -51,7 +51,7 @@ async function makeUser(role: 'member' | 'pal') {
   const phone = `+1555${crypto.randomInt(1000000, 9999999)}`;
   const signup = await api('/api/auth/signup', {
     method: 'POST',
-    body: { firstName: 'Test', lastName: role, email, phone, password: 'Password123', role },
+    body: { firstName: 'Test', lastName: role, email, phone, password: 'Password123', role, ageAffirmed: true, acceptedTerms: true },
   });
   assert.equal(signup.status, 201, 'signup should succeed');
   assert.ok(signup.json.devCode, 'dev OTP code returned in dev mode');
@@ -62,7 +62,19 @@ async function makeUser(role: 'member' | 'pal') {
   });
   assert.equal(verify.status, 200, 'otp verify should succeed');
   assert.ok(verify.json.accessToken && verify.json.refreshToken, 'session returned');
-  return { email, token: verify.json.accessToken as string, refreshToken: verify.json.refreshToken as string, id: verify.json.user.id as string };
+  const token = verify.json.accessToken as string;
+
+  // Pals must clear vetting before they can accept favors — auto-approve the
+  // mocked application so lifecycle tests can proceed.
+  if (role === 'pal') {
+    const vet = await api('/api/profile/verify-pal', {
+      method: 'POST',
+      token,
+      body: { legalFirstName: 'Test', legalLastName: 'Pal', ssn: '123456789', dateOfBirth: '1990-01-01', consent: true },
+    });
+    assert.equal(vet.status, 200, 'pal vetting should succeed');
+  }
+  return { email, token, refreshToken: verify.json.refreshToken as string, id: verify.json.user.id as string };
 }
 
 test('health check', async () => {
@@ -149,9 +161,16 @@ test('authorization: non-participant cannot read a favor', async () => {
   assert.equal(peek.status, 403, 'stranger is forbidden from another user’s favor');
 });
 
-test('any account can browse and fulfill others\' favors, but not their own', async () => {
+test('any vetted account can browse and fulfill others\' favors, but not their own', async () => {
   const alice = await makeUser('member');
-  const bob = await makeUser('member'); // a "member" can now also fulfill favors
+  // A "member" can also fulfill favors, but only after passing pal vetting
+  // (entering a home requires a background check regardless of the role label).
+  const bob = await makeUser('member');
+  const bobVet = await api('/api/profile/verify-pal', {
+    method: 'POST', token: bob.token,
+    body: { legalFirstName: 'Bob', legalLastName: 'Member', ssn: '987654321', dateOfBirth: '1992-05-05', consent: true },
+  });
+  assert.equal(bobVet.status, 200, 'member can complete vetting to fulfill favors');
 
   const create = await api('/api/favors', {
     method: 'POST',
@@ -387,4 +406,39 @@ test('account deletion is permanent', async () => {
   // Token no longer resolves to a user.
   const me = await api('/api/profile/me', { token: member.token });
   assert.equal(me.status, 401, 'deleted account’s token is rejected');
+});
+
+test('signup requires 18+ affirmation and terms acceptance', async () => {
+  const email = `test_consent_${uniq}_${crypto.randomBytes(3).toString('hex')}@example.com`;
+  const phone = `+1555${crypto.randomInt(1000000, 9999999)}`;
+  const res = await api('/api/auth/signup', {
+    method: 'POST',
+    body: { firstName: 'No', lastName: 'Consent', email, phone, password: 'Password123' }, // no ageAffirmed/acceptedTerms
+  });
+  assert.equal(res.status, 400, 'signup without consent is rejected');
+});
+
+test('trust & safety: an unvetted account cannot accept a favor until verified', async () => {
+  const member = await makeUser('member'); // posts a favor
+  const create = await api('/api/favors', {
+    method: 'POST', token: member.token,
+    body: { tier: 'tiny', description: 'Vetting gate test', location: { lat: 30, lng: -97, address: 'X' } },
+  });
+  assert.equal(create.status, 201);
+  const favorId = create.json.favor.id;
+
+  // A fresh, unvetted account is blocked from accepting (403).
+  const helper = await makeUser('member');
+  const blocked = await api(`/api/favors/${favorId}/accept`, { method: 'POST', token: helper.token });
+  assert.equal(blocked.status, 403, 'unvetted account cannot accept');
+
+  // After completing vetting, the same account can accept.
+  const vet = await api('/api/profile/verify-pal', {
+    method: 'POST', token: helper.token,
+    body: { legalFirstName: 'Help', legalLastName: 'Er', ssn: '111223333', dateOfBirth: '1991-02-02', consent: true },
+  });
+  assert.equal(vet.status, 200);
+  assert.equal(vet.json.user.palVerified, true, 'vetting sets palVerified');
+  const ok = await api(`/api/favors/${favorId}/accept`, { method: 'POST', token: helper.token });
+  assert.equal(ok.status, 200, 'vetted account can accept');
 });

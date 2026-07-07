@@ -34,6 +34,17 @@ model User {
   status       String  @default("online") // "online" | "invisible" | "offline"
   verified     Boolean @default(false)
 
+  // Trust & safety: a pal must pass identity/background vetting before they can
+  // accept favors (they enter members' homes). Gated server-side, not client trust.
+  palVerified   Boolean   @default(false)
+  palVerifiedAt DateTime?
+
+  // Compliance: proof-of-consent + eligibility captured at signup (TCPA/terms + 18+).
+  termsAcceptedAt DateTime?
+  termsVersion    String?
+  dateOfBirth     DateTime?
+  ageAffirmed     Boolean   @default(false)
+
   // Stripe: customer id (member, for charges) + Connect account id (pal, for payouts)
   stripeCustomerId String?
   stripeConnectId  String?
@@ -277,9 +288,19 @@ model OtpCode {
   expiresAt   DateTime
   consumed    Boolean  @default(false)
   attempts    Int      @default(0)
+  lockedUntil DateTime? // set when the per-code attempt cap is hit; resend refused until it passes
   createdAt   DateTime @default(now())
 
   user User? @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@index([destination])
+}
+
+// Stripe webhook idempotency — persists handled event ids so a redelivery is a
+// no-op across restarts/instances (the previous in-memory dedupe was lost on
+// every deploy, risking double-processing of payment/payout events).
+model ProcessedWebhookEvent {
+  id        String   @id // Stripe event id (evt_...)
+  type      String
+  createdAt DateTime @default(now())
 }

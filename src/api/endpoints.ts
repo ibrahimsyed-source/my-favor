@@ -12,6 +12,7 @@ type Session = { user: User; accessToken: string; refreshToken: string };
 // --- auth ---
 export const signupApi = (data: {
   firstName: string; lastName: string; email: string; phone: string; password: string; role?: Role;
+  ageAffirmed: boolean; acceptedTerms: boolean; dateOfBirth?: string;
 }) => apiRequest<{ userId: string; destination: string; otpSent: boolean; devCode?: string }>('/api/auth/signup', { method: 'POST', body: data });
 
 export const verifyOtpApi = (destination: string, code: string) =>
@@ -44,6 +45,11 @@ export const updateProfileApi = (patch: Partial<User>) =>
   apiRequest<{ user: User }>('/api/profile/me', { method: 'PATCH', auth: true, body: patch });
 export const setRoleApi = (role: Role) =>
   apiRequest<{ user: User }>('/api/profile/role', { method: 'POST', auth: true, body: { role } });
+// Submit the pal vetting application (Driver Information). On success the returned
+// user has palVerified=true, unlocking favor acceptance.
+export const verifyPalApi = (data: {
+  legalFirstName: string; legalLastName: string; ssn: string; dateOfBirth: string; consent: boolean;
+}) => apiRequest<{ user: User }>('/api/profile/verify-pal', { method: 'POST', auth: true, body: data });
 export const setStatusApi = (status: UserStatus) =>
   apiRequest<{ user: User }>('/api/profile/status', { method: 'POST', auth: true, body: { status } });
 export const getPalsApi = () => apiRequest<{ pals: Partial<User>[] }>('/api/profile/pals', { auth: true });

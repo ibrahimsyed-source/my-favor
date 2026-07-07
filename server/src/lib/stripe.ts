@@ -32,6 +32,11 @@ export async function getOrCreateConnectAccount(userId: string): Promise<string>
     email: user.email,
     business_type: 'individual',
     capabilities: { transfers: { requested: true } },
+    // MANUAL payout schedule: destination charges already land the pal's share in
+    // their Connect balance. We deliberately disable Stripe's automatic daily
+    // payout so the app's own cash-out (payoutToPal) is the SINGLE payout path
+    // and can't double-pay against our self-tracked ledger.
+    settings: { payouts: { schedule: { interval: 'manual' } } },
     metadata: { userId },
   });
   await prisma.user.update({ where: { id: userId }, data: { stripeConnectId: account.id } });
@@ -163,6 +168,26 @@ export async function chargeToPal(args: {
     { idempotencyKey: args.idempotencyKey },
   );
   return pi.id;
+}
+
+// --- Refunds (cancellation reversals / dispute handling) -------------------
+// Refunds a favor's charge back to the member. Reverses the pal's transfer too
+// (reverse_transfer) so the platform isn't left funding a clawed-back payout.
+// Idempotent per payment intent. Returns the refund id.
+export async function refundFavorCharge(
+  paymentIntentId: string,
+  opts?: { amount?: number; reason?: Stripe.RefundCreateParams.Reason },
+): Promise<string> {
+  const refund = await stripe!.refunds.create(
+    {
+      payment_intent: paymentIntentId,
+      reverse_transfer: true,
+      ...(opts?.amount != null ? { amount: cents(opts.amount) } : {}),
+      ...(opts?.reason ? { reason: opts.reason } : {}),
+    },
+    { idempotencyKey: `refund_${paymentIntentId}` },
+  );
+  return refund.id;
 }
 
 // --- Cashing out (instant payout from the pal's connected account) ----------

@@ -6,14 +6,25 @@
   "build": {
     "development": {
       "developmentClient": true,
-      "distribution": "internal"
+      "distribution": "internal",
+      "env": {
+        "EXPO_PUBLIC_API_URL": "http://localhost:4000"
+      }
     },
     "preview": {
       "distribution": "internal",
-      "ios": { "simulator": true }
+      "ios": { "simulator": true },
+      "env": {
+        "EXPO_PUBLIC_API_URL": "https://my-favor-api.onrender.com"
+      }
     },
     "production": {
-      "autoIncrement": true
+      "autoIncrement": true,
+      "env": {
+        "_comment_EXPO_PUBLIC_GOOGLE_MAPS_KEY": "MUST be set before store release; left empty intentionally.",
+        "EXPO_PUBLIC_API_URL": "https://my-favor-api.onrender.com",
+        "EXPO_PUBLIC_GOOGLE_MAPS_KEY": ""
+      }
     }
   },
   "submit": {

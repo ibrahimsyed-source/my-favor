@@ -11,6 +11,20 @@ import { prisma } from '../db';
 // disabled (OTP_DEV_RETURN=false) and you wire Twilio/email in `dispatch`.
 // ---------------------------------------------------------------------------
 const MAX_ATTEMPTS = 5;
+// After the per-code attempt cap is hit, lock the destination for a cool-off
+// window so a resend can't simply reset the counter and continue brute-forcing.
+const LOCKOUT_MINUTES = 15;
+
+// Returns the active lock expiry for a destination, or null if not locked. A
+// lock is recorded on the code row whose attempt cap was exceeded.
+export async function otpLockUntil(destination: string): Promise<Date | null> {
+  const locked = await prisma.otpCode.findFirst({
+    where: { destination, lockedUntil: { gt: new Date() } },
+    orderBy: { lockedUntil: 'desc' },
+    select: { lockedUntil: true },
+  });
+  return locked?.lockedUntil ?? null;
+}
 
 function generateCode(): string {
   // 4-digit numeric, cryptographically random, no modulo bias. The v.2 design
@@ -23,6 +37,8 @@ function generateCode(): string {
 export interface IssuedOtp {
   /** Present only in development (OTP_DEV_RETURN=true) for testing. */
   devCode?: string;
+  /** True when the destination is in an attempt-lockout cool-off (no code sent). */
+  locked?: boolean;
 }
 
 export async function issueOtp(opts: {
@@ -30,6 +46,10 @@ export async function issueOtp(opts: {
   purpose: 'signup' | 'login' | 'reset';
   userId?: string;
 }): Promise<IssuedOtp> {
+  // Don't (re)issue a code while the destination is locked out — otherwise a
+  // resend would reset the fresh code's attempt counter and defeat the lockout.
+  if (await otpLockUntil(opts.destination)) return { locked: true };
+
   const code = generateCode();
   const codeHash = await bcrypt.hash(code, 10);
   const expiresAt = new Date(Date.now() + config.otp.ttlMinutes * 60 * 1000);
@@ -61,7 +81,10 @@ export async function verifyOtp(opts: {
   destination: string;
   purpose: 'signup' | 'login' | 'reset';
   code: string;
-}): Promise<{ ok: boolean; userId?: string | null }> {
+}): Promise<{ ok: boolean; userId?: string | null; locked?: boolean }> {
+  // Refuse while the destination is in a lockout cool-off.
+  if (await otpLockUntil(opts.destination)) return { ok: false, locked: true };
+
   const record = await prisma.otpCode.findFirst({
     where: { destination: opts.destination, purpose: opts.purpose, consumed: false },
     orderBy: { createdAt: 'desc' },
@@ -81,8 +104,15 @@ export async function verifyOtp(opts: {
     data: { attempts: { increment: 1 } },
   });
   if (charged.count === 0) {
-    await prisma.otpCode.update({ where: { id: record.id }, data: { consumed: true } }).catch(() => undefined);
-    return { ok: false };
+    // Cap exhausted — consume the code AND start a lockout cool-off so a resend
+    // can't just mint a fresh counter for continued brute force.
+    await prisma.otpCode
+      .update({
+        where: { id: record.id },
+        data: { consumed: true, lockedUntil: new Date(Date.now() + LOCKOUT_MINUTES * 60 * 1000) },
+      })
+      .catch(() => undefined);
+    return { ok: false, locked: true };
   }
 
   const matches = await bcrypt.compare(opts.code, record.codeHash);

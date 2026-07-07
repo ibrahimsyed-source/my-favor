@@ -48,3 +48,17 @@ export const otpLimiter = rateLimit({
   skip,
   message: { error: { code: 'too_many_requests', message: 'Too many code requests, try again later.' } },
 });
+
+// Session/token endpoints (refresh, logout, change-password). Looser than the
+// login/signup budget because a healthy client rotates its token roughly every
+// access-token lifetime, but still bounded so a stolen/guessed refresh token
+// can't be hammered. Refresh is the highest-frequency of these, so this caps
+// the whole group generously rather than per-endpoint.
+export const sessionLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 60,
+  standardHeaders: true,
+  legacyHeaders: false,
+  skip,
+  message: { error: { code: 'too_many_requests', message: 'Too many requests, try again later.' } },
+});

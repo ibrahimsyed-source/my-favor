@@ -54,6 +54,64 @@ function useWebGlobalStyles() {
   }, []);
 }
 
+// Shape of the extra context we attach to a reported error (React's ErrorInfo
+// carries `componentStack`; the global handlers add a `source` tag).
+type ReportInfo = { componentStack?: string; source?: string };
+
+// Single funnel for EVERY error we catch — the React ErrorBoundary below and the
+// global JS handlers registered in useGlobalErrorHandler both route through here,
+// so there is exactly one place to wire up crash reporting.
+function reportError(error: unknown, info?: ReportInfo) {
+  // eslint-disable-next-line no-console
+  console.error('[MyFavor:error]', error, info ?? '');
+  // TODO(observability): forward to Sentry here once @sentry/react-native is added (needs a dev build)
+}
+
+// Registers process-wide handlers for uncaught JS errors that escape React's
+// render tree (async callbacks, promise rejections, native module errors). Runs
+// once on mount and restores the previous handlers on unmount. Uses only
+// built-in APIs — RN's ErrorUtils on native, window events on web.
+function useGlobalErrorHandler() {
+  useEffect(() => {
+    // --- Native: chain into React Native's global JS error handler ---
+    const errorUtils = (global as any).ErrorUtils;
+    let restoreNative: (() => void) | undefined;
+    if (Platform.OS !== 'web' && errorUtils?.setGlobalHandler) {
+      const previousHandler = errorUtils.getGlobalHandler?.();
+      errorUtils.setGlobalHandler((error: unknown, isFatal?: boolean) => {
+        reportError(error, { source: `ErrorUtils(isFatal=${!!isFatal})` });
+        // Preserve default behavior (e.g. the dev red box / native crash flow).
+        if (typeof previousHandler === 'function') previousHandler(error, isFatal);
+      });
+      restoreNative = () => {
+        if (typeof previousHandler === 'function') errorUtils.setGlobalHandler(previousHandler);
+      };
+    }
+
+    // --- Web: catch window errors and unhandled promise rejections ---
+    let onError: ((event: ErrorEvent) => void) | undefined;
+    let onRejection: ((event: PromiseRejectionEvent) => void) | undefined;
+    if (Platform.OS === 'web' && typeof window !== 'undefined') {
+      onError = (event: ErrorEvent) => {
+        reportError(event.error ?? event.message, { source: 'window.onerror' });
+      };
+      onRejection = (event: PromiseRejectionEvent) => {
+        reportError(event.reason, { source: 'unhandledrejection' });
+      };
+      window.addEventListener('error', onError);
+      window.addEventListener('unhandledrejection', onRejection);
+    }
+
+    return () => {
+      restoreNative?.();
+      if (Platform.OS === 'web' && typeof window !== 'undefined') {
+        if (onError) window.removeEventListener('error', onError);
+        if (onRejection) window.removeEventListener('unhandledrejection', onRejection);
+      }
+    };
+  }, []);
+}
+
 // Catches any render/runtime error in the tree so a single exception shows a
 // friendly recoverable screen instead of white-screening the whole app.
 class ErrorBoundary extends React.Component<
@@ -64,9 +122,9 @@ class ErrorBoundary extends React.Component<
   static getDerivedStateFromError() {
     return { hasError: true };
   }
-  componentDidCatch(error: unknown) {
-    // eslint-disable-next-line no-console
-    console.error('App crashed:', error);
+  componentDidCatch(error: unknown, info: ReportInfo) {
+    // Route render-tree crashes through the same funnel as the global handlers.
+    reportError(error, { componentStack: info?.componentStack, source: 'ErrorBoundary' });
   }
   render() {
     if (this.state.hasError) {
@@ -93,6 +151,7 @@ class ErrorBoundary extends React.Component<
 
 export default function App() {
   useWebGlobalStyles();
+  useGlobalErrorHandler();
   const [fontsLoaded] = useFonts({
     Roboto_400Regular,
     Roboto_500Medium,

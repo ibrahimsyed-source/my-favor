@@ -9,22 +9,25 @@ import { prisma } from '../db';
 // secret configured we run in mock mode and accept nothing destructive.
 export const stripeRouter = Router();
 
-// In-memory log of Stripe event IDs we've already fully processed. Stripe delivers
-// events at-least-once and can re-deliver/reorder them, so we must no-op on duplicates
-// to avoid re-running side effects (e.g. downgrading an already-collected earning).
-// NOTE: this Set is per-process — it is lost on restart and not shared across instances.
-// The production-grade version persists processed event IDs in a ProcessedWebhookEvent
-// table (unique on eventId), written in the same DB transaction as the handler's rows;
-// that needs a new table + migration, which is out of scope here.
-const processedEventIds = new Set<string>();
-const MAX_PROCESSED_EVENTS = 5000;
-function markEventProcessed(eventId: string) {
-  processedEventIds.add(eventId);
-  // Bound memory: Stripe stops retrying after ~3 days, so a recent window is enough.
-  if (processedEventIds.size > MAX_PROCESSED_EVENTS) {
-    const oldest = processedEventIds.values().next().value; // Set preserves insertion order
-    if (oldest !== undefined) processedEventIds.delete(oldest);
-  }
+// Stripe delivers events at-least-once and can re-deliver/reorder them, so we
+// must no-op on duplicates to avoid re-running side effects (e.g. downgrading an
+// already-collected earning). Dedupe is PERSISTED in the ProcessedWebhookEvent
+// table (unique on the Stripe event id) so it survives restarts and is shared
+// across instances — unlike the old per-process in-memory Set.
+async function alreadyProcessed(eventId: string): Promise<boolean> {
+  return (await prisma.processedWebhookEvent.findUnique({ where: { id: eventId } })) !== null;
+}
+async function markEventProcessed(eventId: string, type: string) {
+  // A concurrent delivery may have inserted first; treat a unique-collision as
+  // "already recorded" rather than an error.
+  await prisma.processedWebhookEvent.create({ data: { id: eventId, type } }).catch(() => undefined);
+}
+
+// Resolve the favor tied to a charge/dispute/refund event via the PaymentIntent.
+async function favorIdForPaymentIntent(pi: string | null | undefined): Promise<string | null> {
+  if (!pi) return null;
+  const favor = await prisma.favor.findFirst({ where: { stripePaymentIntentId: pi }, select: { id: true, memberId: true } });
+  return favor?.id ?? null;
 }
 
 stripeRouter.post('/webhook', raw({ type: 'application/json' }), async (req, res) => {
@@ -45,8 +48,8 @@ stripeRouter.post('/webhook', raw({ type: 'application/json' }), async (req, res
   }
 
   // Idempotency guard: if we've already fully processed this event id, ack without
-  // re-running any side effects. (See processedEventIds above.)
-  if (processedEventIds.has(event.id)) {
+  // re-running any side effects. (Persisted — see alreadyProcessed above.)
+  if (await alreadyProcessed(event.id)) {
     return res.json({ received: true, duplicate: true });
   }
 
@@ -99,6 +102,38 @@ stripeRouter.post('/webhook', raw({ type: 'application/json' }), async (req, res
         }
         break;
       }
+      case 'charge.refunded': {
+        // The member's charge was refunded (via a cancellation refund or a manual
+        // refund). Mark their payment cancelled and reverse the pal's earning if it
+        // hasn't already been cashed out (never touch processing/paid_out rows).
+        const charge = event.data.object as Stripe.Charge;
+        const favorId = await favorIdForPaymentIntent(
+          typeof charge.payment_intent === 'string' ? charge.payment_intent : charge.payment_intent?.id,
+        );
+        if (favorId) {
+          await prisma.transaction.updateMany({ where: { favorId, kind: 'payment' }, data: { status: 'cancelled' } });
+          await prisma.transaction.updateMany({ where: { favorId, kind: 'earning', status: 'completed' }, data: { status: 'cancelled' } });
+        }
+        break;
+      }
+      case 'charge.dispute.created': {
+        // The member opened a chargeback. Flag the favor's ledger rows and notify
+        // the pal; funds are held by Stripe pending resolution.
+        const dispute = event.data.object as Stripe.Dispute;
+        const favor = await prisma.favor.findFirst({
+          where: { stripePaymentIntentId: typeof dispute.payment_intent === 'string' ? dispute.payment_intent : dispute.payment_intent?.id },
+          select: { id: true, palId: true },
+        });
+        if (favor) {
+          await prisma.transaction.updateMany({ where: { favorId: favor.id, status: 'completed' }, data: { status: 'incomplete' } });
+          if (favor.palId) {
+            await prisma.notification.create({
+              data: { userId: favor.palId, type: 'general', title: 'Payment disputed', body: 'A member disputed a favor payment. Earnings are on hold pending review.' },
+            });
+          }
+        }
+        break;
+      }
       case 'payout.paid':
       case 'account.updated':
         // Confirmation / onboarding progress — reflected by live status reads.
@@ -108,7 +143,7 @@ stripeRouter.post('/webhook', raw({ type: 'application/json' }), async (req, res
     }
     // Only record the event as processed AFTER its side effects succeeded, so a thrown
     // handler (below) leaves it un-recorded and Stripe's retry can re-process it safely.
-    markEventProcessed(event.id);
+    await markEventProcessed(event.id, event.type);
   } catch (err) {
     // A handler threw (e.g. a transient DB outage while promoting rows). Respond 500 so
     // Stripe retries with its own backoff instead of treating the event as acknowledged

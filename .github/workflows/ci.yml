@@ -1,0 +1,84 @@
+# CI for the "My Favor" monorepo: Expo frontend (repo root) + Express/Prisma server (./server).
+#
+# Runs on every push and pull request. Two independent jobs:
+#   - frontend: npm ci + TypeScript typecheck (npx tsc --noEmit)
+#   - server:   npm ci + Prisma client generation + typecheck + npm test
+#
+# LINTING NOTE:
+#   ESLint is NOT currently a dependency in either package.json, so `npm ci`
+#   will not install it. To enable the (optional) lint steps below, install the
+#   dev deps first, e.g.:
+#     root:    npm i -D eslint @typescript-eslint/parser @typescript-eslint/eslint-plugin
+#     server:  cd server && npm i -D eslint @typescript-eslint/parser @typescript-eslint/eslint-plugin
+#   Until then the lint steps are kept non-fatal: they use `npx --no-install`
+#   (never auto-downloads) and `continue-on-error: true`, so CI never fails just
+#   because the ESLint packages are absent.
+
+name: CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  frontend:
+    name: Frontend (Expo)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Typecheck
+        run: npx tsc --noEmit
+
+      # Optional, non-fatal. Requires the ESLint dev deps noted above.
+      - name: Lint (non-fatal)
+        continue-on-error: true
+        run: npx --no-install eslint . || echo "eslint not installed - skipping lint"
+
+  server:
+    name: Server (Express/Prisma)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: server
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: server/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      # Generate the Prisma client so typecheck and tests can resolve @prisma/client.
+      - name: Generate Prisma client
+        run: npx prisma generate
+
+      - name: Typecheck
+        run: npx tsc --noEmit
+
+      # The test script is `tsx tests/api.test.ts`. If these tests need a database
+      # or other secrets, configure them via repository secrets / env in CI.
+      - name: Test
+        run: npm test
+
+      # Optional, non-fatal. Requires the ESLint dev deps noted above.
+      - name: Lint (non-fatal)
+        continue-on-error: true
+        run: npx --no-install eslint . || echo "eslint not installed - skipping lint"

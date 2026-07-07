@@ -242,6 +242,8 @@ export const FavorTracking = ({ navigation }: any) => {
             style={[styles.rolePill, tokens.shadow.card]}
             activeOpacity={0.85}
             onPress={() => {
+              // Gate on vetting: unverified pals go to Driver Information first.
+              if (!s.user?.palVerified) { navigation.navigate('Vetting'); return; }
               s.setRole('pal');
               navigation.navigate('Tabs');
             }}

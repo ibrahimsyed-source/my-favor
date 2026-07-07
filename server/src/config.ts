@@ -99,8 +99,19 @@ export const config = {
 } as const;
 
 // In production you need a real way to deliver OTP codes (dev-return is blocked
-// above). Warn loudly if no email provider is configured.
+// above). With no email provider AND no dev-return, every signup/login/reset
+// generates a code that can never reach the user — a silently broken auth path.
+// Fail hard rather than ship an app nobody can sign into.
 if (isProd && !env.RESEND_API_KEY) {
   // eslint-disable-next-line no-console
-  console.warn('⚠️  No RESEND_API_KEY set — OTP codes cannot be delivered. Wire an email/SMS provider before launch.');
+  console.error('❌ No RESEND_API_KEY set in production — OTP codes cannot be delivered, so no user could sign up, log in, or reset a password. Configure an email provider before deploying.');
+  process.exit(1);
+}
+
+// Ship-safety: the Resend sandbox sender only delivers to the account owner, so
+// a prod deploy still using it would silently fail for real users.
+if (isProd && env.RESEND_API_KEY && /onboarding@resend\.dev/i.test(env.OTP_FROM_EMAIL)) {
+  // eslint-disable-next-line no-console
+  console.error('❌ OTP_FROM_EMAIL is still the Resend sandbox sender (onboarding@resend.dev), which only delivers to the Resend account owner. Set a verified sending domain address.');
+  process.exit(1);
 }

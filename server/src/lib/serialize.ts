@@ -20,6 +20,7 @@ export function publicUser(u: User) {
     homeAddress: u.homeAddress ?? undefined,
     role: u.role,
     status: u.status,
+    palVerified: u.palVerified,
     rating: u.rating,
     totalFavors: u.totalFavors,
     yearsActive: u.yearsActive,
