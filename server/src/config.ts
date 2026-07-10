@@ -28,6 +28,15 @@ const rawSchema = z.object({
   // Email delivery for OTP codes (Resend). Leave blank in dev (codes are logged).
   RESEND_API_KEY: z.string().optional().default(''),
   OTP_FROM_EMAIL: z.string().optional().default('My Favor <onboarding@resend.dev>'),
+  // When true, a missing/sandbox email provider is a HARD boot failure in prod
+  // (the safe default for a real launch). Left OFF for now so deploys aren't
+  // blocked before Resend is configured — set REQUIRE_EMAIL_PROVIDER=true in the
+  // Render dashboard once RESEND_API_KEY + a verified sender are in place, and
+  // the strict check comes back with no code change.
+  REQUIRE_EMAIL_PROVIDER: z
+    .enum(['true', 'false'])
+    .default('false')
+    .transform((v) => v === 'true'),
   // Operational gates surfaced to the app via GET /api/config (flip without a
   // code change on the next boot). MAINTENANCE_MODE takes the app to a
   // maintenance screen; MIN_APP_VERSION forces an update below that version.
@@ -113,17 +122,23 @@ export const config = {
 // In production you need a real way to deliver OTP codes (dev-return is blocked
 // above). With no email provider AND no dev-return, every signup/login/reset
 // generates a code that can never reach the user — a silently broken auth path.
-// Fail hard rather than ship an app nobody can sign into.
-if (isProd && !env.RESEND_API_KEY) {
+// This is HARD-FAILED only when REQUIRE_EMAIL_PROVIDER=true (the launch default);
+// otherwise it warns loudly and boots, so deploys aren't blocked before Resend
+// is wired up. Re-enable strictness with that one env flag once RESEND is set.
+function emailMisconfig(msg: string) {
+  if (env.REQUIRE_EMAIL_PROVIDER) {
+    // eslint-disable-next-line no-console
+    console.error('❌ ' + msg + ' (REQUIRE_EMAIL_PROVIDER=true) — refusing to boot.');
+    process.exit(1);
+  }
   // eslint-disable-next-line no-console
-  console.error('❌ No RESEND_API_KEY set in production — OTP codes cannot be delivered, so no user could sign up, log in, or reset a password. Configure an email provider before deploying.');
-  process.exit(1);
+  console.warn('⚠️  ' + msg + ' Booting anyway; set REQUIRE_EMAIL_PROVIDER=true to enforce.');
 }
-
-// Ship-safety: the Resend sandbox sender only delivers to the account owner, so
-// a prod deploy still using it would silently fail for real users.
-if (isProd && env.RESEND_API_KEY && /onboarding@resend\.dev/i.test(env.OTP_FROM_EMAIL)) {
-  // eslint-disable-next-line no-console
-  console.error('❌ OTP_FROM_EMAIL is still the Resend sandbox sender (onboarding@resend.dev), which only delivers to the Resend account owner. Set a verified sending domain address.');
-  process.exit(1);
+if (isProd && !env.RESEND_API_KEY) {
+  emailMisconfig('No RESEND_API_KEY set in production — OTP codes cannot be delivered, so users cannot sign up, log in, or reset a password.');
+}
+// The Resend sandbox sender only delivers to the account owner, so a prod deploy
+// still using it would silently fail for real users.
+else if (isProd && /onboarding@resend\.dev/i.test(env.OTP_FROM_EMAIL)) {
+  emailMisconfig('OTP_FROM_EMAIL is still the Resend sandbox sender (onboarding@resend.dev), which only delivers to the Resend account owner. Set a verified sending-domain address.');
 }
