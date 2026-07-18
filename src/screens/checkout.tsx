@@ -203,6 +203,17 @@ export const FavorSummary = ({ navigation }: any) => {
   const onRequest = () => navigation.navigate(cards.length === 0 ? 'NoPaymentMethod' : 'SelectPayment');
   return (
     <SafeAreaView style={{ flex: 1, backgroundColor: WHITE }} edges={['top']}>
+      {navigation.canGoBack() ? (
+        <TouchableOpacity
+          onPress={() => navigation.goBack()}
+          hitSlop={10}
+          accessibilityRole="button"
+          accessibilityLabel="Go back"
+          style={{ paddingHorizontal: 20, paddingTop: 8, paddingBottom: 4, alignSelf: 'flex-start' }}
+        >
+          <Ionicons name="chevron-back" size={26} color="#0D0A0A" />
+        </TouchableOpacity>
+      ) : null}
       <ScrollView contentContainerStyle={{ flexGrow: 1, paddingBottom: 16 }} showsVerticalScrollIndicator={false}>
         <SummaryBody />
       </ScrollView>
@@ -249,7 +260,10 @@ export const SelectPayment = ({ navigation }: any) => {
     setPaying(true);
     try {
       await requestFavor();
-      navigation.navigate('Searching');
+      // replace (not navigate): the favor is now created + charged, so drop this
+      // payment sheet from the stack — a back gesture must never return to a live
+      // Pay button that would re-submit and double-charge.
+      navigation.replace('Searching');
     } catch {
       // Offline / 500 from createFavorApi: tell the member the payment didn't go
       // through (rather than failing silently) and reset so they can retry.
@@ -445,7 +459,9 @@ export const Searching = ({ navigation }: any) => {
               <Text style={styles.alertBody}>Your favor pal is on their way.</Text>
               <BlackButton
                 title="OKAY"
-                onPress={() => navigation.replace('FavorTracking')}
+                // Collapse the whole checkout flow: tracking sits directly on
+                // Tabs so back from tracking lands on Home, not a stale/paid sheet.
+                onPress={() => navigation.reset({ index: 1, routes: [{ name: 'Tabs' }, { name: 'FavorTracking' }] })}
                 style={{ marginTop: 20 }}
               />
             </>
@@ -460,6 +476,16 @@ export const Searching = ({ navigation }: any) => {
                 onPress={() => navigation.navigate('ProviderResults')}
                 style={{ marginTop: 20 }}
               />
+              {/* Exit while waiting — the favor stays live and is reachable again
+                  from the Home "Resume active favor" card. */}
+              <TouchableOpacity
+                onPress={() => navigation.reset({ index: 0, routes: [{ name: 'Tabs' }] })}
+                style={{ marginTop: 14, alignSelf: 'center', paddingVertical: 4 }}
+                accessibilityRole="button"
+                accessibilityLabel="Back to home"
+              >
+                <Text style={styles.tooLong}>Back to home</Text>
+              </TouchableOpacity>
             </>
           )}
         </View>

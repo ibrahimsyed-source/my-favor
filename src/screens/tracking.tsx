@@ -123,11 +123,13 @@ export const FavorTracking = ({ navigation }: any) => {
 
   const callPal = () => {
     const phone = pal?.phone;
-    if (phone) {
-      Linking.openURL(`tel:${phone}`).catch(() => setCallVisible(true));
-    } else {
+    // On web, react-native-web's openURL resolves even when the browser can't
+    // handle tel:, so the .catch fallback never fires — show the modal directly.
+    if (Platform.OS === 'web' || !phone) {
       setCallVisible(true);
+      return;
     }
+    Linking.openURL(`tel:${phone}`).catch(() => setCallVisible(true));
   };
 
   // Capture the fee BEFORE cancelFavor() nulls the favor.
@@ -225,11 +227,23 @@ export const FavorTracking = ({ navigation }: any) => {
         </StaticMap>
       </View>
 
-      {/* Header: black menu square + white "Switch to be a favor pal" pill */}
+      {/* Header: home + menu squares + white "Switch to be a favor pal" pill */}
       <SafeAreaView edges={['top']} style={{ backgroundColor: 'transparent' }}>
         <View style={styles.headerRow}>
+          {/* Back to Home — the tracking screen is pushed over Tabs, but with no
+              back button a member who opens their live favor is stranded here.
+              Land on the Home tab whether or not there is a stack entry to pop. */}
           <TouchableOpacity
             style={[styles.menuBtn, tokens.shadow.card]}
+            activeOpacity={0.85}
+            onPress={() => navigation.navigate('Tabs', { screen: 'Home' })}
+            accessibilityRole="button"
+            accessibilityLabel="Back to home"
+          >
+            <Ionicons name="chevron-back" size={24} color={WHITE} />
+          </TouchableOpacity>
+          <TouchableOpacity
+            style={[styles.menuBtn, tokens.shadow.card, { marginLeft: 10 }]}
             activeOpacity={0.85}
             onPress={() => navigation.navigate('SideDrawer')}
             accessibilityRole="button"

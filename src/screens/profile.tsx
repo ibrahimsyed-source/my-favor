@@ -4,7 +4,7 @@ import {
   KeyboardAvoidingView, Platform, Modal, ActivityIndicator,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { Ionicons, MaterialIcons } from '@expo/vector-icons';
+import { Ionicons } from '@expo/vector-icons';
 import Svg, { Circle, Path } from 'react-native-svg';
 import * as ImagePicker from 'expo-image-picker';
 import { Txt, Avatar } from '../components';
@@ -642,7 +642,7 @@ export const SideDrawer = ({ navigation }: any) => {
         {/* Menu */}
         <View style={{ flex: 1, paddingTop: 8 }}>
           <DrawerRow label="Favor History" color={ink} onPress={() => go('History')}>
-            <MaterialIcons name="history" size={22} color={ink} />
+            <Ionicons name="time-outline" size={22} color={ink} />
           </DrawerRow>
           <DrawerRow label="Help" color={ink} onPress={() => go('Help')}>
             <Ionicons name="help-circle" size={21} color={ink} />
@@ -652,7 +652,7 @@ export const SideDrawer = ({ navigation }: any) => {
           </DrawerRow>
           {isPal ? (
             <DrawerRow label="Account" color={ink} onPress={() => go('StripeOnboarding')}>
-              <MaterialIcons name="account-balance" size={20} color={ink} />
+              <Ionicons name="wallet-outline" size={21} color={ink} />
             </DrawerRow>
           ) : (
             <DrawerRow label="Payment" color={ink} onPress={() => go('Payment')}>

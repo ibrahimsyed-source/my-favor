@@ -11,6 +11,7 @@ import { Txt, Avatar } from '../components';
 import { useStore } from '../store';
 import { FAVOR_TIERS } from '../types';
 import { TIERS } from './request';
+import { OpenFavorsList } from './pal';
 
 // ---------------------------------------------------------------------------
 // Home — "Dashboard Main v2" (Figma 1660:15783, User App v.2 › Dashboard row).
@@ -131,9 +132,19 @@ function PalHome({ navigation }: any) {
   const s = useStore();
 
   const incoming = s.incomingFavors;
-  const blast = incoming[0]; // newest request drives the Favor Blast sheet
-  const [accepting, setAccepting] = React.useState(false);
-  const [acceptError, setAcceptError] = React.useState<string | null>(null);
+  // A favor the pal has already accepted. Navigation / PalFavorInProgress are
+  // root-stack screens with no tab bar, so once a pal leaves them (Home tab,
+  // drawer, Android back) there is otherwise no route back to the live job.
+  const active = s.activeFavor;
+  const resumeActive = () => {
+    if (!active) return;
+    const dest = active.status === 'arrived' || active.status === 'in_progress' ? 'PalFavorInProgress' : 'Navigation';
+    navigation.navigate(dest);
+  };
+  // Default to the LIST view (closest favors first) so a pal sees every open
+  // request the moment they open the app — not a single blast card at the
+  // bottom. The Map view stays one tap away via the segmented toggle.
+  const [viewMode, setViewMode] = React.useState<'list' | 'map'>('list');
   const [showMemberModal, setShowMemberModal] = React.useState(false);
 
   // Confirm from the Favor Member Modal — flip role in place; the role-aware
@@ -151,6 +162,8 @@ function PalHome({ navigation }: any) {
     }, []) // eslint-disable-line react-hooks/exhaustive-deps
   );
 
+  // Map-view geometry: fit the baked radius-circle centre of the dark map export
+  // to the measured map box so the pal's avatar ring lands on it.
   const [box, setBox] = React.useState({ w: 0, h: 0 });
   const scale = box.w > 0 ? Math.max(box.w / DM.w, box.h / DM.h) : 0;
   const pin = {
@@ -158,52 +171,10 @@ function PalHome({ navigation }: any) {
     y: (box.h - DM.h * scale) / 2 + DM.py * scale,
   };
 
-  const acceptBlast = async () => {
-    if (!blast || accepting) return;
-    setAccepting(true);
-    try {
-      const r = await s.acceptFavor(blast.id);
-      if (r.ok) navigation.navigate('Navigation');
-      else setAcceptError(r.reason ?? 'This favor is no longer available.');
-    } finally {
-      setAccepting(false);
-    }
-  };
-
-  const fmtWhen = (ms: number) => {
-    const d = new Date(ms);
-    const day = d.toLocaleDateString(undefined, { day: '2-digit', month: 'short', year: 'numeric' });
-    const time = d.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' });
-    return `${day}, ${time}`;
-  };
-
   return (
-    <View
-      style={{ flex: 1, backgroundColor: INK }}
-      onLayout={(e) => setBox({ w: e.nativeEvent.layout.width, h: e.nativeEvent.layout.height })}
-    >
-      <Image source={DARK_MAP} style={StyleSheet.absoluteFill} resizeMode="cover" accessible={false} />
-
-      {/* the pal's avatar inside the baked red ring */}
-      {box.w > 0 && (
-        <View pointerEvents="none" style={[palStyles.avatarRing, { left: pin.x - 20, top: pin.y - 20 }]}>
-          <Avatar uri={s.user?.avatar} size={33} name={s.user?.firstName ?? '?'} />
-        </View>
-      )}
-
-      {/* open favors as red price pins */}
-      {incoming.slice(0, PIN_SPOTS.length).map((f, i) => (
-        <PricePin
-          key={f.id}
-          price={f.price}
-          x={PIN_SPOTS[i].x}
-          y={PIN_SPOTS[i].y}
-          onPress={() => navigation.navigate('PalFavorDetail', { favorId: f.id })}
-        />
-      ))}
-
+    <View style={{ flex: 1, backgroundColor: INK, paddingTop: insets.top + 12 }}>
       {/* top controls — white menu bars + "Switch to request a favor" pill */}
-      <View style={[styles.headerRow, { position: 'absolute', top: insets.top + 12, left: 23, right: 23 }]}>
+      <View style={[styles.headerRow, { paddingHorizontal: 23 }]}>
         <TouchableOpacity
           activeOpacity={0.85}
           onPress={() => navigation.navigate('SideDrawer')}
@@ -231,57 +202,95 @@ function PalHome({ navigation }: any) {
         </TouchableOpacity>
       </View>
 
-      {/* Favor Blast — navy bottom sheet for the newest open request */}
-      {blast ? (
-        <View style={[palStyles.blastSheet, { paddingBottom: 16 + (insets.bottom ? 0 : 4) }]}>
-          <View style={palStyles.sheetHandle} />
-          <Text style={palStyles.blastTitle}>
-            {(FAVOR_TIERS[blast.tier as keyof typeof FAVOR_TIERS]?.label ?? 'Favor').replace(' Favor', '')} Favor ${blast.price}
-          </Text>
-          <View style={{ flexDirection: 'row', alignItems: 'center', marginTop: 14 }}>
-            <Avatar size={44} name={blast.memberName ?? 'Member'} />
-            <View style={{ marginLeft: 12, flex: 1 }}>
-              <Text style={palStyles.blastName}>{blast.memberName ?? 'A member nearby'}</Text>
-              <Text style={palStyles.blastDesc} numberOfLines={2}>{blast.description || 'No description provided.'}</Text>
-              <Text style={palStyles.blastWhen}>{fmtWhen(blast.createdAt)}</Text>
+      {/* Map / List segmented toggle + open count */}
+      <View style={palStyles.segmentRow}>
+        <View style={palStyles.segment}>
+          {(['list', 'map'] as const).map((m) => {
+            const selected = viewMode === m;
+            return (
               <TouchableOpacity
-                onPress={() => navigation.navigate('PalFavorDetail', { favorId: blast.id })}
-                hitSlop={8}
+                key={m}
+                activeOpacity={0.85}
+                onPress={() => setViewMode(m)}
                 accessibilityRole="button"
+                accessibilityState={{ selected }}
+                accessibilityLabel={m === 'list' ? 'List view' : 'Map view'}
+                style={[palStyles.segmentBtn, selected && palStyles.segmentBtnActive]}
               >
-                <Text style={palStyles.viewMore}>View More</Text>
+                <Ionicons name={m === 'list' ? 'list' : 'map-outline'} size={16} color={selected ? INK : WHITE} />
+                <Text style={[palStyles.segmentText, selected && palStyles.segmentTextActive]}>
+                  {m === 'list' ? 'List' : 'Map'}
+                </Text>
               </TouchableOpacity>
-            </View>
-          </View>
-          <TouchableOpacity
-            activeOpacity={0.85}
-            onPress={acceptBlast}
-            disabled={accepting}
-            accessibilityRole="button"
-            accessibilityState={{ disabled: accepting }}
-            style={palStyles.acceptBtn}
-          >
-            <Text style={palStyles.acceptText}>{accepting ? 'ACCEPTING…' : 'ACCEPT'}</Text>
-          </TouchableOpacity>
+            );
+          })}
         </View>
-      ) : null}
+        <Text style={palStyles.openCount}>
+          {incoming.length} open {incoming.length === 1 ? 'favor' : 'favors'}
+        </Text>
+      </View>
 
-      {/* accept failed — navy modal card (v.2 dark modal pattern) */}
-      {acceptError ? (
-        <View style={palStyles.errScrim}>
-          <View style={palStyles.errCard}>
-            <Text style={palStyles.errTitle}>Can’t accept this favor</Text>
-            <Text style={palStyles.errBody}>{acceptError}</Text>
-            <TouchableOpacity
-              activeOpacity={0.85}
-              onPress={() => setAcceptError(null)}
-              accessibilityRole="button"
-              style={palStyles.acceptBtn}
-            >
-              <Text style={palStyles.acceptText}>CLOSE</Text>
-            </TouchableOpacity>
-          </View>
+      {viewMode === 'list' ? (
+        // Default: full sortable/filterable list, nearest first.
+        <OpenFavorsList
+          navigation={navigation}
+          defaultSort="close"
+          onItemPress={(favorId) => navigation.navigate('PalFavorDetail', { favorId })}
+        />
+      ) : (
+        <View
+          style={{ flex: 1 }}
+          onLayout={(e) => setBox({ w: e.nativeEvent.layout.width, h: e.nativeEvent.layout.height })}
+        >
+          <Image source={DARK_MAP} style={StyleSheet.absoluteFill} resizeMode="cover" accessible={false} />
+
+          {/* the pal's avatar inside the baked red ring */}
+          {box.w > 0 && (
+            <View pointerEvents="none" style={[palStyles.avatarRing, { left: pin.x - 20, top: pin.y - 20 }]}>
+              <Avatar uri={s.user?.avatar} size={33} name={s.user?.firstName ?? '?'} />
+            </View>
+          )}
+
+          {/* open favors as red price pins — tap to view + accept */}
+          {incoming.slice(0, PIN_SPOTS.length).map((f, i) => (
+            <PricePin
+              key={f.id}
+              price={f.price}
+              x={PIN_SPOTS[i].x}
+              y={PIN_SPOTS[i].y}
+              onPress={() => navigation.navigate('PalFavorDetail', { favorId: f.id })}
+            />
+          ))}
+
+          {incoming.length === 0 && (
+            <View pointerEvents="none" style={palStyles.mapEmpty}>
+              <Text style={palStyles.mapEmptyText}>No open favors nearby right now.</Text>
+            </View>
+          )}
         </View>
+      )}
+
+      {/* Resume the pal's in-progress favor — the only route back to the live
+          Navigation / Mark-as-done screens once they've left them. */}
+      {active ? (
+        <TouchableOpacity
+          activeOpacity={0.9}
+          onPress={resumeActive}
+          accessibilityRole="button"
+          accessibilityLabel="Resume active favor"
+          style={[palStyles.resumeCard, { bottom: insets.bottom + 16 }]}
+        >
+          <View style={palStyles.resumeIcon}>
+            <Ionicons name="navigate" size={20} color={WHITE} />
+          </View>
+          <View style={{ flex: 1 }}>
+            <Text style={palStyles.resumeCaption}>Resume active favor</Text>
+            <Text style={palStyles.resumeTitle} numberOfLines={1}>
+              {active.description || 'Favor in progress'}
+            </Text>
+          </View>
+          <Ionicons name="chevron-forward" size={18} color="rgba(255,255,255,0.6)" />
+        </TouchableOpacity>
       ) : null}
 
       {/* Favor Member Modal v2 — gates the "Switch to request a favor" pill */}
@@ -324,57 +333,73 @@ const palStyles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
   },
-  blastSheet: {
-    position: 'absolute',
-    left: 0,
-    right: 0,
-    bottom: 0,
-    backgroundColor: NAVY,
-    borderTopLeftRadius: 16,
-    borderTopRightRadius: 16,
+  // Map / List segmented toggle (pal Home).
+  segmentRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
     paddingHorizontal: 23,
-    paddingTop: 8,
+    marginTop: 14,
+    marginBottom: 2,
   },
-  sheetHandle: {
-    alignSelf: 'center',
-    width: 44,
-    height: 4,
-    borderRadius: 2,
-    backgroundColor: 'rgba(255,255,255,0.35)',
-    marginBottom: 14,
+  segment: {
+    flexDirection: 'row',
+    backgroundColor: 'rgba(255,255,255,0.10)',
+    borderRadius: 10,
+    padding: 3,
   },
-  blastTitle: { fontFamily: P600, fontSize: 20, lineHeight: 28, color: WHITE, textAlign: 'center' },
-  blastName: { fontFamily: P500, fontSize: 15, lineHeight: 22, color: WHITE },
-  blastDesc: { fontFamily: P400, fontSize: 12, lineHeight: 17, color: NAVY_SUB, marginTop: 2 },
-  blastWhen: { fontFamily: P400, fontSize: 11, lineHeight: 16, color: NAVY_SUB, marginTop: 4 },
-  viewMore: { fontFamily: P500, fontSize: 12, lineHeight: 18, color: WHITE, textDecorationLine: 'underline', marginTop: 4 },
-  acceptBtn: {
-    height: 48,
+  segmentBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    paddingHorizontal: 14,
+    paddingVertical: 7,
     borderRadius: 8,
-    backgroundColor: WHITE,
-    alignItems: 'center',
-    justifyContent: 'center',
-    marginTop: 16,
   },
-  acceptText: { fontFamily: P500, fontSize: 15, color: INK, letterSpacing: 0.3 },
-  errScrim: {
+  segmentBtnActive: { backgroundColor: WHITE },
+  segmentText: { fontFamily: P500, fontSize: 13, color: WHITE },
+  segmentTextActive: { color: INK },
+  openCount: { fontFamily: P400, fontSize: 13, color: NAVY_SUB },
+  resumeCard: {
     position: 'absolute',
-    top: 0,
-    left: 0,
-    right: 0,
-    bottom: 0,
-    backgroundColor: 'rgba(0,0,0,0.5)',
+    left: 16,
+    right: 16,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+    backgroundColor: NAVY,
+    borderRadius: 16,
+    paddingHorizontal: 12,
+    height: 64,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: 'rgba(255,255,255,0.12)',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.4,
+    shadowRadius: 10,
+    elevation: 6,
+  },
+  resumeIcon: {
+    width: 40,
+    height: 40,
+    borderRadius: 12,
+    backgroundColor: RED,
     alignItems: 'center',
     justifyContent: 'center',
   },
-  errCard: {
-    width: '86%',
-    borderRadius: 16,
-    backgroundColor: NAVY,
-    padding: 22,
+  resumeCaption: { fontFamily: P400, fontSize: 12, lineHeight: 16, color: 'rgba(255,255,255,0.6)' },
+  resumeTitle: { fontFamily: P500, fontSize: 14, lineHeight: 20, color: WHITE },
+  mapEmpty: { position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, alignItems: 'center', justifyContent: 'center' },
+  mapEmptyText: {
+    fontFamily: P500,
+    fontSize: 14,
+    color: WHITE,
+    backgroundColor: 'rgba(0,0,0,0.55)',
+    paddingHorizontal: 16,
+    paddingVertical: 10,
+    borderRadius: 10,
+    overflow: 'hidden',
   },
-  errTitle: { fontFamily: P500, fontSize: 20, lineHeight: 28, color: WHITE, textAlign: 'center' },
-  errBody: { fontFamily: P400, fontSize: 14, lineHeight: 21, color: NAVY_SUB, textAlign: 'center', marginVertical: 14 },
 
   // Favor Member Modal v2 (#181:10516) — navy promo card mirroring the user
   // side's Be A Favor Pal modal, with a white "Switch to request a favor" pill.

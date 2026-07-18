@@ -1,5 +1,5 @@
 import React from 'react';
-import { Linking } from 'react-native';
+import { Linking, Platform } from 'react-native';
 import { FullScreenState } from '../components/states';
 
 // ---------------------------------------------------------------------------
@@ -32,7 +32,10 @@ const SUPPORT_EMAIL = 'support@myfavor.app';
 
 // Fire-and-forget helpers — Linking rejects on unsupported platforms (e.g. web),
 // so swallow the rejection instead of leaving an unhandled promise.
+// react-native-web has NO Linking.openSettings, so calling it throws synchronously
+// (before any .catch can run) — guard the web/undefined case explicitly.
 const openSettings = () => {
+  if (Platform.OS === 'web' || typeof (Linking as { openSettings?: unknown }).openSettings !== 'function') return;
   void Linking.openSettings().catch(() => {});
 };
 const contactSupport = (subject: string) => {

@@ -3,7 +3,7 @@ import { View, Text, TouchableOpacity, ActivityIndicator, StyleSheet } from 'rea
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
 import { createBottomTabNavigator, BottomTabBarProps } from '@react-navigation/bottom-tabs';
-import { Ionicons, MaterialIcons } from '@expo/vector-icons';
+import { Ionicons } from '@expo/vector-icons';
 import { RootStackParamList, TabParamList } from './types';
 import { useStore } from '../store';
 import { useTheme } from '../theme';
@@ -63,7 +63,11 @@ function V2TabBar({ state, navigation }: BottomTabBarProps) {
               activeOpacity={0.8}
               accessibilityRole="tab"
               accessibilityState={{ selected: focused }}
-              accessibilityLabel={item.label}
+              accessibilityLabel={
+                item.name === 'Activity' && unread > 0
+                  ? `${item.label}, ${unread} unread notification${unread === 1 ? '' : 's'}`
+                  : item.label
+              }
               onPress={() => navigation.navigate(item.name)}
               style={tabStyles.item}
             >
@@ -80,9 +84,12 @@ function V2TabBar({ state, navigation }: BottomTabBarProps) {
                   <Ionicons name="person" size={26} color={color} />
                 ) : (
                   <View>
-                    <MaterialIcons name="history" size={28} color={color} />
+                    {/* Activity opens the Notifications feed — a bell (not a
+                        history clock) reads correctly over the unread badge, and
+                        Ionicons is the only web-embedded family (MaterialIcons → tofu). */}
+                    <Ionicons name="notifications-outline" size={26} color={color} />
                     {unread > 0 && (
-                      <View style={tabStyles.badge}>
+                      <View style={tabStyles.badge} importantForAccessibility="no" accessibilityElementsHidden>
                         <Text style={tabStyles.badgeText}>{unread > 9 ? '9+' : unread}</Text>
                       </View>
                     )}

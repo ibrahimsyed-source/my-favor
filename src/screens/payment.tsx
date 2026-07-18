@@ -3,7 +3,7 @@ import {
   View, Text, Image, TextInput, TouchableOpacity, ScrollView, StyleSheet, Modal,
   ActivityIndicator, Linking,
 } from 'react-native';
-import { Ionicons, MaterialIcons } from '@expo/vector-icons';
+import { Ionicons } from '@expo/vector-icons';
 import { Screen } from '../components';
 import { useStore } from '../store';
 import { fonts, palette } from '../theme';
@@ -272,7 +272,7 @@ export function Payment({ navigation }: any) {
               accessibilityRole="button"
               accessibilityLabel="Payment history"
             >
-              <MaterialIcons name="list-alt" size={24} color={palette.textPrimary} style={s.rowIcon} />
+              <Ionicons name="receipt-outline" size={24} color={palette.textPrimary} style={s.rowIcon} />
               <Text style={s.rowLabel}>Payment History</Text>
               <Ionicons name="chevron-forward" size={20} color={palette.textPrimary} />
             </TouchableOpacity>

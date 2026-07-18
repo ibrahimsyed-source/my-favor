@@ -72,28 +72,32 @@ function MapBackdrop({ route }: { route?: boolean }) {
 
 function MapTopBar({ navigation, banner, onBack }: any) {
   const insets = useSafeAreaInsets();
+  // Always expose the menu (→ SideDrawer → Home) even in banner mode: Navigation
+  // and PalFavorInProgress are root-stack screens with no tab bar, so without it
+  // the only exits on web were completing or destructively cancelling the favor.
   return (
     <View style={{ position: 'absolute', top: insets.top + 8, left: 0, right: 0, paddingHorizontal: 16 }}>
-      {banner ? (
-        <View style={st.navBanner}>
-          <Ionicons name="arrow-up" size={20} color={TEXT} />
-          <Text style={{ color: TEXT, fontSize: 16, marginLeft: 10, fontFamily: P500 }}>{banner}</Text>
-        </View>
-      ) : (
-        <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
-          {/* Neutral back so a pal can leave the detail without declining. */}
-          {onBack ? (
-            <TouchableOpacity style={st.iconBtn} onPress={onBack} accessibilityRole="button" accessibilityLabel="Go back">
-              <Ionicons name="chevron-back" size={22} color={TEXT} />
-            </TouchableOpacity>
-          ) : (
-            <View style={{ width: 40 }} />
-          )}
-          <TouchableOpacity style={st.iconBtn} onPress={() => navigation.navigate('SideDrawer')} accessibilityRole="button" accessibilityLabel="Open menu">
-            <Ionicons name="menu" size={22} color={TEXT} />
+      <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+        {/* Neutral back so a pal can leave the detail without declining. */}
+        {onBack ? (
+          <TouchableOpacity style={st.iconBtn} onPress={onBack} accessibilityRole="button" accessibilityLabel="Go back">
+            <Ionicons name="chevron-back" size={22} color={TEXT} />
           </TouchableOpacity>
-        </View>
-      )}
+        ) : (
+          <View style={{ width: 40 }} />
+        )}
+        {banner ? (
+          <View style={[st.navBanner, { flex: 1, marginHorizontal: 10 }]}>
+            <Ionicons name="arrow-up" size={20} color={TEXT} />
+            <Text style={{ color: TEXT, fontSize: 16, marginLeft: 10, fontFamily: P500, flex: 1 }} numberOfLines={1}>{banner}</Text>
+          </View>
+        ) : (
+          <View style={{ flex: 1 }} />
+        )}
+        <TouchableOpacity style={st.iconBtn} onPress={() => navigation.navigate('SideDrawer')} accessibilityRole="button" accessibilityLabel="Open menu">
+          <Ionicons name="menu" size={22} color={TEXT} />
+        </TouchableOpacity>
+      </View>
     </View>
   );
 }
@@ -148,10 +152,11 @@ function NavyModal({ visible, title, message, primaryLabel, onPrimary, dismissLa
 const tierLabel = (f: Favor) =>
   (FAVOR_TIERS as Record<string, { label: string }>)[f.tier]?.label ?? 'Custom Favor';
 
-// Pal origin for distance/sort. TODO: replace with the device's live location
-// (expo-location) once a dev build is set up; a fixed city center keeps the
-// distance math real and runnable in the meantime.
-const PAL_ORIGIN = { lat: 30.2672, lng: -97.7431 };
+// Pal origin for distance/sort. Anchored to the demo city (Miami) so it matches
+// where the seeded/incoming favors actually are — an Austin origin made every
+// favor read as ~1000 mi away and flattened the "Closest" sort. TODO: replace
+// with the device's live location (expo-location) once a dev build is set up.
+const PAL_ORIGIN = { lat: 25.7617, lng: -80.1918 };
 
 const toRad = (d: number) => (d * Math.PI) / 180;
 function haversineMiles(lat1: number, lng1: number, lat2: number, lng2: number) {
@@ -245,14 +250,27 @@ function Chip({ label, active, onPress }: { label: string; active: boolean; onPr
   );
 }
 
-export const BrowseFavors = ({ navigation }: any) => {
+// Reusable board of open favor requests: sort + tier chips over a scrolling
+// list of FavorCards. Embedded by the pal's Home (default List view) and by the
+// standalone BrowseFavors screen. `header` is a render-prop so each host can
+// supply its own title/back/toggle bar above the chips.
+export function OpenFavorsList({
+  navigation,
+  defaultSort = 'new',
+  onItemPress,
+  header,
+}: {
+  navigation: any;
+  defaultSort?: SortKey;
+  onItemPress?: (favorId: string) => void;
+  header?: (info: { shown: number; total: number; refreshing: boolean; onRefresh: () => void }) => React.ReactNode;
+}) {
   const s = useStore();
   const insets = useSafeAreaInsets();
   const [refreshing, setRefreshing] = useState(false);
   const [errored, setErrored] = useState(false);
-  const [sort, setSort] = useState<SortKey>('new');
+  const [sort, setSort] = useState<SortKey>(defaultSort);
   const [tier, setTier] = useState('all');
-  const fontsLoaded = usePoppins();
   const favors = s.incomingFavors;
 
   // The store's refreshIncoming() swallows network errors, so a probe of the
@@ -278,7 +296,7 @@ export const BrowseFavors = ({ navigation }: any) => {
     setRefreshing(false);
   }, [load]);
 
-  // #2 — filter by tier + sort by recency/payout. (Server returns newest-first.)
+  // #2 — filter by tier + sort by recency/payout/distance. (Server returns newest-first.)
   const shown = useMemo(() => {
     let list = tier === 'all' ? favors : favors.filter((f) => f.tier === tier);
     if (sort === 'high') list = [...list].sort((a, b) => b.price - a.price);
@@ -287,28 +305,9 @@ export const BrowseFavors = ({ navigation }: any) => {
     return list;
   }, [favors, tier, sort]);
 
-  const subtitle = shown.length === favors.length
-    ? `${favors.length} ${favors.length === 1 ? 'request' : 'requests'} near you`
-    : `${shown.length} of ${favors.length} requests`;
-
-  if (!fontsLoaded) return <View style={{ flex: 1, backgroundColor: PAGE_BG }} />;
-
   return (
-    <View style={{ flex: 1, backgroundColor: PAGE_BG, paddingTop: insets.top }}>
-      <View style={bw.header}>
-        {navigation.canGoBack() ? (
-          <TouchableOpacity onPress={() => navigation.goBack()} hitSlop={10} accessibilityRole="button" accessibilityLabel="Go back">
-            <Ionicons name="chevron-back" size={26} color={TEXT} />
-          </TouchableOpacity>
-        ) : null}
-        <View style={{ flex: 1, marginLeft: navigation.canGoBack() ? 8 : 0 }}>
-          <Text style={bw.title}>Open Favors</Text>
-          <Text style={bw.subtitle}>{subtitle}</Text>
-        </View>
-        <TouchableOpacity onPress={onRefresh} hitSlop={10} accessibilityRole="button" accessibilityLabel="Refresh">
-          <Ionicons name="refresh" size={22} color={TEXT} />
-        </TouchableOpacity>
-      </View>
+    <View style={{ flex: 1 }}>
+      {header?.({ shown: shown.length, total: favors.length, refreshing, onRefresh })}
 
       {/* Sort + tier filter chips */}
       <View style={bw.chipRows}>
@@ -323,7 +322,10 @@ export const BrowseFavors = ({ navigation }: any) => {
         data={shown}
         keyExtractor={(f) => f.id}
         renderItem={({ item }) => (
-          <FavorCard favor={item} onPress={() => navigation.navigate('PalFavorDetail', { favorId: item.id })} />
+          <FavorCard
+            favor={item}
+            onPress={() => (onItemPress ? onItemPress(item.id) : navigation.navigate('PalFavorDetail', { favorId: item.id }))}
+          />
         )}
         contentContainerStyle={{ padding: 16, paddingBottom: insets.bottom + 24, flexGrow: 1 }}
         refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={RED} />}
@@ -348,6 +350,41 @@ export const BrowseFavors = ({ navigation }: any) => {
             </View>
           )
         }
+      />
+    </View>
+  );
+}
+
+export const BrowseFavors = ({ navigation }: any) => {
+  const insets = useSafeAreaInsets();
+  const fontsLoaded = usePoppins();
+
+  if (!fontsLoaded) return <View style={{ flex: 1, backgroundColor: PAGE_BG }} />;
+
+  return (
+    <View style={{ flex: 1, backgroundColor: PAGE_BG, paddingTop: insets.top }}>
+      <OpenFavorsList
+        navigation={navigation}
+        header={({ shown, total, onRefresh }) => (
+          <View style={bw.header}>
+            {navigation.canGoBack() ? (
+              <TouchableOpacity onPress={() => navigation.goBack()} hitSlop={10} accessibilityRole="button" accessibilityLabel="Go back">
+                <Ionicons name="chevron-back" size={26} color={TEXT} />
+              </TouchableOpacity>
+            ) : null}
+            <View style={{ flex: 1, marginLeft: navigation.canGoBack() ? 8 : 0 }}>
+              <Text style={bw.title}>Open Favors</Text>
+              <Text style={bw.subtitle}>
+                {shown === total
+                  ? `${total} ${total === 1 ? 'request' : 'requests'} near you`
+                  : `${shown} of ${total} requests`}
+              </Text>
+            </View>
+            <TouchableOpacity onPress={onRefresh} hitSlop={10} accessibilityRole="button" accessibilityLabel="Refresh">
+              <Ionicons name="refresh" size={22} color={TEXT} />
+            </TouchableOpacity>
+          </View>
+        )}
       />
     </View>
   );
@@ -426,23 +463,28 @@ export const PalFavorDetail = ({ navigation, route }: any) => {
   const favorId = route?.params?.favorId;
   const favor = favorId ? s.incomingFavors.find((f) => f.id === favorId) : s.incomingFavors[0];
   const gone = !!favorId && !favor;
-  const base = favor?.price ?? 20;
+  // Display source: acceptFavor() removes the favor from incomingFavors and moves
+  // it into activeFavor, so during the "Waiting for confirmation" hold `favor` is
+  // gone. Fall back to activeFavor so the sheet keeps the REAL title/name/fees
+  // instead of collapsing to placeholders ($0.58, "Favor Member").
+  const shownFavor = favor ?? s.activeFavor;
+  const base = shownFavor?.price ?? 20;
   // v.2 quick view shows the requester's (first) name above the description.
-  const requester = favor?.memberName ?? 'Favor Member';
-  const title = favor ? `${tierLabel(favor)} $${base}` : 'Favor request';
+  const requester = shownFavor?.memberName ?? 'Favor Member';
+  const title = shownFavor ? `${tierLabel(shownFavor)} $${base}` : 'Favor request';
   // Pal-side economics: what THEY take home (never the member invoice total).
   const { payout } = computePayout(base);
-  const area = favor?.location?.address ?? 'Nearby';
-  const when = favor?.scheduledFor
-    ? new Date(favor.scheduledFor).toLocaleString([], { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })
-    : favor?.createdAt
-      ? `Requested ${relTime(favor.createdAt)}`
+  const area = shownFavor?.location?.address ?? 'Nearby';
+  const when = shownFavor?.scheduledFor
+    ? new Date(shownFavor.scheduledFor).toLocaleString([], { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })
+    : shownFavor?.createdAt
+      ? `Requested ${relTime(shownFavor.createdAt)}`
       : 'As soon as possible';
   // Member invoice breakdown for the waiting sheet (kept in lockstep with the
   // request-side math via computeFees so the two can never disagree).
   const { serviceFee, transactionFee } = computeFees(base);
   // Exact address is appropriate now — the pal has claimed the favor.
-  const exactAddress = favor?.location?.address ?? 'Address shared by the member';
+  const exactAddress = shownFavor?.location?.address ?? 'Address shared by the member';
 
   if (!fontsLoaded) return <View style={{ flex: 1, backgroundColor: PAGE_BG }} />;
 
@@ -461,7 +503,7 @@ export const PalFavorDetail = ({ navigation, route }: any) => {
             <View style={{ flex: 1, marginLeft: 14 }}>
               <Text style={{ color: TEXT, fontSize: 16, fontFamily: P500 }}>{requester}</Text>
               <Text style={{ color: SUBTLE, fontSize: 14, lineHeight: 20, marginTop: 4, fontFamily: P400 }} numberOfLines={expanded ? undefined : 2}>
-                {favor?.description || 'No details provided yet.'}
+                {shownFavor?.description || 'No details provided yet.'}
               </Text>
               <TouchableOpacity
                 onPress={() => setExpanded((v) => !v)}
@@ -479,7 +521,7 @@ export const PalFavorDetail = ({ navigation, route }: any) => {
             <CostRow label="Service Fee" value={`$${serviceFee.toFixed(2)}`} />
             <CostRow label="Transaction Fee" value={`$${transactionFee.toFixed(2)}`} />
           </View>
-          <QuickRow label="Description" value={favor?.description || 'No details provided yet.'} />
+          <QuickRow label="Description" value={shownFavor?.description || 'No details provided yet.'} />
           <QuickRow label="Address" value={exactAddress} />
 
           <View style={st.waitBanner}>
@@ -526,7 +568,7 @@ export const PalFavorDetail = ({ navigation, route }: any) => {
           <View style={{ flex: 1, marginLeft: 14 }}>
             <Text style={{ color: TEXT, fontSize: 16, fontFamily: P500 }}>{requester}</Text>
             <Text style={{ color: SUBTLE, fontSize: 14, lineHeight: 20, marginTop: 4, fontFamily: P400 }} numberOfLines={expanded ? undefined : 2}>
-              {favor?.description || 'No details provided yet.'}
+              {shownFavor?.description || 'No details provided yet.'}
             </Text>
             <Text style={{ color: SUBTLE, fontSize: 13, marginTop: 6, fontFamily: P400 }}>{when}</Text>
             {/* app addition — no v2 frame (pal-side payout + area at a glance) */}

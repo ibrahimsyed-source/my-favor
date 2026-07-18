@@ -497,7 +497,10 @@ export function ConfirmAddress({ navigation }: any) {
   const canConfirm = address.trim().length > 0;
   const onConfirm = () => {
     if (!canConfirm) return;
-    s.setDraft({ location: { lat: 31.8069, lng: -91.0593, address: address.trim() } });
+    // TODO: geocode the typed address. Until then anchor to a Miami-area point
+    // (matching the demo city) so pal-side distances stay realistic rather than
+    // placing every user-typed favor hundreds of miles from the seeded ones.
+    s.setDraft({ location: { lat: 25.79, lng: -80.131, address: address.trim() } });
     navigation.navigate('FavorSummary');
   };
 
@@ -509,6 +512,17 @@ export function ConfirmAddress({ navigation }: any) {
 
       {/* Top address panel */}
       <View style={[styles.addressPanel, { paddingTop: insets.top + 8 }]}>
+        {navigation.canGoBack() ? (
+          <TouchableOpacity
+            onPress={() => navigation.goBack()}
+            hitSlop={10}
+            accessibilityRole="button"
+            accessibilityLabel="Go back"
+            style={{ width: 32, height: 32, alignItems: 'center', justifyContent: 'center', marginBottom: 4, marginLeft: -6 }}
+          >
+            <Ionicons name="chevron-back" size={24} color={INK} />
+          </TouchableOpacity>
+        ) : null}
         <Text style={styles.panelLabel}>Location of your favor</Text>
         <View style={styles.addressField}>
           <Ionicons name="locate" size={20} color={RED} style={{ marginLeft: 16 }} />
@@ -547,7 +561,8 @@ export function ConfirmAddress({ navigation }: any) {
             <Ionicons name="home" size={24} color={WHITE} />
             <Text style={styles.tabLabelHome}>HOME</Text>
           </TouchableOpacity>
-          <View style={styles.tabItem} accessibilityLabel="Request a favor">
+          {/* Current-screen indicator (decorative per the frame) — not a button. */}
+          <View style={styles.tabItem} accessibilityRole="text" accessibilityLabel="Request a favor, current screen">
             <Text style={styles.tabRequestF}>F</Text>
             <Text style={styles.tabLabelRequest}>REQUEST A FAVOR</Text>
           </View>
