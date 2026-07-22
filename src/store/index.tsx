@@ -5,11 +5,12 @@ import {
   Role, UserStatus, FavorTier, GeoPoint, FavorStatus, computeFees, computePayout,
 } from '../types';
 import { setSession, clearSession, getStoredRefresh, getStoredUser, setStoredUser, ApiError, setOnSessionExpired, setOnAccountSuspended } from '../api/client';
+import { startLocationBroadcast } from '../lib/location';
 import {
   signupApi, verifyOtpApi, loginApi, logoutApi, deleteAccountApi, changePasswordApi,
   getConfigApi, getMeApi, updateProfileApi, setRoleApi, verifyPalApi, setStatusApi, getPalsApi, getPalApi,
   createFavorApi, getFavorsApi, getActiveFavorApi, getFavorApi, getIncomingApi,
-  acceptFavorApi, declineFavorApi, abandonFavorApi, assignPalApi, advanceFavorApi, finishFavorApi, cancelFavorApi, rateFavorApi, rateMemberApi,
+  acceptFavorApi, declineFavorApi, abandonFavorApi, assignPalApi, advanceFavorApi, updateFavorLocationApi, finishFavorApi, cancelFavorApi, rateFavorApi, rateMemberApi,
   getCardsApi, addCardApi, removeCardApi, getTransactionsApi, getEarningsApi, cashoutApi,
   getPaymentsConfigApi, createSetupCheckoutApi, syncCardsApi, connectOnboardApi, connectStatusApi,
   getThreadsApi, getMessagesApi, sendMessageApi, createThreadApi,
@@ -25,6 +26,8 @@ import {
 // ---------------------------------------------------------------------------
 
 const ACTIVE = ['requested', 'matched', 'enroute', 'arrived', 'in_progress'];
+// Statuses during which an assigned pal streams their live location to the member.
+const PAL_BROADCAST_STATUSES = ['matched', 'enroute', 'arrived', 'in_progress'];
 
 // Monotonic sequence for client-only notification ids so repeat inserts (e.g.
 // reporting the same user twice) never collide on a React key.
@@ -327,6 +330,35 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     }, 4000);
     return () => clearInterval(id);
   }, [user, activeFavor, mergePal]);
+
+  // ---- live updates: when THIS user is the assigned pal of an in-flight favor,
+  // stream their device GPS to the server so the member can watch them approach.
+  // Derived from stable fields (not the activeFavor object) so the 4s poll above,
+  // which swaps in a fresh favor object each tick, doesn't restart the GPS watch. ----
+  const palBroadcastFavorId =
+    user?.role === 'pal' &&
+    activeFavor &&
+    activeFavor.palId === user.id &&
+    PAL_BROADCAST_STATUSES.includes(activeFavor.status)
+      ? activeFavor.id
+      : null;
+  useEffect(() => {
+    if (!palBroadcastFavorId) return;
+    let stop: (() => void) | undefined;
+    let cancelled = false;
+    void startLocationBroadcast((lat, lng) => {
+      // Fire-and-forget; a rejected update (favor ended, permission lost) just
+      // means the next tick won't post — the member's poll handles staleness.
+      void updateFavorLocationApi(palBroadcastFavorId, lat, lng).catch(() => undefined);
+    }).then((s) => {
+      if (cancelled) s();
+      else stop = s;
+    });
+    return () => {
+      cancelled = true;
+      stop?.();
+    };
+  }, [palBroadcastFavorId]);
 
   const palById = useCallback((id?: string) => (id ? pals.find((p) => p.id === id) : undefined), [pals]);
 

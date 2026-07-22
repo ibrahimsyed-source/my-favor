@@ -25,7 +25,8 @@
       "infoPlist": {
         "ITSAppUsesNonExemptEncryption": false,
         "NSPhotoLibraryUsageDescription": "My Favor needs access to your photos so you can add an image to a favor request or set your profile picture.",
-        "NSCameraUsageDescription": "My Favor needs access to your camera so you can take a photo for a favor request or your profile picture."
+        "NSCameraUsageDescription": "My Favor needs access to your camera so you can take a photo for a favor request or your profile picture.",
+        "NSLocationWhenInUseUsageDescription": "My Favor uses your location while you're completing a favor so the member can see how far away their Favor Pal is."
       },
       "privacyManifests": {
         "NSPrivacyAccessedAPITypes": [
@@ -71,6 +72,12 @@
         {
           "photosPermission": "My Favor needs access to your photos so you can add an image to a favor request or set your profile picture.",
           "cameraPermission": "My Favor needs access to your camera so you can take a photo for a favor request or your profile picture."
+        }
+      ],
+      [
+        "expo-location",
+        {
+          "locationWhenInUsePermission": "My Favor uses your location while you're completing a favor so the member can see how far away their Favor Pal is."
         }
       ]
     ]

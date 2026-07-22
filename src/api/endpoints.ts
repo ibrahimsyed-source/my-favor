@@ -76,6 +76,7 @@ export const declineFavorApi = (id: string) => apiRequest<{ ok: boolean }>(`/api
 export const abandonFavorApi = (id: string) => apiRequest<{ ok: boolean }>(`/api/favors/${id}/abandon`, { method: 'POST', auth: true });
 export const assignPalApi = (id: string, palId: string) => apiRequest<{ favor: Favor }>(`/api/favors/${id}/assign`, { method: 'POST', auth: true, body: { palId } });
 export const advanceFavorApi = (id: string, status: string) => apiRequest<{ favor: Favor }>(`/api/favors/${id}/advance`, { method: 'POST', auth: true, body: { status } });
+export const updateFavorLocationApi = (id: string, lat: number, lng: number) => apiRequest<{ ok: boolean }>(`/api/favors/${id}/location`, { method: 'POST', auth: true, body: { lat, lng } });
 export const finishFavorApi = (id: string) => apiRequest<{ favor: Favor; payout: number }>(`/api/favors/${id}/finish`, { method: 'POST', auth: true });
 export const cancelFavorApi = (id: string) => apiRequest<{ favor: Favor; cancellation: { fee: number; refund: number } }>(`/api/favors/${id}/cancel`, { method: 'POST', auth: true });
 export const rateFavorApi = (id: string, body: { rating: number; feedback: string; tip?: number }) =>

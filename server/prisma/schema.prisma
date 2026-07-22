@@ -97,6 +97,14 @@ model Favor {
   locationLng     Float
   locationAddress String
 
+  // Live pal location while the favor is in flight — the assigned pal's device
+  // streams this so the member can watch them approach (Uber-style). Cleared of
+  // meaning once the favor leaves an active status. Nullable: absent until the
+  // pal shares a fix (e.g. web/demo, or before permission is granted).
+  palLat        Float?
+  palLng        Float?
+  palLocationAt DateTime?
+
   status      String   @default("requested")
   scheduledFor DateTime?
   hours       Int?

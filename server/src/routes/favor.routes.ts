@@ -359,6 +359,34 @@ favorRouter.post(
   }),
 );
 
+// POST /api/favors/:id/location — the assigned pal streams their live GPS so the
+// member can watch them approach. Called frequently (every few seconds) while the
+// favor is in flight, so it stays cheap: a single conditional update, no event row
+// or notification. Only the assigned pal, and only before the favor is done.
+const MOVING_STATUSES = ['matched', 'enroute', 'arrived', 'in_progress'];
+favorRouter.post(
+  '/:id/location',
+  validate({
+    params: idParam,
+    body: z.object({ lat: z.number().min(-90).max(90), lng: z.number().min(-180).max(180) }),
+  }),
+  asyncHandler(async (req, res) => {
+    const me = req.user!.id;
+    const { lat, lng } = req.body as { lat: number; lng: number };
+    // Conditional update gates on (assigned pal + still moving) in one write, so a
+    // stale client can't post a location onto a completed/cancelled favor.
+    const updated = await prisma.favor.updateMany({
+      where: { id: req.params.id, palId: me, status: { in: MOVING_STATUSES } },
+      data: { palLat: lat, palLng: lng, palLocationAt: new Date() },
+    });
+    if (updated.count === 0) {
+      // Not the pal, or the favor is no longer live — tell the client to stop.
+      throw conflict('Not sharing location for this favor');
+    }
+    res.json({ ok: true });
+  }),
+);
+
 // POST /api/favors/:id/finish — the assigned pal completes the favor. Computes
 // the payout and writes both ledgers (member payment + pal earning).
 favorRouter.post(

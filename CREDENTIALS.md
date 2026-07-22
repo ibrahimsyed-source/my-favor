@@ -53,5 +53,6 @@ when building the app (`EXPO_PUBLIC_...`, e.g. in EAS build env).
 - **Push notifications** — in-app notifications already work (polling). Real device
   push needs `expo-notifications` + APNs/FCM creds + a dev build; deferred since
   Apple doesn't require it for launch. See `NEXT_STEPS.md`.
-- **Live GPS / interactive maps** — the static map covers display; live device
-  location + a pannable map need `expo-location` + `react-native-maps` + a dev build.
+- **Live Pal tracking** — **built** with `expo-location` (foreground-only); the
+  member sees the Pal's real distance + position. Needs a **native dev build** to
+  run (not Expo Go web). A pannable `react-native-maps` view is still optional.

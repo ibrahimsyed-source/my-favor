@@ -75,6 +75,12 @@ export function publicFavor(f: Favor & { member?: { firstName: string } | null }
     description: f.description,
     images: parseImages(f.images),
     location: { lat: f.locationLat, lng: f.locationLng, address: f.locationAddress },
+    // Live pal position — only ever serialized here (participant-facing), so a
+    // pal's real-time location is never exposed on the open feed / to strangers.
+    palLocation:
+      f.palLat != null && f.palLng != null
+        ? { lat: f.palLat, lng: f.palLng, at: f.palLocationAt ? f.palLocationAt.getTime() : undefined }
+        : undefined,
     status: f.status,
     createdAt: f.createdAt.getTime(),
     scheduledFor: f.scheduledFor ? f.scheduledFor.getTime() : undefined,

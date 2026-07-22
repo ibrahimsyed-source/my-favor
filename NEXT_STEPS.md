@@ -20,9 +20,13 @@ EAS build (and Apple doesn't require them for launch). The web/Expo-Go demo stay
 intact without them.
 - **Push notifications** — in-app notifications already work via polling. Real
   device push = `expo-notifications` + APNs (iOS) / FCM (Android) + token storage.
-- **Live GPS + interactive map** — the static map covers display; live device
-  location + a pannable map = `expo-location` + `react-native-maps`. (The distance
-  feature uses a fixed origin until GPS is added — `PAL_ORIGIN` in `src/screens/pal.tsx`.)
+- **Live Pal tracking** — **built** (`expo-location`, foreground-only): the Pal's
+  device streams GPS (`POST /favors/:id/location`), the member's active-favor poll
+  receives it, and the tracking screen shows the real "how far away is my Pal"
+  distance plus both pins on the (static) map. Needs a **native dev build** to run
+  (no Expo Go web). Still open: a pannable `react-native-maps` view instead of the
+  refreshing static image, and the Pal-side open-feed distance still uses a fixed
+  origin (`PAL_ORIGIN` in `src/screens/pal.tsx`) rather than the browsing Pal's GPS.
 
 ## The path to the App Store
 1. You: create the accounts in `CREDENTIALS.md` (Apple has the longest lead time —

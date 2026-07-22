@@ -291,6 +291,45 @@ async function activeFavor(opts: { advanceTo?: 'matched' | 'enroute' | 'arrived'
   return { member, pal, favorId };
 }
 
+test('live location: assigned pal shares GPS; member sees it, strangers cannot', async () => {
+  const { member, pal, favorId } = await activeFavor({ advanceTo: 'enroute' });
+
+  // The assigned pal posts a live fix.
+  const post = await api(`/api/favors/${favorId}/location`, {
+    method: 'POST', token: pal.token, body: { lat: 30.30, lng: -97.75 },
+  });
+  assert.equal(post.status, 200);
+
+  // The member sees the pal's position on the active favor.
+  const active = await api('/api/favors/active', { token: member.token });
+  assert.equal(active.status, 200);
+  assert.ok(active.json.favor.palLocation, 'member sees palLocation');
+  assert.equal(active.json.favor.palLocation.lat, 30.30);
+  assert.equal(active.json.favor.palLocation.lng, -97.75);
+
+  // A non-participant cannot post a location for this favor.
+  const stranger = await makeUser('pal');
+  const bad = await api(`/api/favors/${favorId}/location`, {
+    method: 'POST', token: stranger.token, body: { lat: 0, lng: 0 },
+  });
+  assert.equal(bad.status, 409, 'non-pal cannot post location');
+
+  // The member (not the assigned pal) cannot post a location either.
+  const memberPost = await api(`/api/favors/${favorId}/location`, {
+    method: 'POST', token: member.token, body: { lat: 1, lng: 1 },
+  });
+  assert.equal(memberPost.status, 409, 'member cannot post pal location');
+});
+
+test('live location: rejected once the favor is no longer in flight', async () => {
+  const { pal, favorId } = await activeFavor({ advanceTo: 'in_progress' });
+  await api(`/api/favors/${favorId}/finish`, { method: 'POST', token: pal.token });
+  const post = await api(`/api/favors/${favorId}/location`, {
+    method: 'POST', token: pal.token, body: { lat: 30.30, lng: -97.75 },
+  });
+  assert.equal(post.status, 409, 'cannot share location on a completed favor');
+});
+
 test('SECURITY: concurrent double-finish pays out exactly once', async () => {
   const { member, pal, favorId } = await activeFavor({ advanceTo: 'in_progress' });
   // Fire two finishes at once — only one may win.

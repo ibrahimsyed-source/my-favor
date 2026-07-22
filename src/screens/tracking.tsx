@@ -10,6 +10,7 @@ import { Avatar, StarRating, StaticMap } from '../components';
 import { tokens } from '../theme';
 import { useStore } from '../store';
 import { computeCancellation } from '../types';
+import { haversineMiles, fmtMiles } from '../lib/geo';
 
 // ---------------------------------------------------------------------------
 // User App v.2 — tracking module (light design over a light map).
@@ -104,7 +105,20 @@ export const FavorTracking = ({ navigation }: any) => {
   const arrived = status === 'arrived' || status === 'in_progress';
   const completed = status === 'completed';
   const cancelledByPal = status === 'cancelled'; // our own cancel nulls activeFavor
-  const distanceLabel = arrived || completed ? '0 miles away' : '1 mile away';
+
+  // Live distance: how far the pal actually is from the favor location, from the
+  // pal's streamed GPS (via the active-favor poll). Falls back to a "locating"
+  // state until the first fix arrives (e.g. web/demo, or before permission).
+  const palLoc = fav?.palLocation;
+  const liveMiles =
+    palLoc && fav ? haversineMiles(palLoc.lat, palLoc.lng, fav.location.lat, fav.location.lng) : null;
+  const hasLive = liveMiles != null && !arrived && !completed;
+  const distanceLabel =
+    arrived || completed
+      ? '0 miles away'
+      : liveMiles != null
+        ? `${fmtMiles(liveMiles)} away`
+        : 'Locating your Pal…';
 
   // Unread messages from this Pal → red "Message your Favor Pal" row + badge.
   const thread = pal ? s.threads.find((t) => t.withUser.id === pal.id) : undefined;
@@ -199,7 +213,15 @@ export const FavorTracking = ({ navigation }: any) => {
 
       {/* Light map backdrop (StaticMap → MapPlaceholder fallback), full-bleed. */}
       <View style={{ position: 'absolute', top: -16, left: -16, right: -16, bottom: -16 }} pointerEvents="none">
-        <StaticMap lat={fav?.location?.lat} lng={fav?.location?.lng} height={WIN_H + 32} zoom={15} label="">
+        <StaticMap
+          lat={fav?.location?.lat}
+          lng={fav?.location?.lng}
+          palLat={hasLive ? palLoc?.lat : undefined}
+          palLng={hasLive ? palLoc?.lng : undefined}
+          height={WIN_H + 32}
+          zoom={15}
+          label=""
+        >
           <View style={StyleSheet.absoluteFill}>
             {arrived || completed ? (
               // Pal + car together at the member's pin.
@@ -209,6 +231,10 @@ export const FavorTracking = ({ navigation }: any) => {
                 </View>
                 <Ionicons name="car-sport" size={24} color={RED} style={{ marginLeft: 2 }} />
               </View>
+            ) : hasLive ? (
+              // Real live position — the static map already draws the pal (blue)
+              // and destination (red) pins, so no decorative overlay is needed.
+              null
             ) : (
               <>
                 {/* red route: car (pal) → member pin */}
@@ -370,7 +396,7 @@ export const FavorTracking = ({ navigation }: any) => {
               </View>
               <View style={{ alignItems: 'flex-end' }}>
                 <Text style={styles.etaSmall}>{etaShort}</Text>
-                <Text style={styles.distanceText}>1 mile away</Text>
+                <Text style={styles.distanceText}>{distanceLabel}</Text>
               </View>
             </View>
           </TouchableOpacity>

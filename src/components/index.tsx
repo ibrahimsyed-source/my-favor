@@ -280,18 +280,27 @@ const MAPS_KEY = process.env.EXPO_PUBLIC_GOOGLE_MAPS_KEY || '';
 export const StaticMap: React.FC<{
   lat?: number;
   lng?: number;
+  // Optional live pal position — when provided, a second (blue) pin is drawn and
+  // the viewport auto-fits both pins so the member watches the pal close the gap.
+  palLat?: number;
+  palLng?: number;
   height?: number;
   zoom?: number;
   label?: string;
   children?: React.ReactNode;
-}> = ({ lat, lng, height = 240, zoom = 14, label, children }) => {
+}> = ({ lat, lng, palLat, palLng, height = 240, zoom = 14, label, children }) => {
   if (!MAPS_KEY || lat == null || lng == null) {
     return <MapPlaceholder height={height} label={label ?? 'Map'}>{children}</MapPlaceholder>;
   }
   const px = Math.min(640, Math.max(120, Math.round(height)));
-  const url =
-    `https://maps.googleapis.com/maps/api/staticmap?center=${lat},${lng}&zoom=${zoom}` +
-    `&size=640x${px}&scale=2&markers=color:0xED1C24%7C${lat},${lng}&key=${MAPS_KEY}`;
+  const size = `size=640x${px}&scale=2`;
+  const destPin = `&markers=color:0xED1C24%7C${lat},${lng}`; // favor location (red)
+  const hasPal = palLat != null && palLng != null;
+  const url = hasPal
+    ? // Pal (blue) + destination (red); omit center/zoom so Google auto-fits both.
+      `https://maps.googleapis.com/maps/api/staticmap?${size}${destPin}` +
+      `&markers=color:0x2563EB%7C${palLat},${palLng}&key=${MAPS_KEY}`
+    : `https://maps.googleapis.com/maps/api/staticmap?center=${lat},${lng}&zoom=${zoom}&${size}${destPin}&key=${MAPS_KEY}`;
   return (
     <View style={{ height, borderRadius: tokens.radius.lg, overflow: 'hidden' }}>
       <Image source={{ uri: url }} style={{ width: '100%', height }} resizeMode="cover" />

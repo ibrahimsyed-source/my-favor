@@ -84,6 +84,9 @@ export interface Favor {
   feedback?: string;
   // arrival window (display strings)
   etaWindow?: string;
+  // live pal position while in flight — present once the assigned pal's device
+  // starts sharing GPS; drives the member's "how far away is my Pal" tracking.
+  palLocation?: { lat: number; lng: number; at?: number };
 }
 
 export interface PaymentCard {

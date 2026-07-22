@@ -26,7 +26,7 @@ create screenshots, set up a reviewer demo account, and run the cloud build/subm
 | **Versioning** | `version` 1.0.0, iOS `buildNumber` 1, Android `versionCode` 1, `production.autoIncrement` for builds | `app.json`, `eas.json` |
 | **Account deletion** (Apple 5.1.1(v) — *mandatory* for any app with accounts) | In-app **Settings ▸ Delete Account** permanently wipes the account + all user data, with a confirm dialog that works on web **and** native | `src/screens/profile.tsx`, `src/store/index.tsx` (`deleteAccount`) |
 | **Privacy policy + terms** (Apple 5.1.1, Google) | In-app **Privacy Policy** and **Terms of Service** screens, linked from Settings ▸ Support and from the Signup terms checkbox | `src/screens/legal.tsx`, wired in `src/navigation` |
-| **Permission strings** (Apple 5.1.1(i)) | Purpose strings for Photos & Camera (`NSPhotoLibraryUsageDescription`, `NSCameraUsageDescription`); managed by `expo-image-picker` plugin too. *No location string* — location is mocked, so we don't request it. | `app.json` `ios.infoPlist` + `plugins` |
+| **Permission strings** (Apple 5.1.1(i)) | Purpose strings for Photos & Camera (`NSPhotoLibraryUsageDescription`, `NSCameraUsageDescription`) and **when-in-use Location** (`NSLocationWhenInUseUsageDescription`), managed by the `expo-image-picker` and `expo-location` plugins too. Location is **foreground-only** — the Pal shares GPS while completing a favor so the member can see how far away they are; no background location. | `app.json` `ios.infoPlist` + `plugins` |
 | **iOS privacy manifest** (required since Spring 2024) | `PrivacyInfo.xcprivacy` generated from `ios.privacyManifests`, declaring required-reason API usage: UserDefaults `CA92.1`, file timestamp `C617.1`, system boot time `35F9.1`, disk space `E174.1` | `app.json` `ios.privacyManifests` |
 | **Encryption export** (Apple) | `usesNonExemptEncryption: false` + `ITSAppUsesNonExemptEncryption: false` → skips the export-compliance prompt at every submit (app uses only standard HTTPS) | `app.json` |
 | **UGC safety** (Apple 1.2 — *required* because users post favor content & message each other) | In-app **Report user**, **Block user**, and a Terms section with a zero-tolerance objectionable-content clause | `src/store` (`reportUser`, `blockUser`, `blockedUsers`), `src/screens/legal.tsx` |
@@ -66,8 +66,11 @@ publish the same content at stable URLs, e.g.:
    your **Apple ID email**, and **Apple Team ID** into `eas.json` ▸
    `submit.production.ios` (replace the `REPLACE_WITH_...` placeholders).
 2. **App Privacy ("nutrition labels")** — declare data collected: Name, Email,
-   Phone, Photos, Coarse Location, Payment Info (via Stripe), Messages/User
-   Content, Usage/Diagnostics. Keep it consistent with `legal.tsx`.
+   Phone, Photos, **Precise Location** (the Pal's live location during a favor —
+   linked to the user, used for App Functionality, **not** tracking), Payment Info
+   (via Stripe), Messages/User Content, Usage/Diagnostics. Keep it consistent with
+   `legal.tsx`. ⚠️ This was "Coarse Location" before live tracking was added —
+   update the label to **Precise Location** now that the Pal streams real GPS.
 3. **Age rating** questionnaire — likely **17+** (user-generated content + the app
    facilitates real-world meetups/services; answer the UGC questions honestly).
 4. **Demo account for review** — the app gates everything behind login, so App
@@ -122,8 +125,12 @@ These aren't blockers for a build, but the app isn't truly production-ready unti
   3.1.3 requires real card entry to use a PCI-compliant processor — never collect
   raw card numbers in-app yourself.
 - **Twilio/OTP** sends real verification codes (currently mocked).
-- **Maps/location** uses a real provider and you add `NSLocationWhenInUseUsageDescription`
-  + the location plugin **only when** you actually request location.
+- **Maps/location**: live Pal tracking is wired (`expo-location`, foreground-only)
+  with the `NSLocationWhenInUseUsageDescription` string + `expo-location` plugin in
+  place, and the Static Maps key renders the live position. The map is a
+  self-refreshing **static image**, not a pannable `react-native-maps` view — swap
+  that in if you want an interactive map. Live location needs a **native dev build**
+  (it won't run in Expo Go's web preview).
 - A real backend replaces the in-memory mock store (`src/store`), and account
   deletion deletes server-side data too (the in-app flow currently clears local
   session state — the *requirement* is satisfied, but a real backend must honor it
