@@ -21,9 +21,8 @@
     "production": {
       "autoIncrement": true,
       "env": {
-        "_comment_EXPO_PUBLIC_GOOGLE_MAPS_KEY": "MUST be set before store release; left empty intentionally.",
-        "EXPO_PUBLIC_API_URL": "https://my-favor-api.onrender.com",
-        "EXPO_PUBLIC_GOOGLE_MAPS_KEY": ""
+        "_comment_EXPO_PUBLIC_GOOGLE_MAPS_KEY": "Set EXPO_PUBLIC_GOOGLE_MAPS_KEY as an EAS environment variable (dashboard or `eas env:create`) before a store release — not committed here so the key stays out of git.",
+        "EXPO_PUBLIC_API_URL": "https://my-favor-api.onrender.com"
       }
     }
   },
