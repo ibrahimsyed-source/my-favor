@@ -1,13 +1,13 @@
 {
   "expo": {
     "name": "My Favor",
-    "slug": "my-favor-1",
+    "slug": "my-favor",
     "version": "1.0.0",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
     "scheme": "myfavor",
     "userInterfaceStyle": "light",
-    "description": "My Favor is a two-sided marketplace to request everyday favors and errands, or earn money completing favors as a Favor Pal.",
+    "description": "A peer-to-peer favor exchange app",
     "primaryColor": "#ED1C24",
     "privacy": "public",
     "splash": {
@@ -17,10 +17,11 @@
     },
     "ios": {
       "supportsTablet": true,
-      "bundleIdentifier": "com.myfavor.app",
+      "bundleIdentifier": "com.myfavrapp.app",
       "buildNumber": "1",
       "config": {
-        "usesNonExemptEncryption": false
+        "usesNonExemptEncryption": false,
+        "googleMapsApiKey": "AIzaSyB9vKASqiPS-xWAVBy5YlqOJLEvLwpA6iw"
       },
       "infoPlist": {
         "ITSAppUsesNonExemptEncryption": false,
@@ -58,8 +59,13 @@
       }
     },
     "android": {
-      "package": "com.myfavor.app",
+      "package": "com.myfavrapp.app",
       "versionCode": 1,
+      "config": {
+        "googleMaps": {
+          "apiKey": "AIzaSyB9vKASqiPS-xWAVBy5YlqOJLEvLwpA6iw"
+        }
+      },
       "adaptiveIcon": {
         "backgroundColor": "#E6F4FE",
         "foregroundImage": "./assets/android-icon-foreground.png",
