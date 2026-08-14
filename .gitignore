@@ -39,4 +39,10 @@ yarn-error.*
 # generated native folders
 /ios
 /android
+
+# build artifacts (web export, compiled server, local SQLite dev db)
 my-favor-web.zip
+dist/
+server/dist/
+server/prisma/dev.db
+server/prisma/*.db

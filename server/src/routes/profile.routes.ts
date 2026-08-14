@@ -53,6 +53,31 @@ profileRouter.patch(
   }),
 );
 
+// PATCH /api/profile/push-token — the app registers (or clears) the device's
+// Expo push token so the server can deliver favor-lifecycle push notifications.
+// Accepts a valid ExponentPushToken, or null to clear it (e.g. on logout /
+// permission revocation). Never trusted for anything but delivery.
+const pushTokenSchema = z.object({
+  pushToken: z
+    .string()
+    .trim()
+    .regex(/^Expo(nent)?PushToken\[.+\]$/, 'Invalid Expo push token')
+    .max(256)
+    .nullable(),
+});
+profileRouter.patch(
+  '/push-token',
+  validate({ body: pushTokenSchema }),
+  asyncHandler(async (req, res) => {
+    const { pushToken } = req.body as z.infer<typeof pushTokenSchema>;
+    const user = await prisma.user.update({
+      where: { id: req.user!.id },
+      data: { pushToken },
+    });
+    res.json({ user: publicUser(user) });
+  }),
+);
+
 // POST /api/profile/role — switch active role (member <-> pal).
 profileRouter.post(
   '/role',

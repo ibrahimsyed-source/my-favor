@@ -152,11 +152,37 @@ function NavyModal({ visible, title, message, primaryLabel, onPrimary, dismissLa
 const tierLabel = (f: Favor) =>
   (FAVOR_TIERS as Record<string, { label: string }>)[f.tier]?.label ?? 'Custom Favor';
 
-// Pal origin for distance/sort. Anchored to the demo city (Miami) so it matches
-// where the seeded/incoming favors actually are — an Austin origin made every
-// favor read as ~1000 mi away and flattened the "Closest" sort. TODO: replace
-// with the device's live location (expo-location) once a dev build is set up.
-const PAL_ORIGIN = { lat: 25.7617, lng: -80.1918 };
+// Fallback pal origin for distance/sort BEFORE the device's real GPS fix arrives
+// (or on web / when location permission is denied). Anchored to the demo city
+// (Miami) so it matches where the seeded/incoming favors are — an Austin origin
+// made every favor read as ~1000 mi away and flattened the "Closest" sort.
+type Origin = { lat: number; lng: number };
+const PAL_ORIGIN_FALLBACK: Origin = { lat: 25.7617, lng: -80.1918 };
+
+// The pal's real device location, used as the origin for "closest favor" and
+// distance labels. Reads a single foreground fix via expo-location's
+// getCurrentPositionAsync; keeps the Miami fallback until (and unless) a real fix
+// lands, so the board never shows nonsense distances on web / without permission.
+// Dynamic import so a build lacking the native module can't break the JS bundle.
+function usePalOrigin(): Origin {
+  const [origin, setOrigin] = useState<Origin>(PAL_ORIGIN_FALLBACK);
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const Location = await import('expo-location');
+        const { status } = await Location.requestForegroundPermissionsAsync();
+        if (status !== 'granted') return;
+        const pos = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.Balanced });
+        if (!cancelled) setOrigin({ lat: pos.coords.latitude, lng: pos.coords.longitude });
+      } catch {
+        /* keep the fallback — web, missing module, or permission denied */
+      }
+    })();
+    return () => { cancelled = true; };
+  }, []);
+  return origin;
+}
 
 const toRad = (d: number) => (d * Math.PI) / 180;
 function haversineMiles(lat1: number, lng1: number, lat2: number, lng2: number) {
@@ -166,7 +192,7 @@ function haversineMiles(lat1: number, lng1: number, lat2: number, lng2: number) 
   const a = Math.sin(dLat / 2) ** 2 + Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) * Math.sin(dLng / 2) ** 2;
   return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
 }
-const favorDistance = (f: Favor) => haversineMiles(PAL_ORIGIN.lat, PAL_ORIGIN.lng, f.location.lat, f.location.lng);
+const favorDistance = (f: Favor, origin: Origin) => haversineMiles(origin.lat, origin.lng, f.location.lat, f.location.lng);
 const fmtMiles = (mi: number) => (mi < 0.1 ? 'nearby' : mi < 10 ? `${mi.toFixed(1)} mi` : `${Math.round(mi)} mi`);
 
 const relTime = (ms?: number) => {
@@ -179,7 +205,7 @@ const relTime = (ms?: number) => {
   return `${Math.round(h / 24)}d ago`;
 };
 
-function FavorCard({ favor, onPress }: { favor: Favor; onPress: () => void }) {
+function FavorCard({ favor, onPress, origin }: { favor: Favor; onPress: () => void; origin: Origin }) {
   const { payout } = computePayout(favor.price);
   return (
     <TouchableOpacity
@@ -198,7 +224,7 @@ function FavorCard({ favor, onPress }: { favor: Favor; onPress: () => void }) {
         <Ionicons name="location-outline" size={14} color={SUBTLE} />
         <Text style={bw.meta} numberOfLines={1}>{favor.location?.address || 'Nearby'}</Text>
         <Text style={bw.dot}>·</Text>
-        <Text style={bw.meta}>{fmtMiles(favorDistance(favor))}</Text>
+        <Text style={bw.meta}>{fmtMiles(favorDistance(favor, origin))}</Text>
         {favor.createdAt ? <Text style={bw.dot}>·</Text> : null}
         {favor.createdAt ? <Text style={bw.meta}>{relTime(favor.createdAt)}</Text> : null}
       </View>
@@ -267,6 +293,7 @@ export function OpenFavorsList({
 }) {
   const s = useStore();
   const insets = useSafeAreaInsets();
+  const origin = usePalOrigin();
   const [refreshing, setRefreshing] = useState(false);
   const [errored, setErrored] = useState(false);
   const [sort, setSort] = useState<SortKey>(defaultSort);
@@ -301,9 +328,9 @@ export function OpenFavorsList({
     let list = tier === 'all' ? favors : favors.filter((f) => f.tier === tier);
     if (sort === 'high') list = [...list].sort((a, b) => b.price - a.price);
     else if (sort === 'low') list = [...list].sort((a, b) => a.price - b.price);
-    else if (sort === 'close') list = [...list].sort((a, b) => favorDistance(a) - favorDistance(b));
+    else if (sort === 'close') list = [...list].sort((a, b) => favorDistance(a, origin) - favorDistance(b, origin));
     return list;
-  }, [favors, tier, sort]);
+  }, [favors, tier, sort, origin]);
 
   return (
     <View style={{ flex: 1 }}>
@@ -324,6 +351,7 @@ export function OpenFavorsList({
         renderItem={({ item }) => (
           <FavorCard
             favor={item}
+            origin={origin}
             onPress={() => (onItemPress ? onItemPress(item.id) : navigation.navigate('PalFavorDetail', { favorId: item.id }))}
           />
         )}
@@ -644,6 +672,7 @@ function QuickRow({ label, value }: any) {
 // ===========================================================================
 export const Navigation = ({ navigation }: any) => {
   const s = useStore();
+  const origin = usePalOrigin();
   const fav = s.activeFavor;
   const [callOpen, setCallOpen] = useState(false);
   const [arriveOpen, setArriveOpen] = useState(false);
@@ -652,7 +681,7 @@ export const Navigation = ({ navigation }: any) => {
   const fontsLoaded = usePoppins();
   const memberName = fav?.memberName ?? 'Favor Member';
   const tierName = fav ? tierLabel(fav) : 'Favor';
-  const distance = fav ? fmtMiles(favorDistance(fav)) : '';
+  const distance = fav ? fmtMiles(favorDistance(fav, origin)) : '';
   const window = fav?.etaWindow
     ?? (fav?.scheduledFor ? new Date(fav.scheduledFor).toLocaleString([], { hour: 'numeric', minute: '2-digit' }) : 'As soon as possible');
   // v.2 banner reads "↑ Head west on 2nd St." — steer to the favor's address.
@@ -770,6 +799,7 @@ function ActionRow({ icon, label, red, onPress }: any) {
 export const PalFavorInProgress = ({ navigation }: any) => {
   const s = useStore();
   const insets = useSafeAreaInsets();
+  const origin = usePalOrigin();
   const fontsLoaded = usePoppins();
   const fav = s.activeFavor;
   const base = fav?.price ?? 20;
@@ -779,7 +809,7 @@ export const PalFavorInProgress = ({ navigation }: any) => {
   const address = fav?.location?.address || 'Address shared by the member';
   const memberName = fav?.memberName ?? 'Favor Member';
   const tierName = fav ? tierLabel(fav) : 'Favor';
-  const distance = fav ? fmtMiles(favorDistance(fav)) : '';
+  const distance = fav ? fmtMiles(favorDistance(fav, origin)) : '';
   const arrived = fav?.status === 'arrived' || fav?.status === 'in_progress';
   const window = fav?.etaWindow
     ?? (fav?.scheduledFor ? new Date(fav.scheduledFor).toLocaleString([], { hour: 'numeric', minute: '2-digit' }) : 'As soon as possible');

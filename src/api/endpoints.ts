@@ -56,6 +56,10 @@ export const verifyPalApi = (data: {
 }) => apiRequest<{ user: User }>('/api/profile/verify-pal', { method: 'POST', auth: true, body: data });
 export const setStatusApi = (status: UserStatus) =>
   apiRequest<{ user: User }>('/api/profile/status', { method: 'POST', auth: true, body: { status } });
+// Register (or clear, with null) this device's Expo push token on the profile so
+// the server can deliver favor-lifecycle push notifications.
+export const updatePushTokenApi = (pushToken: string | null) =>
+  apiRequest<{ user: User }>('/api/profile/push-token', { method: 'PATCH', auth: true, body: { pushToken } });
 export const getPalsApi = () => apiRequest<{ pals: Partial<User>[] }>('/api/profile/pals', { auth: true });
 export const getPalApi = (id: string) => apiRequest<{ pal: Partial<User> }>(`/api/profile/pals/${id}`, { auth: true });
 export const getPalReviewsApi = (id: string) => apiRequest<{ reviews: Review[] }>(`/api/profile/pals/${id}/reviews`, { auth: true });

@@ -92,6 +92,12 @@
         {
           "locationWhenInUsePermission": "My Favor uses your location while you're completing a favor so the member can see how far away their Favor Pal is."
         }
+      ],
+      [
+        "expo-notifications",
+        {
+          "color": "#ED1C24"
+        }
       ]
     ],
     "extra": {

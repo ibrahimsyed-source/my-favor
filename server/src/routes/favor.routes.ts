@@ -1,5 +1,6 @@
 import { Router } from 'express';
 import { z } from 'zod';
+import { Prisma } from '@prisma/client';
 import { prisma } from '../db';
 import { validate } from '../lib/validate';
 import { asyncHandler, badRequest, notFound, forbidden, conflict } from '../lib/errors';
@@ -7,6 +8,7 @@ import { authenticate } from '../middleware/authenticate';
 import { publicFavor, publicFavorOpen } from '../lib/serialize';
 import { computeFees, computePayout, computeCancellation, FAVOR_TIERS } from '../lib/money';
 import { stripeEnabled, chargeFavor, chargeToPal, refundFavorCharge } from '../lib/stripe';
+import { sendPushNotification } from '../lib/push';
 
 export const favorRouter = Router();
 favorRouter.use(authenticate);
@@ -27,8 +29,12 @@ async function getParticipantFavor(favorId: string, userId: string) {
   return favor;
 }
 
+// Persist the durable in-app Notification row AND fire a best-effort device push
+// (Expo). The DB row is the source of truth (polled by the app); the push is a
+// courtesy ping and never blocks — a push failure can't break the favor flow.
 async function notify(userId: string, type: string, title: string, body: string) {
   await prisma.notification.create({ data: { userId, type, title, body } });
+  void sendPushNotification(userId, title, body, { type });
 }
 
 // Settle money for a favor: the member is debited and the pal credited together,
@@ -53,14 +59,13 @@ async function settle(opts: {
     // one $transaction so the stated invariant — member debit and pal credit
     // happen together — holds even mid-write.
     //
-    // Deferred (needs infra not added here): folding these rows into the same
-    // transaction that flips the favor status would also close the tiny window
-    // where a crash after the status flip but before settle() leaves a completed
-    // favor with no ledger rows. It isn't done because settle()'s live path makes
-    // an external Stripe charge, which must not run inside an open DB transaction;
-    // and a retry/reconcile path would require a unique (favorId, userId, kind)
-    // constraint (a migration) to stay idempotent.
-    const writes = [
+    // Settlement watermark: when (and only when) the money is fully collected
+    // (status 'completed'), we stamp favor.settledAt IN THE SAME $transaction as
+    // the ledger rows. Stripe (live mode) runs BEFORE this, outside the tx, so by
+    // the time we reach a 'completed' write both the DB write and the charge have
+    // succeeded together. A completed favor left with settledAt=null is therefore
+    // an unfinished settlement — the reconciliation job flags it (see reconcile.ts).
+    const writes: Prisma.PrismaPromise<unknown>[] = [
       prisma.transaction.create({
         data: { userId: opts.memberId, favorId: opts.favorId, title: opts.memberTitle, amount: opts.memberAmount, status, kind: 'payment' },
       }),
@@ -70,6 +75,11 @@ async function settle(opts: {
         prisma.transaction.create({
           data: { userId: opts.palId, favorId: opts.favorId, title: opts.palTitle ?? opts.memberTitle, amount: opts.palAmount, status, kind: 'earning' },
         }),
+      );
+    }
+    if (status === 'completed') {
+      writes.push(
+        prisma.favor.update({ where: { id: opts.favorId }, data: { settledAt: new Date() } }),
       );
     }
     await prisma.$transaction(writes);

@@ -6,7 +6,8 @@ import {
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { useFonts, Poppins_400Regular } from '@expo-google-fonts/poppins';
-import { Avatar, StarRating, StaticMap } from '../components';
+import { Avatar, StarRating } from '../components';
+import { LiveMap } from '../components/LiveMap';
 import { tokens } from '../theme';
 import { useStore } from '../store';
 import { computeCancellation } from '../types';
@@ -211,13 +212,14 @@ export const FavorTracking = ({ navigation }: any) => {
     <View style={{ flex: 1, backgroundColor: '#E9EEF3' }}>
       <StatusBar barStyle="dark-content" />
 
-      {/* Light map backdrop (StaticMap → MapPlaceholder fallback), full-bleed. */}
+      {/* Live map backdrop — interactive react-native-maps on native, StaticMap
+          image fallback on web (see components/LiveMap). Full-bleed. The member
+          sees the pal's live GPS as a second (blue) marker once it streams in. */}
       <View style={{ position: 'absolute', top: -16, left: -16, right: -16, bottom: -16 }} pointerEvents="none">
-        <StaticMap
+        <LiveMap
           lat={fav?.location?.lat}
           lng={fav?.location?.lng}
-          palLat={hasLive ? palLoc?.lat : undefined}
-          palLng={hasLive ? palLoc?.lng : undefined}
+          markers={hasLive && palLoc ? [{ lat: palLoc.lat, lng: palLoc.lng, label: 'Your Pal' }] : undefined}
           height={WIN_H + 32}
           zoom={15}
           label=""
@@ -250,7 +252,7 @@ export const FavorTracking = ({ navigation }: any) => {
               </>
             )}
           </View>
-        </StaticMap>
+        </LiveMap>
       </View>
 
       {/* Header: home + menu squares + white "Switch to be a favor pal" pill */}

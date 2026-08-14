@@ -6,6 +6,7 @@ import {
 } from '../types';
 import { setSession, clearSession, getStoredRefresh, getStoredUser, setStoredUser, ApiError, setOnSessionExpired, setOnAccountSuspended } from '../api/client';
 import { startLocationBroadcast } from '../lib/location';
+import { registerForPushNotificationsAsync } from '../lib/notifications';
 import {
   signupApi, verifyOtpApi, loginApi, logoutApi, deleteAccountApi, changePasswordApi,
   getConfigApi, getMeApi, updateProfileApi, setRoleApi, verifyPalApi, setStatusApi, getPalsApi, getPalApi,
@@ -359,6 +360,14 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       stop?.();
     };
   }, [palBroadcastFavorId]);
+
+  // Register this device for push notifications once a user is authenticated
+  // (native only — web has no push token). Best-effort and keyed on the user id
+  // so it runs once per signed-in account; the token is saved to their profile.
+  useEffect(() => {
+    if (!user || Platform.OS === 'web') return;
+    void registerForPushNotificationsAsync();
+  }, [user?.id]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const palById = useCallback((id?: string) => (id ? pals.find((p) => p.id === id) : undefined), [pals]);
 

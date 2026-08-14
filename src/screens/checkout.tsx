@@ -8,6 +8,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { useFonts, Poppins_400Regular } from '@expo-google-fonts/poppins';
 import { useStore } from '../store';
 import { FAVOR_TIERS, computeFees, FavorTier } from '../types';
+import { LiveMap } from '../components/LiveMap';
 
 // ---------------------------------------------------------------------------
 // Checkout flow — rebuilt to the User App v.2 Figma frames (light theme):
@@ -85,7 +86,13 @@ function useFavorSummary() {
   const description = draftFavor?.description || FALLBACK_DESC;
   const address = draftFavor?.location?.address || FALLBACK_ADDRESS;
   const image = draftFavor?.images?.[0];
-  return { base, label, fees, description, address, image, tier };
+  // The geocoded pickup coordinates (set on ConfirmAddress) — drives the pickup
+  // pin on the summary map. Undefined until an address has been confirmed.
+  const location =
+    draftFavor?.location && typeof draftFavor.location.lat === 'number'
+      ? { lat: draftFavor.location.lat, lng: draftFavor.location.lng }
+      : undefined;
+  return { base, label, fees, description, address, image, tier, location };
 }
 
 // ---------------------------------------------------------------------------
@@ -144,7 +151,7 @@ const AlertModal = ({
 // Address). Reused as the backdrop behind the payment sheet.
 // ---------------------------------------------------------------------------
 function SummaryBody() {
-  const { base, label, fees, description, address, image, tier } = useFavorSummary();
+  const { base, label, fees, description, address, image, tier, location } = useFavorSummary();
   const art = TIER_ART[tier as string] ?? TIER_ART.tiny;
   return (
     <View>
@@ -185,6 +192,14 @@ function SummaryBody() {
       <Section icon="document-text" label="Description" body={description} />
       <Divider style={{ marginTop: 16 }} />
       <Section icon="location" label="Address" body={address} />
+      {/* Pickup pin at the geocoded address — interactive map on native, a Static
+          Maps image on web (see components/LiveMap). Only shown once a location
+          has been confirmed. */}
+      {location ? (
+        <View style={{ marginHorizontal: 23, marginTop: 14, borderRadius: 12, overflow: 'hidden' }}>
+          <LiveMap lat={location.lat} lng={location.lng} height={160} zoom={15} label="Pickup" />
+        </View>
+      ) : null}
       <Divider style={{ marginTop: 18 }} />
     </View>
   );

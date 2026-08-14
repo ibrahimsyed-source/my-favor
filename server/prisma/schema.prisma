@@ -54,6 +54,10 @@ model User {
   stripeCustomerId String?
   stripeConnectId  String?
 
+  // Expo push token for device push notifications (favor lifecycle). Nullable:
+  // absent until the app registers a token (native only; web never sets it).
+  pushToken String?
+
   // Pal stats
   rating          Float @default(0)
   totalFavors     Int   @default(0)
@@ -125,6 +129,12 @@ model Favor {
 
   // Stripe charge for this favor (set when payments are live)
   stripePaymentIntentId String?
+
+  // Settlement watermark: set ONLY after BOTH the ledger write AND (in live mode)
+  // the Stripe charge succeed. A favor with status 'completed' but settledAt=null
+  // is the reconcile signal — the money side didn't finish, so an operator must
+  // reconcile it (see the reconciliation check in app.ts).
+  settledAt DateTime?
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt

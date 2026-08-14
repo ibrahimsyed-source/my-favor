@@ -10,6 +10,7 @@ import Svg, { Defs, RadialGradient, Stop, Circle } from 'react-native-svg';
 import { useFonts, Poppins_400Regular, Poppins_400Regular_Italic } from '@expo-google-fonts/poppins';
 import { useStore } from '../store';
 import { FAVOR_TIERS } from '../types';
+import { geocodeAddress } from '../lib/geocode';
 
 // ---------------------------------------------------------------------------
 // Request flow — rebuilt to the v.2 Figma frames (light theme):
@@ -493,16 +494,21 @@ export function ConfirmAddress({ navigation }: any) {
   const [address, setAddress] = useState(
     s.draftFavor?.location?.address ?? s.user?.homeAddress ?? '2099 Woodvine Rd, Lorman…'
   );
+  const [geocoding, setGeocoding] = useState(false);
 
   const canConfirm = address.trim().length > 0;
-  const onConfirm = () => {
-    if (!canConfirm) return;
-    // TODO: geocode the typed address. Until then anchor to a Miami-area point
-    // (matching the demo city) so pal-side distances stay realistic rather than
-    // placing every user-typed favor hundreds of miles from the seeded ones.
-    s.setDraft({ location: { lat: 25.79, lng: -80.131, address: address.trim() } });
+  const onConfirm = useCallback(async () => {
+    if (!canConfirm || geocoding) return;
+    setGeocoding(true);
+    // Geocode the typed address to real coordinates (Google Geocoding API, keyed
+    // by EXPO_PUBLIC_GOOGLE_MAPS_KEY). Falls back to a Miami-area point when no
+    // key is set (dev) or the lookup fails, so distances stay realistic.
+    const trimmed = address.trim();
+    const { lat, lng } = await geocodeAddress(trimmed);
+    s.setDraft({ location: { lat, lng, address: trimmed } });
+    setGeocoding(false);
     navigation.navigate('FavorSummary');
-  };
+  }, [address, canConfirm, geocoding, navigation, s]);
 
   if (!fontsLoaded) return <View style={{ flex: 1, backgroundColor: WHITE }} />;
 
@@ -546,7 +552,7 @@ export function ConfirmAddress({ navigation }: any) {
             <Ionicons name="close" size={18} color={INK} />
           </TouchableOpacity>
         </View>
-        <BlackButton title="Confirm Address" disabled={!canConfirm} onPress={onConfirm} style={{ marginTop: 16 }} />
+        <BlackButton title={geocoding ? 'Locating…' : 'Confirm Address'} disabled={!canConfirm || geocoding} onPress={() => void onConfirm()} style={{ marginTop: 16 }} />
       </View>
 
       {/* Bottom tab bar (HOME / REQUEST A FAVOR) exactly as the frame */}

@@ -32,9 +32,13 @@ create screenshots, set up a reviewer demo account, and run the cloud build/subm
 | **UGC safety** (Apple 1.2 — *required* because users post favor content & message each other) | In-app **Report user**, **Block user**, and a Terms section with a zero-tolerance objectionable-content clause | `src/store` (`reportUser`, `blockUser`, `blockedUsers`), `src/screens/legal.tsx` |
 | **Payments model** (Apple 3.1.3/3.1.5, Google) | Favors are *real-world services* delivered outside the app, so they correctly use a third-party processor (Stripe) and **must not** use in-app purchase. No IAP SDK is included. | money model in `src/types` |
 
-> Note: the Stripe / Twilio / maps integrations are still **mocked** in this build.
-> Before a public production release you must wire the real SDKs (see "Before a
-> real production launch" below). The compliance *config* above is correct either way.
+> Note: the app runs on a **real Express + Prisma backend** (`server/`), not a
+> mock store. **Stripe** (charges + Connect payouts), **email OTP** (Resend),
+> **maps** (react-native-maps + Google Static Maps/Geocoding), **live location**
+> (expo-location), and **push** (expo-notifications) are all **wired and gated
+> behind credentials** — each turns on with no code change once its key is set
+> (see `CREDENTIALS.md`). Until keyed, gated services fall back to a safe
+> mock/dev path. The compliance *config* above is correct either way.
 
 ---
 
@@ -120,22 +124,35 @@ eas submit --platform android --profile production
 
 ## Before a real production launch (beyond store *acceptance*)
 
-These aren't blockers for a build, but the app isn't truly production-ready until:
-- **Stripe** is wired for real charges + Connect payouts (currently mocked). Apple
-  3.1.3 requires real card entry to use a PCI-compliant processor — never collect
-  raw card numbers in-app yourself.
-- **Twilio/OTP** sends real verification codes (currently mocked).
+The architecture is built — a real **Express + Prisma** backend (`server/`) with
+JWT auth, favor lifecycle, messaging, moderation, and a self-tracked ledger. What
+remains before a public launch is mostly **flipping on credentialed services** and
+production hardening:
+- **Stripe** is fully wired for real charges + Connect payouts, gated behind
+  `STRIPE_SECRET_KEY` (a mock ledger runs until keyed). Apple 3.1.3 requires real
+  card entry via a PCI-compliant processor — the hosted Stripe Checkout / Connect
+  flow satisfies this, and no raw card numbers are ever collected in-app. Add the
+  live keys + webhook secret to go real.
+- **Email OTP** delivers via Resend, gated behind `RESEND_API_KEY` (codes are
+  console-logged in dev). Add the key + a verified sender to send real codes.
 - **Maps/location**: live Pal tracking is wired (`expo-location`, foreground-only)
-  with the `NSLocationWhenInUseUsageDescription` string + `expo-location` plugin in
-  place, and the Static Maps key renders the live position. The map is a
-  self-refreshing **static image**, not a pannable `react-native-maps` view — swap
-  that in if you want an interactive map. Live location needs a **native dev build**
-  (it won't run in Expo Go's web preview).
-- A real backend replaces the in-memory mock store (`src/store`), and account
-  deletion deletes server-side data too (the in-app flow currently clears local
-  session state — the *requirement* is satisfied, but a real backend must honor it
-  server-side).
-- Push notifications: add `expo-notifications` + APNs/FCM credentials if you ship them.
+  with the `NSLocationWhenInUseUsageDescription` string + `expo-location` plugin,
+  and the map is now an **interactive `react-native-maps` MapView** on native
+  (`src/components/LiveMap`), with a Google **Static Maps** image fallback on web.
+  Typed pickup addresses are resolved with Google **Geocoding**. Set
+  `EXPO_PUBLIC_GOOGLE_MAPS_KEY` (and the Android Google Maps key for a native
+  build). Live location + the native map need a **native dev build** (they won't
+  run in Expo Go's web preview).
+- **Account deletion** is honored server-side (`DELETE /api/auth/account` wipes the
+  account + related rows); the in-app flow also clears the local session.
+- **Push notifications**: wired via `expo-notifications` + the Expo push service
+  (free, no key) — the device registers a token (`PATCH /api/profile/push-token`)
+  and the server pushes on favor accept / arrival / completion. A native dev build
+  + APNs (iOS) / FCM (Android) credentials are needed for real device delivery.
+- **Postgres**: move off SQLite for production (one-line Prisma provider switch +
+  `DATABASE_URL`; see `server/DEPLOY.md`).
+- **Pal vetting**: replace the gated mock (auto-approve on a consented 18+
+  submission) with a real identity/background vendor (Stripe Identity / Checkr).
 
 ---
 

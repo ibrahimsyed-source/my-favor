@@ -6,6 +6,35 @@ Last updated: June 2026 · Expo SDK 56 · solo-dev pragmatic stack.
 
 ---
 
+## ⚠️ ACTUAL IMPLEMENTATION (read this first)
+
+**This roadmap reflects the ORIGINAL plan, not the architecture that was actually
+built.** The app was built with a **custom Express + Prisma + SQLite backend**
+(in `server/`), **not Supabase** as proposed in the "Recommended stack" table
+below. What actually shipped:
+
+- **Backend/DB:** hand-rolled **Express** API + **Prisma** ORM over **SQLite**
+  for local dev (one-line provider switch to **Postgres** for production). Not
+  Supabase.
+- **Auth + OTP:** custom JWT (access + rotating refresh tokens) with email OTP via
+  **Resend** (gated; console-logged in dev). Not Supabase Auth / Twilio.
+- **Payments:** **Stripe** + **Stripe Connect** via a hosted-page flow, gated
+  behind `STRIPE_SECRET_KEY` (a mock ledger runs until keyed).
+- **Maps + location:** **react-native-maps** (interactive, native) with a Google
+  **Static Maps** image fallback on web, plus **expo-location** live GPS streaming
+  and Google **Geocoding** for typed addresses.
+- **Realtime:** polling (active-favor, messages, notifications, open feed), not
+  Postgres change streams.
+- **Push:** **expo-notifications** + the Expo push service (free), wired into the
+  favor lifecycle server-side.
+- **Pal vetting:** a gated mock (auto-approve on a consented 18+ submission); a
+  real vendor (Stripe Identity / Checkr) is still a TODO.
+
+Treat the sections below as design history / a menu of upgrade options, not a
+description of the current codebase.
+
+---
+
 ## The core insight: this is a swap, not a rewrite
 
 Every screen already works and talks to data through **one interface** —
