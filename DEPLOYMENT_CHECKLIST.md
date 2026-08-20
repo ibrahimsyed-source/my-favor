@@ -1,6 +1,6 @@
 # My Favor — Deployment Checklist
 
-Last updated: 2026-08-19 (store-submission pass)
+Last updated: 2026-08-19 (Render crash-loop fix: Supabase pooler + resilient boot)
 
 Everything that can be done from code/config is DONE. What remains is listed
 under **"Ibrahim must do manually"** — each item needs a human account action
@@ -77,14 +77,45 @@ under **"Ibrahim must do manually"** — each item needs a human account action
 
 ## ⚠️ Ibrahim must do manually
 
-### 0. FIRST: resume the Render API service (currently SUSPENDED)
-- Checked 2026-08-19: `https://my-favor-api.onrender.com` returns **503
-  "This service has been suspended by its owner."** Both production binaries
-  bake this URL in (`EXPO_PUBLIC_API_URL`) — the app is dead until the
-  service is resumed.
-- Render dashboard ▸ my-favor-api ▸ Resume (or upgrade the plan if it was
-  suspended for billing). Redeploying from the latest commit also publishes
-  the new `/privacy`, `/terms`, `/support` pages the store listings need.
+### 0. FIRST: set env vars + resume the Render API service (AUTO-SUSPENDED)
+- **What actually happened** (from the Render logs, not billing): the old
+  render.yaml blueprint provisioned its own free Render Postgres and wired
+  `DATABASE_URL` to it via `fromDatabase`. That free DB went away, so every
+  boot crashed with Prisma `P1001: Can't reach database server at
+  dpg-d90r6iuq1p3s738i6ipg-a:5432`; after ~20 crash loops Render
+  **auto-suspended** the service on Aug 13.
+- **Fixed in code (2026-08-19)**: render.yaml no longer provisions a Render
+  Postgres — `DATABASE_URL`/`DIRECT_URL` are dashboard-set (`sync: false`) and
+  point at **Supabase**; the Dockerfile now runs `prisma migrate deploy` and
+  starts the HTTP server even if migrations fail, so a DB hiccup can never
+  crash-loop the service into suspension again.
+- **Supabase URLs — pooler required**: Render can't reach Supabase's direct
+  host (`db.xhdhhanmqtrnblequgiy.supabase.co:5432` is IPv6-only). Copy both
+  pooler URLs from Supabase dashboard ▸ Connect:
+  - `DATABASE_URL` = **transaction pooler**: port **6543** with
+    `?pgbouncer=true&schema=myfavor` (runtime queries).
+  - `DIRECT_URL` = **session pooler**: port **5432** with `?schema=myfavor`
+    (used only by `prisma migrate deploy` at boot).
+- **Env vars to set on the Render service** (dashboard ▸ my-favor-api ▸
+  Environment; templates with real values in gitignored `server/.env.production`):
+  | Var | What it is |
+  | --- | --- |
+  | `DATABASE_URL` | Supabase **transaction pooler** URL (6543, `pgbouncer=true`) — runtime DB connection. |
+  | `DIRECT_URL` | Supabase **session pooler** URL (5432) — Prisma migrations only. |
+  | `JWT_ACCESS_SECRET` | Long random string (≥32 chars) signing access tokens. |
+  | `JWT_REFRESH_SECRET` | Long random string signing refresh tokens — must differ from access. |
+  | `CORS_ORIGINS` | Comma-separated allowed web origins (never `*`). |
+  | `STRIPE_SECRET_KEY` | Stripe server key (`sk_test_…` now, `sk_live_…` at launch). |
+  | `STRIPE_WEBHOOK_SECRET` | `whsec_…` for the Stripe webhook endpoint (blank until created — step 5). |
+  | `RESEND_API_KEY` | Resend key for OTP email delivery. |
+  | `OTP_FROM_EMAIL` | Verified sender address for OTP emails (sandbox until step 6). |
+  | `NODE_ENV` / `OTP_DEV_RETURN` | Already pinned in render.yaml (`production` / `false`). |
+  | `PORT` | Injected by Render automatically — do not set. |
+  (`STRIPE_PUBLISHABLE_KEY` / `GOOGLE_MAPS_API_KEY` are client-side
+  `EXPO_PUBLIC_*` vars in the EAS build env — the server never reads them.)
+- Then Render dashboard ▸ my-favor-api ▸ **Resume** (or "Manual Deploy ▸ latest
+  commit" — this also picks up the new render.yaml and publishes the
+  `/privacy`, `/terms`, `/support` pages the store listings need).
 - After resume, verify: `curl https://my-favor-api.onrender.com/health` →
   `{"ok":true,...}` and `/privacy` → HTML.
 

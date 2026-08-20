@@ -1,9 +1,14 @@
 // My Favor — data model. Mirrors src/types in the app.
 //
-// Provider is SQLite for zero-setup local dev. To go to production, change
-// `provider` to "postgresql" and point DATABASE_URL at your Postgres instance —
-// the models below are written to be portable (no SQLite-only features; arrays
-// are stored as JSON strings, enums are validated in app code via Zod).
+// Provider is PostgreSQL (Supabase in dev and prod; migrations in
+// prisma/migrations are Postgres-native). Two connection URLs:
+//   DATABASE_URL — what the app queries through at runtime. On Render this MUST
+//     be the Supabase TRANSACTION pooler (port 6543, ?pgbouncer=true): the
+//     direct db.<ref>.supabase.co host is IPv6-only and unreachable from Render.
+//   DIRECT_URL — used only by Prisma CLI commands (migrate deploy/dev), which
+//     need a non-pgbouncer connection: the Supabase SESSION pooler (port 5432).
+// Arrays are stored as JSON strings and enums validated in app code via Zod
+// (kept portable from the original SQLite dev setup).
 
 generator client {
   provider = "prisma-client-js"

@@ -1,13 +1,23 @@
-# Render Blueprint for the My Favor API + Postgres.
+# Render Blueprint for the My Favor API.
 # In Render: New ▸ Blueprint ▸ connect this repo. Render reads this file, creates
-# the database + web service, then prompts you for the `sync: false` secrets.
+# the web service, then prompts you for the `sync: false` values in the dashboard.
 # Docs: https://render.com/docs/blueprint-spec
-
-databases:
-  - name: my-favor-db
-    plan: free            # 30-day free DB to start; upgrade to a paid plan before launch
-    databaseName: myfavor
-    user: myfavor
+#
+# DATABASE: the app uses SUPABASE Postgres (project xhdhhanmqtrnblequgiy) — NOT a
+# Render-managed database. An earlier revision of this file provisioned a free
+# Render Postgres and wired DATABASE_URL to it via `fromDatabase`; that DB went
+# away, every boot crashed with Prisma P1001, and Render auto-suspended the
+# service. Do NOT re-add a `databases:` block here.
+#
+# IMPORTANT — connecting to Supabase from Render requires the CONNECTION POOLER
+# (the pooler hosts are IPv4-reachable; the direct host db.<ref>.supabase.co:5432
+# is IPv6-only and FAILS from Render with P1001). Copy both URLs from the
+# Supabase dashboard ▸ Connect:
+#
+#   DATABASE_URL — TRANSACTION pooler (runtime queries): port 6543, ?pgbouncer=true
+#     postgresql://postgres.xhdhhanmqtrnblequgiy:<PASSWORD>@<REGION>.pooler.supabase.com:6543/postgres?pgbouncer=true&schema=myfavor
+#   DIRECT_URL — SESSION pooler (used only by `prisma migrate deploy`): port 5432
+#     postgresql://postgres.xhdhhanmqtrnblequgiy:<PASSWORD>@<REGION>.pooler.supabase.com:5432/postgres?schema=myfavor
 
 services:
   - type: web
@@ -21,19 +31,18 @@ services:
     envVars:
       - key: NODE_ENV
         value: production
-      # Render injects PORT automatically; the app reads it.
-      - key: DATABASE_URL
-        fromDatabase:
-          name: my-favor-db
-          property: connectionString
-      # Generated once by Render, kept secret. Must differ from each other.
-      - key: JWT_ACCESS_SECRET
-        generateValue: true
-      - key: JWT_REFRESH_SECRET
-        generateValue: true
-      - key: OTP_DEV_RETURN
+      # Render injects PORT automatically; the app reads process.env.PORT.
+      - key: OTP_DEV_RETURN        # MUST be false in production (server refuses to boot otherwise)
         value: "false"
-      # Set these in the Render dashboard (kept out of git):
+      # ---- Set these in the Render dashboard (sync: false keeps them out of git) ----
+      - key: DATABASE_URL          # Supabase TRANSACTION pooler URL (port 6543, ?pgbouncer=true) — see header
+        sync: false
+      - key: DIRECT_URL            # Supabase SESSION pooler URL (port 5432) — migrations only, see header
+        sync: false
+      - key: JWT_ACCESS_SECRET     # long random string (≥32 chars); must differ from the refresh secret
+        sync: false
+      - key: JWT_REFRESH_SECRET    # long random string (≥32 chars); must differ from the access secret
+        sync: false
       - key: CORS_ORIGINS          # your app/web origins, comma-separated (never *)
         sync: false
       - key: STRIPE_SECRET_KEY     # sk_live_… (or sk_test_… while testing)
@@ -44,3 +53,6 @@ services:
         sync: false
       - key: OTP_FROM_EMAIL        # verified sender, e.g. My Favor <noreply@yourdomain.com>
         sync: false
+      # NOTE: STRIPE_PUBLISHABLE_KEY and GOOGLE_MAPS_API_KEY are CLIENT-side vars
+      # (EXPO_PUBLIC_* in the EAS build environment) — the server never reads
+      # them, so they are intentionally not declared here.

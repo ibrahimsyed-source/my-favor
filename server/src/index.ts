@@ -5,7 +5,9 @@ import { reconcileUnsettledFavors } from './lib/reconcile';
 
 const app = createApp();
 
-const server = app.listen(config.port, () => {
+// Bind 0.0.0.0 explicitly: Render (and Docker generally) routes traffic to the
+// container's IPv4 interface, and PORT comes from the environment (config.port).
+const server = app.listen(config.port, '0.0.0.0', () => {
   // eslint-disable-next-line no-console
   console.log(`🚀 My Favor API listening on http://localhost:${config.port} (${config.nodeEnv})`);
   // Settlement reconciliation: scan once at startup (catches anything left stuck
