@@ -12,12 +12,17 @@
 # IMPORTANT — connecting to Supabase from Render requires the CONNECTION POOLER
 # (the pooler hosts are IPv4-reachable; the direct host db.<ref>.supabase.co:5432
 # is IPv6-only and FAILS from Render with P1001). Copy both URLs from the
-# Supabase dashboard ▸ Connect:
+# Supabase dashboard ▸ Connect. No ?schema param — the app lives in `public`
+# (baselined 2026-08-19; migration 20260819000000_init):
 #
 #   DATABASE_URL — TRANSACTION pooler (runtime queries): port 6543, ?pgbouncer=true
-#     postgresql://postgres.xhdhhanmqtrnblequgiy:<PASSWORD>@<REGION>.pooler.supabase.com:6543/postgres?pgbouncer=true&schema=myfavor
+#     postgresql://postgres.xhdhhanmqtrnblequgiy:<PASSWORD>@aws-0-us-east-1.pooler.supabase.com:6543/postgres?pgbouncer=true
 #   DIRECT_URL — SESSION pooler (used only by `prisma migrate deploy`): port 5432
-#     postgresql://postgres.xhdhhanmqtrnblequgiy:<PASSWORD>@<REGION>.pooler.supabase.com:5432/postgres?schema=myfavor
+#     postgresql://postgres.xhdhhanmqtrnblequgiy:<PASSWORD>@aws-0-us-east-1.pooler.supabase.com:5432/postgres
+#
+# NOTE: the `public` schema of this Supabase project ALSO holds tables belonging
+# to another app (agent_status, conversations, memory, tasks, …). They coexist
+# fine with the My Favor tables — never wipe/reset the public schema wholesale.
 
 services:
   - type: web

@@ -89,13 +89,27 @@ under **"Ibrahim must do manually"** — each item needs a human account action
   point at **Supabase**; the Dockerfile now runs `prisma migrate deploy` and
   starts the HTTP server even if migrations fail, so a DB hiccup can never
   crash-loop the service into suspension again.
-- **Supabase URLs — pooler required**: Render can't reach Supabase's direct
-  host (`db.xhdhhanmqtrnblequgiy.supabase.co:5432` is IPv6-only). Copy both
-  pooler URLs from Supabase dashboard ▸ Connect:
+- **Supabase URLs — pooler required, `public` schema**: Render can't reach
+  Supabase's direct host (`db.xhdhhanmqtrnblequgiy.supabase.co:5432` is
+  IPv6-only). Copy both pooler URLs from Supabase dashboard ▸ Connect — **no
+  `?schema` param** (the app lives in `public`):
   - `DATABASE_URL` = **transaction pooler**: port **6543** with
-    `?pgbouncer=true&schema=myfavor` (runtime queries).
-  - `DIRECT_URL` = **session pooler**: port **5432** with `?schema=myfavor`
+    `?pgbouncer=true` (runtime queries).
+  - `DIRECT_URL` = **session pooler**: port **5432**
     (used only by `prisma migrate deploy` at boot).
+- **Migration state (fixed 2026-08-19, post-launch)**: first live boot failed
+  `migrate deploy` with **P3005** and runtime threw "table public.Favor does
+  not exist" — an earlier `db push` had built the tables in a stray `myfavor`
+  schema while the runtime read `public`, and the committed migrations were
+  SQLite-era files (`DATETIME` columns) that could never apply to Postgres.
+  Fixed: regenerated ONE Postgres-native migration (`20260819000000_init`)
+  from schema.prisma, executed it into `public`, baselined it with
+  `prisma migrate resolve --applied`, dropped the stray `myfavor` schema, and
+  re-seeded (demo + reviewer accounts). `prisma migrate deploy` now exits 0
+  ("No pending migrations"); the 31-test suite passes against `public`.
+  ⚠️ The Supabase `public` schema ALSO holds another app's tables
+  (agent_status, conversations, memory, tasks, …) — they coexist with the
+  My Favor tables; **never wipe or reset `public` wholesale**.
 - **Env vars to set on the Render service** (dashboard ▸ my-favor-api ▸
   Environment; templates with real values in gitignored `server/.env.production`):
   | Var | What it is |
