@@ -18,6 +18,11 @@ expo-env.d.ts
 *.key
 *.mobileprovision
 
+# Push-notification credentials — referenced by app.json / EAS, never committed
+google-services.json
+GoogleService-Info.plist
+*-service-account*.json
+
 # Metro
 .metro-health-check*
 

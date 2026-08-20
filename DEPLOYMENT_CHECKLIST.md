@@ -1,140 +1,162 @@
 # My Favor — Deployment Checklist
 
-Last updated: 2026-08-14
+Last updated: 2026-08-19 (store-submission pass)
 
-This file tracks what has been wired/verified vs. what **Ibrahim must still do
-manually** (things that require a human, an account action, or a decision).
-
----
-
-## ✅ Done (wired & verified in this pass)
-
-### Credentials wired into env files (all gitignored)
-- `server/.env` — dev-friendly local env with **all** real credentials
-  (Supabase Postgres, Stripe test keys, Resend, Google Maps, JWT secrets).
-- `server/.env.production` — production env (`NODE_ENV=production`,
-  `OTP_DEV_RETURN=false`, real credentials). Copy these into your host
-  (Render) dashboard for the live deploy.
-- `.env` + `.env.local` (app root) — `EXPO_PUBLIC_GOOGLE_MAPS_KEY`,
-  `EXPO_PUBLIC_GOOGLE_MAPS_API_KEY`, `EXPO_PUBLIC_STRIPE_PUBLISHABLE_KEY`,
-  `EXPO_PUBLIC_API_URL`.
-- `.gitignore` (root + server) hardened to exclude **all** `.env*` files
-  (`.env`, `.env.*`), keeping `.env.example` tracked. Verified: no `.env`
-  with secrets is tracked by git.
-
-### Database migration to Supabase (Postgres)
-- Prisma datasource switched from `sqlite` → `postgresql` (+ `directUrl`).
-- `prisma migrate deploy` failed with **P3005** (the Supabase DB is **not
-  empty** — it already hosts a *different* app in the `public` schema:
-  `agent_status`, `conversations`, `memory`, `tasks`, `embeddings`, …).
-- To avoid clobbering that other app, My Favor was migrated into a **dedicated
-  `myfavor` Postgres schema** (`?schema=myfavor` on the connection URL) via
-  `prisma db push`. **The other app's `public` data was never touched.**
-- Verified: all **13** My Favor tables exist in the `myfavor` schema
-  (`User`, `Favor`, `FavorEvent`, `Message`, `Notification`, `OtpCode`,
-  `PaymentMethod`, `ProcessedWebhookEvent`, `RefreshToken`, `Report`,
-  `Thread`, `Transaction`, `Block`).
-
-### Integrations verified
-- **Resend** — `server/src/lib/otp.ts` sends OTP via Resend REST using
-  `RESEND_API_KEY` from env (`config.email.resendApiKey`). Enabled when the key
-  is set. ✅
-- **Stripe (server)** — `server/src/lib/stripe.ts` builds the client from
-  `STRIPE_SECRET_KEY` (`config.stripe.secretKey`). Enabled = key present. ✅
-- **Stripe (app)** — the app uses Stripe-**hosted Checkout** (no native Stripe
-  SDK), so it does not currently consume a publishable key. The key is provided
-  in the app env (`EXPO_PUBLIC_STRIPE_PUBLISHABLE_KEY`) for parity/future use.
-- **Google Maps** — app reads `EXPO_PUBLIC_GOOGLE_MAPS_KEY` (static maps +
-  geocoding). Key set in app env; also added to `app.json` for native maps
-  (`ios.config.googleMapsApiKey`, `android.config.googleMaps.apiKey`).
-
-### app.json (App Store prep)
-- `name: "My Favor"`, `slug: "my-favor"`, `version: "1.0.0"`.
-- `ios.bundleIdentifier: "com.myfavrapp.app"`, `ios.supportsTablet: true`.
-- `android.package: "com.myfavrapp.app"`.
-- `description: "A peer-to-peer favor exchange app"`.
-- Google Maps key added to `ios.config.googleMapsApiKey` and
-  `android.config.googleMaps.apiKey`.
-
-### Build / test verification
-- `server` `npm test` → **30/30 pass** (full E2E lifecycle + security controls,
-  run against the live Postgres `myfavor` schema). Test rows were **deleted**
-  afterward — the schema is empty and launch-clean.
-- `server` `npx tsc --noEmit` → **clean**.
-- `app` `npx tsc --noEmit` → **clean**.
-- Production config boot check (`NODE_ENV=production` + `.env.production`) →
-  boots clean: Stripe enabled, Resend enabled, `OTP_DEV_RETURN=false`, DB
-  reachable.
+Everything that can be done from code/config is DONE. What remains is listed
+under **"Ibrahim must do manually"** — each item needs a human account action
+(interactive login, bank info, store-portal uploads).
 
 ---
 
-## ⚠️ Ibrahim must do manually (hard blockers / human-only actions)
+## ✅ Done (verified this pass)
 
-### 1. Stripe — go live
-- Current keys are **test mode** (`sk_test_…` / `pk_test_…`). No real money moves.
-- In the Stripe dashboard: complete business/identity + **bank account** info,
-  **enable Connect (Express)**, activate the account, then swap `STRIPE_SECRET_KEY`
-  / `STRIPE_PUBLISHABLE_KEY` to the **live** `sk_live_…` / `pk_live_…` keys.
-- Create a webhook endpoint → `https://<your-api>/api/stripe/webhook`, and set
-  **`STRIPE_WEBHOOK_SECRET`** (`whsec_…`). It is currently **blank** — webhooks
-  (payment/payout confirmations, disputes) will be rejected until it is set.
+### Builds (EAS)
+- Logged in to EAS CLI as `ibrahimsyed@myfavrapp.com` (owner of
+  `my-favor-app-1`). Project re-linked: slug `my-favor-1`, projectId
+  `4953426c-879b-4b41-b32b-ae626a2a6a46`. (The slug is Expo-internal; the
+  store-facing bundle id / package is `com.myfavrapp.app` on both platforms.)
+- `eas.json` production profile: `autoIncrement`, EAS **production
+  environment** (injects `EXPO_PUBLIC_GOOGLE_MAPS_KEY` from EAS env vars, kept
+  out of git), `EXPO_PUBLIC_API_URL=https://my-favor-api.onrender.com`,
+  Android **app-bundle** (AAB, what Play requires), iOS `m-medium`.
+- **Android production build**: launched from this machine — v1.0.0,
+  versionCode 2, AAB, `com.myfavrapp.app`. Check status / grab the artifact:
+  `npx eas-cli build:list --limit 1` (or the EAS dashboard). The Android
+  keystore lives on EAS servers (do NOT regenerate; back it up via
+  `npx eas-cli credentials -p android` ▸ download).
+- **iOS production build**: attempted `--non-interactive` → blocked exactly
+  here: *"Distribution Certificate is not validated for non-interactive
+  builds"*. One interactive run is required (see manual step 1). Everything
+  else (bundle id, entitlements, profiles config) is ready.
 
-### 2. Resend — verified sending domain
-- `OTP_FROM_EMAIL` is still the sandbox `onboarding@resend.dev`, which **only
-  delivers to the Resend account owner**. Real users will NOT receive codes.
-- Verify a domain in Resend, then set `OTP_FROM_EMAIL="My Favor <noreply@yourdomain>"`.
-- After that, set **`REQUIRE_EMAIL_PROVIDER=true`** in production to hard-enforce
-  deliverability.
+### Store listing assets (paste-ready)
+- `store-metadata/` — one file per App Store Connect / Play Console field:
+  description, subtitle, keywords, promo text, short/full description, release
+  notes, review notes, plus questionnaire answers (age rating, App Privacy
+  labels, Play data safety, IARC content rating) and URL tables.
+  All within store character limits — verify anytime:
+  `node scripts/check-store-metadata.js`.
+- Legal pages are served by the API itself (`/privacy`, `/terms`, `/support`
+  in `server/src/routes/legal.routes.ts`) — live on the next Render deploy;
+  these are the URLs referenced in the metadata.
+- App Review demo account seeded by `server/prisma/seed.ts`:
+  `reviewer@myfavor.app`, pre-verified (password = `REVIEWER_PASSWORD` env at
+  seed time, else the demo default in seed.ts — set a strong one for prod).
 
-### 3. Rotate the committed-in-history secrets
-- These credentials were pasted into the task and now live in local `.env` files.
-  Before/soon after launch, **rotate** the JWT secrets, Supabase DB password,
-  Stripe keys, Resend key, and Google Maps key, and set the real values only in
-  the host dashboard (never in the repo).
+### Push notifications
+- Client + server fully wired (Expo push service — free, no API key):
+  device registers `ExponentPushToken` → `PATCH /api/profile/push-token`;
+  server pushes on accept/arrival/completion (`server/src/lib/push.ts`) and
+  clears dead tokens (DeviceNotRegistered).
+- `expo-notifications` plugin configured in app.json (iOS push entitlement is
+  added by the plugin at prebuild).
+- `app.config.js` auto-wires `android.googleServicesFile` from either the
+  `GOOGLE_SERVICES_JSON` EAS *file* env var (recommended — the file itself is
+  gitignored) or a local `./google-services.json`. No code change needed when
+  the Firebase file arrives (manual step 4).
 
-### 4. Google Maps — restrict the key
-- The Maps key ships in the app bundle. **Restrict** it in Google Cloud (API
-  restriction = Maps Static + Geocoding; iOS bundle id / Android SHA / HTTP
-  referrer restrictions) to prevent abuse.
+### Stripe (live-mode readiness — wiring verified)
+- Server: `STRIPE_SECRET_KEY` + `STRIPE_WEBHOOK_SECRET` read from env
+  (`server/src/config.ts` ▸ `config.stripe`), client built in
+  `server/src/lib/stripe.ts`, gated by `stripeEnabled()` with a mock-ledger
+  fallback. **Going live is a pure env swap** — no code change.
+- App: uses Stripe-hosted Checkout (no native SDK);
+  `EXPO_PUBLIC_STRIPE_PUBLISHABLE_KEY` is in the app env for parity.
+- Test keys (`sk_test_…`/`pk_test_…`) deliberately left in place per plan.
 
-### 5. EAS / bundle identifier change (build impact)
-- `slug` changed `my-favor-1` → `my-favor` and bundle id
-  `com.myfavor.app` → `com.myfavrapp.app` (as requested).
-- ⚠️ The existing EAS `projectId` (`4953426c-…`) and `owner` (`my-favor-app-1`)
-  are tied to the old slug. On the next `eas build` you may need to **re-link or
-  create the EAS project** for the new slug, and register the new bundle id /
-  Android package. Verify `eas.json` and the EAS dashboard before building.
+### Verification (all green)
+- App `npx tsc --noEmit` → clean.
+- Server `npx tsc --noEmit` → clean.
+- Server `npm test` → **30/30 pass**. (Test harness now pins mock-Stripe +
+  dev-OTP env in `tests/_setup.ts` so the suite is hermetic regardless of the
+  real credentials in `server/.env`.)
 
-### 6. Apple / Google submission
-- Apple Developer Program ($99/yr). Fill `eas.json ▸ submit.production.ios`
-  (`appleId`, `ascAppId`, `appleTeamId`).
-- Google Play Console account + service-account json for `eas submit` (Android).
+---
 
-### 7. Host env + CORS
-- Set all `server/.env.production` values in the Render dashboard.
-- `CORS_ORIGINS` is set to the API origin as a placeholder — set it to your real
-  **web** origin(s) (native apps don't send Origin, so this only affects web).
-- Consider using the Supabase **connection pooler** URL for `DATABASE_URL` (port
-  6543, `?pgbouncer=true`) at runtime and keep the direct `:5432` URL as
-  `DIRECT_URL` for migrations, if you expect high concurrency.
+## ⚠️ Ibrahim must do manually
 
-### 8. Note on the shared Supabase project
-- This Supabase instance also hosts an unrelated app in the `public` schema.
-  My Favor is isolated in the `myfavor` schema and does not touch it, but for a
-  clean production posture consider a **dedicated Supabase project** for My Favor.
+### 1. iOS build — one interactive EAS run (needs your Apple ID)
+```bash
+npx eas-cli build --platform ios --profile production
+```
+- Sign in with your Apple Developer Apple ID when prompted. Let EAS register
+  the bundle id (`com.myfavrapp.app`), create the distribution certificate +
+  provisioning profile, and **answer YES when it offers to set up a Push
+  Notifications key (APNs)** — that's the entire iOS push-cert step.
+- After this one run, future builds work non-interactively. (Optional, for
+  CI: `npx eas-cli credentials` ▸ iOS ▸ App Store Connect API Key.)
+
+### 2. App Store Connect — create the app + submit
+- appstoreconnect.apple.com ▸ Apps ▸ New App → bundle id `com.myfavrapp.app`.
+- Paste each file from `store-metadata/apple/` into its field; answer the
+  age-rating + App Privacy questionnaires from `age_rating.md` /
+  `app_privacy.md`; upload screenshots (6.7" + 6.5").
+- Fill `eas.json ▸ submit.production.ios`: `appleId` (your Apple ID email),
+  `ascAppId` (App Store Connect ▸ App Information ▸ Apple ID — numeric),
+  `appleTeamId` (developer.apple.com ▸ Membership). Then:
+  `npx eas-cli submit --platform ios --latest`.
+
+### 3. Google Play Console — create the app + first upload
+- play.google.com/console ($25 one-time) ▸ Create app → paste
+  `store-metadata/google/` files; data-safety + content-rating answers are in
+  `data_safety.md` / `content_rating.md`; upload the AAB from the finished
+  Android build (**the very first AAB must be uploaded by hand** in the
+  console; `eas submit` works from then on).
+- For `eas submit -p android`: create a service-account JSON (Play Console ▸
+  API access), save it OUTSIDE the repo (the `*-service-account*.json`
+  pattern is gitignored regardless), and point
+  `eas.json ▸ submit.production.android.serviceAccountKeyPath` at it.
+- Play also needs: 512×512 icon, 1024×500 feature graphic, phone screenshots.
+
+### 4. Android push (FCM) — Firebase project
+- console.firebase.google.com ▸ create project ▸ add Android app
+  `com.myfavrapp.app` ▸ download `google-services.json` to the repo root.
+- Hand it to EAS builds (file is gitignored, so use the file env var):
+  ```bash
+  npx eas-cli env:create --scope project --name GOOGLE_SERVICES_JSON \
+    --type file --value ./google-services.json --environment production
+  ```
+- Upload the FCM **V1 service-account key** so Expo's push service can send:
+  Firebase console ▸ Project settings ▸ Service accounts ▸ generate key, then
+  `npx eas-cli credentials -p android` ▸ Google Service Account ▸ FCM V1.
+- Rebuild Android once after this so the AAB embeds the Firebase config.
+
+### 5. Stripe — go live (needs your bank/business info)
+- Dashboard: finish business/identity + bank info, enable **Connect
+  (Express)**, activate live mode.
+- Swap env on Render: `STRIPE_SECRET_KEY=sk_live_…`; create a live webhook →
+  `https://my-favor-api.onrender.com/api/stripe/webhook`, set
+  `STRIPE_WEBHOOK_SECRET=whsec_…` (currently blank — webhooks are rejected
+  until set). App side: `EXPO_PUBLIC_STRIPE_PUBLISHABLE_KEY=pk_live_…`.
+
+### 6. Resend — verified sending domain
+- Verify your domain in Resend; set
+  `OTP_FROM_EMAIL="My Favor <noreply@yourdomain>"`, then
+  `REQUIRE_EMAIL_PROVIDER=true` on Render. (Sandbox sender only delivers to
+  you — real signups won't get codes until this is done.)
+
+### 7. Security hygiene before launch
+- Rotate the secrets that passed through chat/git history (JWT secrets,
+  Supabase password, Stripe, Resend, Maps) — set new values only in Render/EAS
+  dashboards.
+- Restrict the Google Maps key (API + app restrictions) in Google Cloud.
+- Set a strong `REVIEWER_PASSWORD` and re-run the seed for the demo account.
+- `support@myfavor.app` must become a real monitored inbox (or change it in
+  `server/src/routes/legal.routes.ts` + both listings).
+
+### 8. Screenshots & graphics
+- iPhone 6.7"/6.5" screenshots (4–6), Android phone screenshots, 512×512
+  icon, 1024×500 feature graphic. Shot list: bottom of `APP_STORE_LISTING.md`.
 
 ---
 
 ## Quick commands
 
 ```bash
-# Re-run the production DB sync (from server/):
-npx prisma db push               # syncs myfavor schema (uses server/.env)
-
-# Verify server:
-npm test                         # 30 E2E tests
-npx tsc --noEmit                 # typecheck
-
-# Verify app (from repo root):
-npx tsc --noEmit
+npx eas-cli build:list --limit 3            # build status / artifact URLs
+npx eas-cli build -p ios --profile production      # (interactive, step 1)
+npx eas-cli build -p android --profile production  # rebuild Android
+node scripts/check-store-metadata.js        # metadata length check
+cd server && npm test && npx tsc --noEmit   # server suite (30 tests)
+npx tsc --noEmit                            # app typecheck (repo root)
 ```

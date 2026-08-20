@@ -49,10 +49,16 @@ when building the app (`EXPO_PUBLIC_...`, e.g. in EAS build env).
 
 ---
 
-## Not wired yet (optional for v1, needs a native build)
-- **Push notifications** — in-app notifications already work (polling). Real device
-  push needs `expo-notifications` + APNs/FCM creds + a dev build; deferred since
-  Apple doesn't require it for launch. See `NEXT_STEPS.md`.
+## Push notifications (wired; needs per-platform credentials on the build)
+- **Wired end-to-end** via the Expo push service (free, no API key): the device
+  registers a push token on login and the server pushes on favor accept /
+  arrival / completion. What each platform still needs:
+  - **iOS (APNs):** created automatically during the first interactive
+    `eas build -p ios` (answer YES to the push-key prompt). Nothing in-repo.
+  - **Android (FCM):** Firebase project → `google-services.json` (auto-wired by
+    `app.config.js`, delivered to builds via the `GOOGLE_SERVICES_JSON` EAS file
+    env var) + FCM V1 service-account key uploaded with
+    `eas credentials -p android`. See `DEPLOYMENT_CHECKLIST.md` step 4.
 - **Live Pal tracking** — **built** with `expo-location` (foreground-only); the
   member sees the Pal's real distance + position. Needs a **native dev build** to
   run (not Expo Go web). A pannable `react-native-maps` view is still optional.
