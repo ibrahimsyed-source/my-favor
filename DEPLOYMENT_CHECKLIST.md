@@ -19,10 +19,11 @@ under **"Ibrahim must do manually"** — each item needs a human account action
   environment** (injects `EXPO_PUBLIC_GOOGLE_MAPS_KEY` from EAS env vars, kept
   out of git), `EXPO_PUBLIC_API_URL=https://my-favor-api.onrender.com`,
   Android **app-bundle** (AAB, what Play requires), iOS `m-medium`.
-- **Android production build**: launched from this machine — v1.0.0,
-  versionCode 2, AAB, `com.myfavrapp.app`. Check status / grab the artifact:
-  `npx eas-cli build:list --limit 1` (or the EAS dashboard). The Android
-  keystore lives on EAS servers (do NOT regenerate; back it up via
+- **Android production build: ✅ FINISHED** — v1.0.0, versionCode 2, AAB,
+  `com.myfavrapp.app`, signed with the EAS-managed keystore. Artifact (also on
+  the EAS dashboard; this is the file to upload to Play Console):
+  https://expo.dev/artifacts/eas/LmAgva3sXR6Dw7hFlsH3MocCc9D3XzIk8A2GpkiD4eI.aab
+  The keystore lives on EAS servers (do NOT regenerate; back it up via
   `npx eas-cli credentials -p android` ▸ download).
 - **iOS production build**: attempted `--non-interactive` → blocked exactly
   here: *"Distribution Certificate is not validated for non-interactive
