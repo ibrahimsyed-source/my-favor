@@ -2,8 +2,8 @@
 
 Each file maps 1:1 to a field in App Store Connect / Google Play Console.
 Character limits are enforced by the stores; every file here has been verified
-to fit. The narrative doc (privacy labels, age rating answers, review
-walkthrough) lives in `../APP_STORE_LISTING.md`.
+to fit — re-check anytime with `node scripts/check-store-metadata.js`. The
+narrative doc lives in `../APP_STORE_LISTING.md`.
 
 ## Apple — App Store Connect (`apple/`)
 
@@ -18,9 +18,12 @@ walkthrough) lives in `../APP_STORE_LISTING.md`.
 | `review_notes.txt` | App Review Information ▸ Notes | 4000 |
 
 - **Primary category:** Lifestyle · **Secondary:** Business
-- **Age rating:** answer the questionnaire per `APP_STORE_LISTING.md` (expect 17+)
+- **Age rating:** answers in `apple/age_rating.md` (expect 17+)
+- **App Privacy labels:** answers in `apple/app_privacy.md`
+- **URLs (privacy/support/marketing):** `apple/urls.md`
 - **Demo account:** required (app is login-gated) — seed a pre-verified
-  reviewer account; see `APP_STORE_LISTING.md ▸ App Review information`.
+  reviewer account; see `apple/review_notes.txt` and
+  `APP_STORE_LISTING.md ▸ App Review information`.
 
 ## Google — Play Console (`google/`)
 
@@ -29,11 +32,13 @@ walkthrough) lives in `../APP_STORE_LISTING.md`.
 | `title.txt` | Main store listing ▸ App name | 30 |
 | `short_description.txt` | Main store listing ▸ Short description | 80 |
 | `full_description.txt` | Main store listing ▸ Full description | 4000 |
+| `release_notes.txt` | Release ▸ Release notes | 500 |
 
 - **Category:** Lifestyle · **Tags:** errands, local services
-- **Content rating (IARC):** declare user interaction + user-generated content
-  + shares location → expect Teen/Mature.
-- **Data safety form:** use the table in `APP_STORE_LISTING.md ▸ App Privacy`.
+- **Content rating (IARC):** answers in `google/content_rating.md`
+  (expect Teen/Mature).
+- **Data safety form:** answers in `google/data_safety.md`.
+- **URLs + required graphics:** `google/urls.md`.
 
 ## URLs (live once the server redeploys — served by the API)
 
