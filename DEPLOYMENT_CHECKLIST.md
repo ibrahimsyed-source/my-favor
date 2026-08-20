@@ -136,7 +136,14 @@ npx eas-cli build --platform ios --profile production
   `REQUIRE_EMAIL_PROVIDER=true` on Render. (Sandbox sender only delivers to
   you — real signups won't get codes until this is done.)
 
-### 7. Security hygiene before launch
+### 7. Legal entity placeholder (blocks review)
+- The Terms/Privacy copy still contains the bracketed `LEGAL_ENTITY`
+  placeholder. Replace it in **both** `src/screens/legal.tsx` (in-app) and
+  `server/src/routes/legal.routes.ts` (hosted pages) with the registered
+  company entity, address, and governing-law jurisdiction — counsel sign-off —
+  then rebuild the app and redeploy the server.
+
+### 8. Security hygiene before launch
 - Rotate the secrets that passed through chat/git history (JWT secrets,
   Supabase password, Stripe, Resend, Maps) — set new values only in Render/EAS
   dashboards.
@@ -145,7 +152,7 @@ npx eas-cli build --platform ios --profile production
 - `support@myfavor.app` must become a real monitored inbox (or change it in
   `server/src/routes/legal.routes.ts` + both listings).
 
-### 8. Screenshots & graphics
+### 9. Screenshots & graphics
 - iPhone 6.7"/6.5" screenshots (4–6), Android phone screenshots, 512×512
   icon, 1024×500 feature graphic. Shot list: bottom of `APP_STORE_LISTING.md`.
 
