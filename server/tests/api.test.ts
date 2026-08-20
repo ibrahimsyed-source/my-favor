@@ -88,6 +88,20 @@ test('rejects unauthenticated access', async () => {
   assert.equal(res.status, 401);
 });
 
+test('public legal pages serve HTML (store-required URLs)', async () => {
+  for (const [path, marker] of [
+    ['/privacy', 'Privacy Policy'],
+    ['/terms', 'Terms and Conditions'],
+    ['/support', 'support@myfavor.app'],
+  ] as const) {
+    const res = await fetch(baseUrl + path);
+    assert.equal(res.status, 200, `${path} should be public`);
+    assert.match(res.headers.get('content-type') ?? '', /text\/html/, `${path} should be HTML`);
+    const body = await res.text();
+    assert.ok(body.includes(marker), `${path} should contain "${marker}"`);
+  }
+});
+
 test('signup → never leaks password hash', async () => {
   const member = await makeUser('member');
   const me = await api('/api/profile/me', { token: member.token });

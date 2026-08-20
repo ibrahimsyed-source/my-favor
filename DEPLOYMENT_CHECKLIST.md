@@ -67,9 +67,10 @@ under **"Ibrahim must do manually"** — each item needs a human account action
 ### Verification (all green)
 - App `npx tsc --noEmit` → clean.
 - Server `npx tsc --noEmit` → clean.
-- Server `npm test` → **30/30 pass**. (Test harness now pins mock-Stripe +
-  dev-OTP env in `tests/_setup.ts` so the suite is hermetic regardless of the
-  real credentials in `server/.env`.)
+- Server `npm test` → **31/31 pass** (includes a new test that the public
+  `/privacy`, `/terms`, `/support` pages serve HTML). Test harness pins
+  mock-Stripe + dev-OTP env in `tests/_setup.ts` so the suite is hermetic
+  regardless of the real credentials in `server/.env`.
 
 ---
 
@@ -157,6 +158,6 @@ npx eas-cli build:list --limit 3            # build status / artifact URLs
 npx eas-cli build -p ios --profile production      # (interactive, step 1)
 npx eas-cli build -p android --profile production  # rebuild Android
 node scripts/check-store-metadata.js        # metadata length check
-cd server && npm test && npx tsc --noEmit   # server suite (30 tests)
+cd server && npm test && npx tsc --noEmit   # server suite (31 tests)
 npx tsc --noEmit                            # app typecheck (repo root)
 ```
