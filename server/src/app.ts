@@ -14,6 +14,7 @@ import { messageRouter } from './routes/message.routes';
 import { notificationRouter } from './routes/notification.routes';
 import { moderationRouter } from './routes/moderation.routes';
 import { stripeRouter } from './routes/stripe.routes';
+import { legalRouter } from './routes/legal.routes';
 
 export function createApp() {
   const app = express();
@@ -94,6 +95,11 @@ export function createApp() {
   app.get('/api/config', (_req, res) => {
     res.json({ maintenance: config.app.maintenance, minVersion: config.app.minVersion });
   });
+
+  // Public legal pages (/privacy, /terms, /support) — required store-listing
+  // URLs (App Store 5.1.1 / Play). Static HTML, mounted before the rate
+  // limiter so a store reviewer's fetch is never throttled.
+  app.use(legalRouter);
 
   // Global rate limit across the API (production only; see rateLimit.ts).
   app.use(globalLimiter);

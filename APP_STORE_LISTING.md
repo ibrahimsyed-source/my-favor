@@ -1,5 +1,10 @@
 # App Store / Play listing — ready-to-paste content
 
+> **Paste-ready field files live in [`store-metadata/`](store-metadata/README.md)**
+> (one file per ASC/Play field, all verified against the stores' character
+> limits). This doc is the narrative reference: privacy labels, age rating,
+> review notes, URLs.
+
 Everything App Review and the store listing need, drafted from the actual app.
 Fill the [bracketed] bits with your real details. Keep the privacy answers
 consistent with `src/screens/legal.tsx` (the in-app policy) and your hosted policy.
@@ -103,11 +108,16 @@ All data is **linked to the user's identity**, used for **App Functionality**
 
 ---
 
-## Required URLs (host these)
-- **Privacy Policy:** https://[yourdomain]/privacy  (text in `src/screens/legal.tsx`)
-- **Terms of Service:** https://[yourdomain]/terms
-- **Support URL:** https://[yourdomain]/support  (or a support email)
-- **Marketing URL (optional):** https://[yourdomain]
+## Required URLs (now served by the API — live after the next Render deploy)
+- **Privacy Policy:** https://my-favor-api.onrender.com/privacy
+- **Terms of Service:** https://my-favor-api.onrender.com/terms
+- **Support URL:** https://my-favor-api.onrender.com/support
+- **Marketing URL (optional):** https://myfavrapp.com (if/when the site exists)
+
+The pages are static HTML rendered by `server/src/routes/legal.routes.ts` with
+the SAME copy as the in-app legal screen (`src/screens/legal.tsx`). Before
+submission, replace the `LEGAL_ENTITY` placeholder in **both** files with the
+registered company entity + governing-law jurisdiction (counsel sign-off).
 
 ## Screenshots (capture from the running app at device sizes)
 Required iPhone sizes: **6.7"** and **6.5"** (1290×2796 / 1242×2688). Suggested 4–6:

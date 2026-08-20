@@ -33,6 +33,21 @@ async function main() {
     },
   });
 
+  // Dedicated App Review demo account (referenced in store-metadata/apple/
+  // review_notes.txt). Pre-verified so the reviewer logs in with just
+  // email + password — no OTP. Change the password before submission with:
+  //   REVIEWER_PASSWORD=<strong password> npx tsx prisma/seed.ts
+  const reviewerPassword = process.env.REVIEWER_PASSWORD || DEMO_PASSWORD;
+  const reviewer = await prisma.user.upsert({
+    where: { email: 'reviewer@myfavor.app' },
+    update: { passwordHash: await bcrypt.hash(reviewerPassword, 12), verified: true },
+    create: {
+      firstName: 'App', lastName: 'Reviewer', email: 'reviewer@myfavor.app', phone: '+15550000009',
+      passwordHash: await bcrypt.hash(reviewerPassword, 12), role: 'member', verified: true,
+      city: 'Austin', state: 'TX',
+    },
+  });
+
   const pal2 = await prisma.user.upsert({
     where: { email: 'sam@example.com' },
     update: { palVerified: true, palVerifiedAt: new Date(), palVetStatus: 'approved' },
@@ -98,7 +113,7 @@ async function main() {
   }
 
   // eslint-disable-next-line no-console
-  console.log('Seeded:', { member: member.email, pals: [pal1.email, pal2.email], demoPassword: DEMO_PASSWORD });
+  console.log('Seeded:', { member: member.email, pals: [pal1.email, pal2.email], reviewer: reviewer.email, demoPassword: DEMO_PASSWORD });
 }
 
 main()

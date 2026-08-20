@@ -1,0 +1,11 @@
+Log in with the demo account below (email + password; no verification code needed — the account is pre-verified).
+
+Home shows the map + "Request a Favor". To see the two-sided flow, use the "Switch to be a Favor Pal" toggle on Home, then "Browse all open favors" to see and accept requests.
+
+Payments: favors are real-world services performed off-app (errands, pickups, deliveries), billed via Stripe per Guideline 3.1.3(e) / 3.1.5 — not digital content, so Apple in-app purchase does not apply. Card entry happens on Stripe's hosted page; we never store card numbers (brand + last4 only).
+
+Demo account (pre-verified, seeded for review):
+  Email:    reviewer@myfavor.app
+  Password: [SET WHEN SEEDING — see server/prisma/seed.ts]
+
+User-generated content: favor posts, profiles, and messaging all have report + block tools (long-press a message / profile ▸ Report or Block), and accounts can be deleted in-app (Settings ▸ Delete Account).
