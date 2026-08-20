@@ -76,6 +76,17 @@ under **"Ibrahim must do manually"** — each item needs a human account action
 
 ## ⚠️ Ibrahim must do manually
 
+### 0. FIRST: resume the Render API service (currently SUSPENDED)
+- Checked 2026-08-19: `https://my-favor-api.onrender.com` returns **503
+  "This service has been suspended by its owner."** Both production binaries
+  bake this URL in (`EXPO_PUBLIC_API_URL`) — the app is dead until the
+  service is resumed.
+- Render dashboard ▸ my-favor-api ▸ Resume (or upgrade the plan if it was
+  suspended for billing). Redeploying from the latest commit also publishes
+  the new `/privacy`, `/terms`, `/support` pages the store listings need.
+- After resume, verify: `curl https://my-favor-api.onrender.com/health` →
+  `{"ok":true,...}` and `/privacy` → HTML.
+
 ### 1. iOS build — one interactive EAS run (needs your Apple ID)
 ```bash
 npx eas-cli build --platform ios --profile production
