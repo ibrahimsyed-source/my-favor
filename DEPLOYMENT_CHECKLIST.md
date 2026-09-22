@@ -14,13 +14,13 @@ under **"Ibrahim must do manually"** — each item needs a human account action
 - Logged in to EAS CLI as `ibrahimsyed@myfavrapp.com` (owner of
   `my-favor-app-1`). Project re-linked: slug `my-favor-1`, projectId
   `4953426c-879b-4b41-b32b-ae626a2a6a46`. (The slug is Expo-internal; the
-  store-facing bundle id / package is `com.myfavrapp.app` on both platforms.)
+  store-facing bundle id / package is `com.myfavorapp.app` on both platforms.)
 - `eas.json` production profile: `autoIncrement`, EAS **production
   environment** (injects `EXPO_PUBLIC_GOOGLE_MAPS_KEY` from EAS env vars, kept
   out of git), `EXPO_PUBLIC_API_URL=https://my-favor-api.onrender.com`,
   Android **app-bundle** (AAB, what Play requires), iOS `m-medium`.
 - **Android production build: ✅ FINISHED** — v1.0.0, versionCode 2, AAB,
-  `com.myfavrapp.app`, signed with the EAS-managed keystore. Artifact (also on
+  `com.myfavorapp.app`, signed with the EAS-managed keystore. Artifact (also on
   the EAS dashboard; this is the file to upload to Play Console):
   https://expo.dev/artifacts/eas/LmAgva3sXR6Dw7hFlsH3MocCc9D3XzIk8A2GpkiD4eI.aab
   The keystore lives on EAS servers (do NOT regenerate; back it up via
@@ -138,14 +138,14 @@ under **"Ibrahim must do manually"** — each item needs a human account action
 npx eas-cli build --platform ios --profile production
 ```
 - Sign in with your Apple Developer Apple ID when prompted. Let EAS register
-  the bundle id (`com.myfavrapp.app`), create the distribution certificate +
+  the bundle id (`com.myfavorapp.app`), create the distribution certificate +
   provisioning profile, and **answer YES when it offers to set up a Push
   Notifications key (APNs)** — that's the entire iOS push-cert step.
 - After this one run, future builds work non-interactively. (Optional, for
   CI: `npx eas-cli credentials` ▸ iOS ▸ App Store Connect API Key.)
 
 ### 2. App Store Connect — create the app + submit
-- appstoreconnect.apple.com ▸ Apps ▸ New App → bundle id `com.myfavrapp.app`.
+- appstoreconnect.apple.com ▸ Apps ▸ New App → bundle id `com.myfavorapp.app`.
 - Paste each file from `store-metadata/apple/` into its field; answer the
   age-rating + App Privacy questionnaires from `age_rating.md` /
   `app_privacy.md`; upload screenshots (6.7" + 6.5").
@@ -168,7 +168,7 @@ npx eas-cli build --platform ios --profile production
 
 ### 4. Android push (FCM) — Firebase project
 - console.firebase.google.com ▸ create project ▸ add Android app
-  `com.myfavrapp.app` ▸ download `google-services.json` to the repo root.
+  `com.myfavorapp.app` ▸ download `google-services.json` to the repo root.
 - Hand it to EAS builds (file is gitignored, so use the file env var):
   ```bash
   npx eas-cli env:create --scope project --name GOOGLE_SERVICES_JSON \

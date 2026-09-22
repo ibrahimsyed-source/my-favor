@@ -17,11 +17,11 @@
     },
     "ios": {
       "supportsTablet": true,
-      "bundleIdentifier": "com.myfavrapp.app",
+      "bundleIdentifier": "com.myfavorapp.app",
       "buildNumber": "1",
       "config": {
         "usesNonExemptEncryption": false,
-        "googleMapsApiKey": "AIzaSyB9vKASqiPS-xWAVBy5YlqOJLEvLwpA6iw"
+        "googleMapsApiKey": "AIzaSyAuYSwh68dGniO5-CuPzokwdiv0EExcKMY"
       },
       "infoPlist": {
         "ITSAppUsesNonExemptEncryption": false,
@@ -59,11 +59,11 @@
       }
     },
     "android": {
-      "package": "com.myfavrapp.app",
+      "package": "com.myfavorapp.app",
       "versionCode": 2,
       "config": {
         "googleMaps": {
-          "apiKey": "AIzaSyB9vKASqiPS-xWAVBy5YlqOJLEvLwpA6iw"
+          "apiKey": "AIzaSyAuYSwh68dGniO5-CuPzokwdiv0EExcKMY"
         }
       },
       "adaptiveIcon": {
