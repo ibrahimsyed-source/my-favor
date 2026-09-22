@@ -12,10 +12,9 @@
     "ios": {
       "supportsTablet": true,
       "bundleIdentifier": "com.myfavorapp.app",
-      "buildNumber": "2",
+      "buildNumber": "3",
       "config": {
-        "usesNonExemptEncryption": false,
-        "googleMapsApiKey": "AIzaSyAuYSwh68dGniO5-CuPzokwdiv0EExcKMY"
+        "usesNonExemptEncryption": false
       },
       "infoPlist": {
         "ITSAppUsesNonExemptEncryption": false,
