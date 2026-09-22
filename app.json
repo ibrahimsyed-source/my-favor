@@ -9,16 +9,10 @@
     "userInterfaceStyle": "light",
     "description": "A peer-to-peer favor exchange app",
     "primaryColor": "#ED1C24",
-    "privacy": "public",
-    "splash": {
-      "image": "./assets/icon.png",
-      "resizeMode": "contain",
-      "backgroundColor": "#E6F4FE"
-    },
     "ios": {
       "supportsTablet": true,
       "bundleIdentifier": "com.myfavorapp.app",
-      "buildNumber": "1",
+      "buildNumber": "2",
       "config": {
         "usesNonExemptEncryption": false,
         "googleMapsApiKey": "AIzaSyAuYSwh68dGniO5-CuPzokwdiv0EExcKMY"
@@ -85,6 +79,14 @@
       "output": "single"
     },
     "plugins": [
+      [
+        "expo-splash-screen",
+        {
+          "image": "./assets/icon.png",
+          "resizeMode": "contain",
+          "backgroundColor": "#E6F4FE"
+        }
+      ],
       "expo-font",
       [
         "expo-image-picker",
