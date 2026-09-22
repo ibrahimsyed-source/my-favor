@@ -18,4 +18,4 @@ needed. Verify each one loads in a browser before submitting.
   `https://myfavrapp.com/privacy` etc. and keep the API routes as redirects.
 
 Categories: **Primary: Lifestyle · Secondary: Business**
-Copyright: `© 2026 [legal entity name]`
+Copyright: `© 2026 Favor App LLC`

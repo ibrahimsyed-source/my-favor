@@ -1,9 +1,10 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import {
   View, Text, Image, ScrollView, TouchableOpacity, Pressable, StyleSheet,
   Dimensions, ActivityIndicator, Modal, ViewStyle,
 } from 'react-native';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
+import { useFocusEffect } from '@react-navigation/native';
 import { Ionicons } from '@expo/vector-icons';
 import { useFonts, Poppins_400Regular } from '@expo-google-fonts/poppins';
 import { useStore } from '../store';
@@ -428,15 +429,26 @@ export const Searching = ({ navigation }: any) => {
   // tracking screen shows the same person named here, advance the favor to
   // 'matched', then surface the match alert (the "Choose another Favor Pal"
   // button below stays as the genuine impatient-user fallback until then).
-  useEffect(() => {
-    if (isScheduled) return; // scheduled favors don't drive en-route tracking yet
-    const t = setTimeout(() => {
-      if (matchedPal) assignPal(matchedPal.id);
-      else advanceFavor('matched');
-      setMatched(true);
-    }, 2500);
-    return () => clearTimeout(t);
-  }, [isScheduled, matchedPal, assignPal, advanceFavor]);
+  // One-shot + focus-scoped: the store callbacks are re-memoized on every
+  // activeFavor change, and the native stack keeps this screen mounted behind
+  // ProviderResults — without the ref the timer re-arms and can re-assign a
+  // pal the member just navigated away to avoid.
+  const hasMatchedRef = useRef(false);
+  const matchRefs = useRef({ matchedPal, assignPal, advanceFavor });
+  matchRefs.current = { matchedPal, assignPal, advanceFavor };
+  useFocusEffect(
+    useCallback(() => {
+      if (isScheduled || hasMatchedRef.current) return;
+      const t = setTimeout(() => {
+        hasMatchedRef.current = true;
+        const { matchedPal: pal, assignPal: assign, advanceFavor: advance } = matchRefs.current;
+        if (pal) assign(pal.id);
+        else advance('matched');
+        setMatched(true);
+      }, 2500);
+      return () => clearTimeout(t);
+    }, [isScheduled]),
+  );
 
   if (!fontsReady) return <View style={{ flex: 1, backgroundColor: WHITE }} />;
 

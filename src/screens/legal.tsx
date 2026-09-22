@@ -37,7 +37,10 @@ const COMPANY = 'My Favor';
 // jurisdiction before publication. These Terms and this Privacy Policy are a
 // good-faith plain-English draft and still require review and sign-off by
 // qualified legal counsel prior to launch (App Store 5.1.1 / Play Store).
-const LEGAL_ENTITY = '[Company legal entity, address, and governing-law jurisdiction — confirm with counsel]';
+const LEGAL_ENTITY = 'Favor App LLC';
+// Must match server legal.routes.ts.
+const LEGAL_ADDRESS = '8011 Monetary Drive, Unit A1, Riviera Beach, FL 33404';
+const GOVERNING_LAW = 'the State of Florida, United States';
 
 // Figma fills (fixed brand hexes — not themed).
 const BLUE = '#0452A5'; // masthead
@@ -115,7 +118,7 @@ const TERMS: Block[] = [
   { p: 'You agree to indemnify and hold harmless My Favor and its officers, employees, and agents from any claim, damage, loss, or expense (including reasonable legal fees) arising out of your use of the Service, your Content, the Favors you request or perform, or your breach of these Terms or the law.' },
 
   { h: 'Governing Law' },
-  { p: `These Terms are governed by the laws of ${LEGAL_ENTITY}, without regard to conflict-of-laws rules. Except where mandatory local consumer law provides otherwise, the courts of that jurisdiction have exclusive jurisdiction over any dispute arising from these Terms or the Service.` },
+  { p: `These Terms are governed by the laws of ${GOVERNING_LAW}, without regard to conflict-of-laws rules. Except where mandatory local consumer law provides otherwise, the courts of that jurisdiction have exclusive jurisdiction over any dispute arising from these Terms or the Service.` },
 
   { h: 'Dispute Resolution' },
   { p: `If a dispute arises, please contact Us first at ${CONTACT_EMAIL} so We can try to resolve it informally. If We cannot resolve it within 30 days, the dispute will be settled by binding arbitration or by the competent courts of the governing-law jurisdiction, to the extent permitted by law. Where required by local law, you keep the right to bring qualifying claims in small-claims court and any non-waivable right to participate in class or representative proceedings.` },
@@ -127,7 +130,7 @@ const TERMS: Block[] = [
   { p: 'We may update these Terms and will revise the effective date above. Material changes will be notified in the app. Continued use after changes means you accept the updated Terms.' },
 
   { h: 'Contact' },
-  { p: `Questions about these Terms? Email us at ${CONTACT_EMAIL}, or write to ${LEGAL_ENTITY}.` },
+  { p: `Questions about these Terms? Email us at ${CONTACT_EMAIL}, or write to ${LEGAL_ENTITY}, ${LEGAL_ADDRESS}.` },
 ];
 
 // --- Privacy Policy ---------------------------------------------------------

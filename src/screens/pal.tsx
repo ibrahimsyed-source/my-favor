@@ -855,10 +855,11 @@ export const PalFavorInProgress = ({ navigation }: any) => {
           onPress={() => {
             // Guard: never let a null favor produce a phantom payout.
             if (!s.activeFavor) return;
+            const finishedId = s.activeFavor.id;
             const earned = s.finishFavorAsPal();
             // Terminal transition: reset so backing out lands on Tabs (not this
             // now-stale in-progress screen) and can't refire "You got paid".
-            navigation.reset({ index: 1, routes: [{ name: 'Tabs' }, { name: 'PalFavorSuccess', params: { payout: earned } }] });
+            navigation.reset({ index: 1, routes: [{ name: 'Tabs' }, { name: 'PalFavorSuccess', params: { payout: earned, favorId: finishedId } }] });
           }}
         >
           <Text style={st.whiteBtnTxt}>MARK AS DONE</Text>
@@ -883,7 +884,15 @@ function CostRow({ label, value, bold }: any) {
 // ===========================================================================
 export const PalFavorSuccess = ({ navigation, route }: any) => {
   const fontsLoaded = usePoppins();
-  const payout = route?.params?.payout;
+  const s = useStore();
+  const { payout: optimisticPayout, favorId } = route?.params ?? {};
+  // The amount passed in params is a client-side guess made before the server
+  // responded; once the earnings refresh lands, the ledger row for this favor
+  // carries the authoritative payout — prefer it.
+  const serverRow = favorId
+    ? s.earnings.find((e) => e.favorId === favorId && e.kind === 'earning' && !e.id.startsWith('pending_'))
+    : undefined;
+  const payout = serverRow?.amount ?? optimisticPayout;
   const paid = typeof payout === 'number';
   if (!fontsLoaded) return <View style={{ flex: 1, backgroundColor: PAGE_BG }} />;
   return (

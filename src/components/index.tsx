@@ -138,7 +138,8 @@ export const Field: React.FC<{
   multiline?: boolean;
   maxLength?: number;
   icon?: keyof typeof Ionicons.glyphMap;
-}> = ({ label, value, onChangeText, placeholder, secureTextEntry, keyboardType, autoCapitalize, multiline, maxLength, icon }) => {
+  accessibilityLabel?: string;
+}> = ({ label, value, onChangeText, placeholder, secureTextEntry, keyboardType, autoCapitalize, multiline, maxLength, icon, accessibilityLabel }) => {
   const { theme } = useTheme();
   return (
     <View style={{ marginBottom: tokens.spacing.base }}>
@@ -156,6 +157,7 @@ export const Field: React.FC<{
           autoCapitalize={autoCapitalize}
           multiline={multiline}
           maxLength={maxLength}
+          accessibilityLabel={accessibilityLabel ?? label ?? placeholder}
         />
       </View>
     </View>
@@ -346,7 +348,7 @@ export const InfoModal: React.FC<{
   const { theme } = useTheme();
   return (
     <Modal visible={visible} transparent animationType="fade" onRequestClose={onClose}>
-      <TouchableOpacity activeOpacity={1} onPress={onClose} style={styles.modalScrim}>
+      <TouchableOpacity activeOpacity={1} onPress={onClose} style={styles.modalScrim} accessibilityViewIsModal>
         <TouchableOpacity activeOpacity={1} style={[styles.modalCard, { backgroundColor: theme.card }]}>
           <Txt variant="h2" center style={{ marginBottom: 16 }}>{title}</Txt>
           <Txt variant="body" color={theme.textSecondary} center style={{ lineHeight: 24 }}>{message}</Txt>
@@ -376,7 +378,7 @@ export const ConfirmModal: React.FC<{
   const { theme } = useTheme();
   return (
     <Modal visible={visible} transparent animationType="fade" onRequestClose={onCancel}>
-      <TouchableOpacity activeOpacity={1} onPress={onCancel} style={styles.modalScrim}>
+      <TouchableOpacity activeOpacity={1} onPress={onCancel} style={styles.modalScrim} accessibilityViewIsModal>
         <TouchableOpacity activeOpacity={1} style={[styles.modalCard, { backgroundColor: theme.card }]}>
           <Txt variant="h3" center style={{ marginBottom: 12 }}>{title}</Txt>
           <Txt variant="body" color={theme.textSecondary} center style={{ lineHeight: 24 }}>{message}</Txt>

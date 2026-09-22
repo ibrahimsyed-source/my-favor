@@ -27,6 +27,12 @@ import {
 // ---------------------------------------------------------------------------
 
 const ACTIVE = ['requested', 'matched', 'enroute', 'arrived', 'in_progress'];
+// Lifecycle order, used to drop stale poll responses that would rewind an
+// optimistic local status advance. Terminal states share the top rank.
+const STATUS_RANK: Record<FavorStatus, number> = {
+  draft: 0, requested: 1, matched: 2, enroute: 3, arrived: 4, in_progress: 5,
+  completed: 6, cancelled: 6, no_pal: 6,
+};
 // Statuses during which an assigned pal streams their live location to the member.
 const PAL_BROADCAST_STATUSES = ['matched', 'enroute', 'arrived', 'in_progress'];
 
@@ -306,7 +312,21 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       try {
         const { favor } = await getActiveFavorApi();
         if (favor) {
-          setActiveFavor(favor);
+          setActiveFavor((cur) => {
+            // A poll response can be captured BEFORE an optimistic local advance
+            // (arrived, in_progress, ...) persists — applying it would rewind the
+            // status for a tick (arrived -> matched flicker). Keep the local
+            // favor when the server echoes the same favor at an earlier stage;
+            // terminal states (completed/cancelled/no_pal) always win.
+            if (
+              cur && cur.id === favor.id &&
+              !['completed', 'cancelled', 'no_pal'].includes(favor.status) &&
+              STATUS_RANK[favor.status] < STATUS_RANK[cur.status]
+            ) {
+              return cur;
+            }
+            return favor;
+          });
           if (favor.palId && !palsRef.current.find((p) => p.id === favor.palId)) {
             try {
               const { pal } = await getPalApi(favor.palId);
@@ -541,7 +561,13 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       void cancelFavorApi(id)
         .then(() => Promise.all([getFavorsApi(), getTransactionsApi()]))
         .then(([f, t]) => { setHistory(f.favors); setTransactions(t.transactions); })
-        .catch(() => undefined);
+        .catch(() => {
+          // Cancel failed server-side: the favor is still live (a pal may be en
+          // route). Restore server truth so member and pal don't desync.
+          void Promise.all([getActiveFavorApi(), getFavorsApi()])
+            .then(([a, f]) => { setActiveFavor(a.favor); setHistory(f.favors); })
+            .catch(() => undefined);
+        });
     }
   }, [activeFavor]);
 
@@ -555,7 +581,13 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       void rateFavorApi(id, { rating, feedback: feedback ?? '', ...(tip ? { tip } : {}) })
         .then(() => getFavorsApi())
         .then(({ favors }) => setHistory(favors))
-        .catch(() => undefined);
+        .catch(() => {
+          // Rating/tip failed server-side: restore server truth so the favor
+          // isn't silently stranded as "completed" with an uncharged tip.
+          void Promise.all([getActiveFavorApi(), getFavorsApi()])
+            .then(([a, f]) => { setActiveFavor(a.favor); setHistory(f.favors); })
+            .catch(() => undefined);
+        });
     }
   }, [activeFavor]);
 

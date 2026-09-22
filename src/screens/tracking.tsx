@@ -91,7 +91,7 @@ export const FavorTracking = ({ navigation }: any) => {
   const [cancelVisible, setCancelVisible] = useState(false);
   // Set after WE cancel: { charged } drives "Cancelled." with/without the
   // "Your account has been charged." line (w-o charge = reblast frame 149:10128).
-  const [cancelled, setCancelled] = useState<null | { charged: boolean }>(null);
+  const [cancelled, setCancelled] = useState<null | { charged: boolean; fee: number }>(null);
   const [arrivedSeen, setArrivedSeen] = useState(false);
   const [repostDismissed, setRepostDismissed] = useState(false);
 
@@ -147,12 +147,16 @@ export const FavorTracking = ({ navigation }: any) => {
     Linking.openURL(`tel:${phone}`).catch(() => setCallVisible(true));
   };
 
+  // The real fee/refund this cancellation would charge right now — the modal
+  // copy quotes these instead of the Figma placeholder ("full amount"/"5 min").
+  const cancelQuote = fav ? computeCancellation(fav) : null;
+
   // Capture the fee BEFORE cancelFavor() nulls the favor.
   const confirmCancel = () => {
-    const charged = fav ? computeCancellation(fav).fee > 0 : true;
+    const fee = cancelQuote?.fee ?? 0;
     setCancelVisible(false);
     s.cancelFavor();
-    setCancelled({ charged });
+    setCancelled({ charged: cancelQuote ? fee > 0 : true, fee });
   };
 
   const requestAnother = () => {
@@ -417,7 +421,11 @@ export const FavorTracking = ({ navigation }: any) => {
       <V2Modal
         visible={feeAlertVisible}
         title="Cancel favor?"
-        body={'If you decide to cancel the request after 5 minutes, you will be automatically charged a cancellation fee.\n\nService and Transaction Fee are non-refundable.'}
+        body={
+          cancelQuote && cancelQuote.fee > 0
+            ? `Cancelling now will charge a $${cancelQuote.fee.toFixed(2)} cancellation fee; $${cancelQuote.refund.toFixed(2)} will be refunded to your payment method.\n\nService and Transaction Fee are non-refundable.`
+            : 'Your Favor Pal has not committed yet, so cancelling now will not charge a cancellation fee.\n\nService and Transaction Fee are non-refundable.'
+        }
         row
         buttons={[
           { label: 'NO', gray: true, onPress: () => setFeeAlertVisible(false) },
@@ -436,7 +444,11 @@ export const FavorTracking = ({ navigation }: any) => {
       <V2Modal
         visible={cancelVisible}
         title="Are you sure you want to cancel?"
-        body="You will be charged the full amount if you cancel this favor."
+        body={
+          cancelQuote && cancelQuote.fee > 0
+            ? `You will be charged a $${cancelQuote.fee.toFixed(2)} cancellation fee if you cancel this favor.`
+            : 'You will not be charged a cancellation fee if you cancel this favor now.'
+        }
         buttons={[{ label: 'CANCEL FAVOR', onPress: confirmCancel }]}
         onDismiss={() => setCancelVisible(false)}
       />
@@ -445,7 +457,13 @@ export const FavorTracking = ({ navigation }: any) => {
       <V2Modal
         visible={cancelled != null}
         title="Cancelled."
-        body={cancelled?.charged ? 'Your account has been charged.' : undefined}
+        body={
+          cancelled?.charged
+            ? cancelled.fee > 0
+              ? `Your account has been charged a $${cancelled.fee.toFixed(2)} cancellation fee.`
+              : 'Your account has been charged.'
+            : undefined
+        }
         buttons={[{ label: 'REQUEST ANOTHER FAVOR', onPress: requestAnother }]}
       />
 
