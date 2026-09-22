@@ -10,9 +10,9 @@
     "description": "A peer-to-peer favor exchange app",
     "primaryColor": "#ED1C24",
     "ios": {
-      "supportsTablet": true,
+      "supportsTablet": false,
       "bundleIdentifier": "com.myfavorapp.app",
-      "buildNumber": "3",
+      "buildNumber": "4",
       "config": {
         "usesNonExemptEncryption": false
       },
