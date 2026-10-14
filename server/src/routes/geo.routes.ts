@@ -94,7 +94,9 @@ geoRouter.get(
     const data = await googleJson('suggest', 'https://places.googleapis.com/v1/places:autocomplete', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', 'X-Goog-Api-Key': config.maps.serverKey },
-      body: JSON.stringify({ input: q, includedRegionCodes: ['US'] }),
+      // Lowercase ccTLD-style region code per the Places (New) docs — the API
+      // 400s on the uppercase CLDR spelling.
+      body: JSON.stringify({ input: q, includedRegionCodes: ['us'] }),
     });
     const rows =
       (data?.suggestions as Array<{ placePrediction?: { placeId?: string; text?: { text?: string } } }>) ?? [];
