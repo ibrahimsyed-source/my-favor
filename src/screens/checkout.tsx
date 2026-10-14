@@ -58,7 +58,7 @@ const TIER_ART: Record<string, { img: any; w: number; h: number; dx: number; dy:
 const MAP_IMG = require('../../assets/img/request/map-light.png');
 
 const FALLBACK_DESC = 'No description provided.';
-const FALLBACK_ADDRESS = '2099 Woodvine Rd, Lorman';
+const FALLBACK_ADDRESS = 'Address not set';
 
 // Whole-dollar bases render like the frame ("$20"), odd amounts keep cents.
 const money = (n: number) => (Number.isInteger(n) ? `$${n}` : `$${n.toFixed(2)}`);

@@ -27,8 +27,8 @@ type ScreenProps = { navigation: any; route?: any };
 // route.params.storeUrl (e.g. a remote-config deep link).
 const STORE_URL = (Platform.select({
   ios: 'https://apps.apple.com/app/id000000000',
-  android: 'https://play.google.com/store/apps/details?id=com.myfavor.app',
-  default: 'https://myfavor.app',
+  android: 'https://play.google.com/store/apps/details?id=com.myfavorapp.app',
+  default: 'https://myfavorr.com',
 }) as string);
 
 // Retry helper: prefer an explicit route.params.onRetry callback when a caller

@@ -70,7 +70,7 @@ async function makeUser(role: 'member' | 'pal') {
     const vet = await api('/api/profile/verify-pal', {
       method: 'POST',
       token,
-      body: { legalFirstName: 'Test', legalLastName: 'Pal', ssn: '123456789', dateOfBirth: '1990-01-01', consent: true },
+      body: { legalFirstName: 'Test', legalLastName: 'Pal', dateOfBirth: '1990-01-01', consent: true },
     });
     assert.equal(vet.status, 200, 'pal vetting should succeed');
   }
@@ -92,7 +92,7 @@ test('public legal pages serve HTML (store-required URLs)', async () => {
   for (const [path, marker] of [
     ['/privacy', 'Privacy Policy'],
     ['/terms', 'Terms and Conditions'],
-    ['/support', 'support@myfavor.app'],
+    ['/support', 'support@myfavorr.com'],
   ] as const) {
     const res = await fetch(baseUrl + path);
     assert.equal(res.status, 200, `${path} should be public`);
@@ -182,7 +182,7 @@ test('any vetted account can browse and fulfill others\' favors, but not their o
   const bob = await makeUser('member');
   const bobVet = await api('/api/profile/verify-pal', {
     method: 'POST', token: bob.token,
-    body: { legalFirstName: 'Bob', legalLastName: 'Member', ssn: '987654321', dateOfBirth: '1992-05-05', consent: true },
+    body: { legalFirstName: 'Bob', legalLastName: 'Member', dateOfBirth: '1992-05-05', consent: true },
   });
   assert.equal(bobVet.status, 200, 'member can complete vetting to fulfill favors');
 
@@ -488,7 +488,7 @@ test('trust & safety: an unvetted account cannot accept a favor until verified',
   // After completing vetting, the same account can accept.
   const vet = await api('/api/profile/verify-pal', {
     method: 'POST', token: helper.token,
-    body: { legalFirstName: 'Help', legalLastName: 'Er', ssn: '111223333', dateOfBirth: '1991-02-02', consent: true },
+    body: { legalFirstName: 'Help', legalLastName: 'Er', dateOfBirth: '1991-02-02', consent: true },
   });
   assert.equal(vet.status, 200);
   assert.equal(vet.json.user.palVerified, true, 'vetting sets palVerified');
@@ -524,9 +524,51 @@ test('pal vetting rejects an under-18 applicant', async () => {
   const minorDob = `${thisYear - 15}-01-01`;
   const res = await api('/api/profile/verify-pal', {
     method: 'POST', token: u.token,
-    body: { legalFirstName: 'Kid', legalLastName: 'Doe', ssn: '222334444', dateOfBirth: minorDob, consent: true },
+    body: { legalFirstName: 'Kid', legalLastName: 'Doe', dateOfBirth: minorDob, consent: true },
   });
   assert.equal(res.status, 200);
   assert.equal(res.json.user.palVerified, false, 'under-18 is not verified');
   assert.equal(res.json.user.palVetStatus, 'rejected', 'under-18 application is rejected');
+});
+
+test('vetting still accepts (and ignores) the legacy ssn field from old app builds', async () => {
+  const u = await makeUser('member');
+  const res = await api('/api/profile/verify-pal', {
+    method: 'POST', token: u.token,
+    body: { legalFirstName: 'Old', legalLastName: 'Client', ssn: '123456789', dateOfBirth: '1990-01-01', consent: true },
+  });
+  assert.equal(res.status, 200, 'unknown keys are stripped, not rejected');
+  assert.equal(res.json.user.palVerified, true);
+});
+
+test('geo proxy degrades to empty results without a server key and validates input', async () => {
+  const u = await makeUser('member');
+
+  // Unauthenticated requests are rejected — the proxy spends Google quota.
+  const anon = await api('/api/geo/suggest?q=100%20Main%20St');
+  assert.equal(anon.status, 401, 'geo routes require auth');
+
+  // No GOOGLE_MAPS_SERVER_KEY in the test env → graceful empty shapes.
+  const suggest = await api('/api/geo/suggest?q=100%20Main%20St', { token: u.token });
+  assert.equal(suggest.status, 200);
+  assert.deepEqual(suggest.json.suggestions, [], 'no key → empty suggestions');
+
+  const resolve = await api('/api/geo/resolve?placeId=ChIJd8BlQ2BZwokRAFUEcm_qrcA', { token: u.token });
+  assert.equal(resolve.status, 200);
+  assert.equal(resolve.json.location, null, 'no key → null location');
+
+  const geocode = await api('/api/geo/geocode?q=100%20Main%20St%20Miami', { token: u.token });
+  assert.equal(geocode.status, 200);
+  assert.equal(geocode.json.location, null, 'no key → null location');
+
+  const reverse = await api('/api/geo/reverse?lat=25.79&lng=-80.13', { token: u.token });
+  assert.equal(reverse.status, 200);
+  assert.equal(reverse.json.location, null, 'no key → null location');
+
+  const badLat = await api('/api/geo/reverse?lat=999&lng=0', { token: u.token });
+  assert.equal(badLat.status, 400, 'out-of-range lat is rejected');
+
+  // Validation: too-short queries are a 400, not a Google call.
+  const short = await api('/api/geo/suggest?q=ab', { token: u.token });
+  assert.equal(short.status, 400, 'q under 3 chars is rejected');
 });

@@ -480,7 +480,7 @@ function MemberHome({ navigation }: any) {
   const [fontsLoaded] = useFonts({ Poppins_400Regular });
 
   const active = s.activeFavor;
-  const address = s.draftFavor?.location?.address ?? s.user?.homeAddress ?? '2099 Woodvine Rd, Lorman…';
+  const address = s.draftFavor?.location?.address ?? s.user?.homeAddress ?? 'Set your favor location';
 
   // Dark header → light status-bar content while this screen is focused.
   useFocusEffect(

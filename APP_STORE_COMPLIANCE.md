@@ -56,9 +56,9 @@ create screenshots, set up a reviewer demo account, and run the cloud build/subm
 Both stores require a **publicly reachable Privacy Policy URL** (Google also wants
 a Terms URL). The in-app screens in `src/screens/legal.tsx` are the source text —
 publish the same content at stable URLs, e.g.:
-- `https://myfavor.app/privacy`
-- `https://myfavor.app/terms`
-- A support URL/email (e.g. `https://myfavor.app/support` or `support@myfavor.app`).
+- `https://myfavorr.com/privacy`
+- `https://myfavorr.com/terms`
+- A support URL/email (e.g. `https://myfavorr.com/support` or `support@myfavorr.com`).
 
 > ⚠️ The legal text in `legal.tsx` is a **structured template, not legal advice**.
 > Have it reviewed by counsel and fill in the bracketed business details (legal

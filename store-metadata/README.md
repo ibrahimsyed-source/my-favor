@@ -45,9 +45,9 @@ narrative doc lives in `../APP_STORE_LISTING.md`.
 - Privacy Policy: `https://my-favor-api.onrender.com/privacy`
 - Terms of Service: `https://my-favor-api.onrender.com/terms`
 - Support: `https://my-favor-api.onrender.com/support`
-- Support email: `support@myfavor.app` (must be a real, monitored inbox)
+- Support email: `support@myfavorr.com` (must be a real, monitored inbox)
 
-Swap these for `https://myfavrapp.com/...` equivalents if/when a marketing
+Swap these for `https://myfavorr.com/...` equivalents if/when a marketing
 site exists — update both store listings and keep the API routes as redirects.
 
 ## Screenshots (still to capture)

@@ -50,9 +50,9 @@ export const updateProfileApi = (patch: Partial<User>) =>
 export const setRoleApi = (role: Role) =>
   apiRequest<{ user: User }>('/api/profile/role', { method: 'POST', auth: true, body: { role } });
 // Submit the pal vetting application (Driver Information). On success the returned
-// user has palVerified=true, unlocking favor acceptance.
+// user has palVerified=true, unlocking favor acceptance. No SSN is collected.
 export const verifyPalApi = (data: {
-  legalFirstName: string; legalLastName: string; ssn: string; dateOfBirth: string; consent: boolean;
+  legalFirstName: string; legalLastName: string; dateOfBirth: string; consent: boolean;
 }) => apiRequest<{ user: User }>('/api/profile/verify-pal', { method: 'POST', auth: true, body: data });
 export const setStatusApi = (status: UserStatus) =>
   apiRequest<{ user: User }>('/api/profile/status', { method: 'POST', auth: true, body: { status } });
@@ -63,6 +63,23 @@ export const updatePushTokenApi = (pushToken: string | null) =>
 export const getPalsApi = () => apiRequest<{ pals: Partial<User>[] }>('/api/profile/pals', { auth: true });
 export const getPalApi = (id: string) => apiRequest<{ pal: Partial<User> }>(`/api/profile/pals/${id}`, { auth: true });
 export const getPalReviewsApi = (id: string) => apiRequest<{ reviews: Review[] }>(`/api/profile/pals/${id}/reviews`, { auth: true });
+
+// --- geo (server-side Google Maps proxy; see server geo.routes.ts) ---
+export type AddressSuggestion = { id: string; description: string };
+export type GeoLocation = { lat: number; lng: number; address: string };
+// Address suggestions while the member types (debounce on the caller side —
+// every call spends server-key quota).
+export const suggestAddressesApi = (q: string) =>
+  apiRequest<{ suggestions: AddressSuggestion[] }>(`/api/geo/suggest?q=${encodeURIComponent(q)}`, { auth: true });
+// Resolve a suggestion (its place id) into coordinates + canonical address.
+export const resolvePlaceApi = (placeId: string) =>
+  apiRequest<{ location: GeoLocation | null }>(`/api/geo/resolve?placeId=${encodeURIComponent(placeId)}`, { auth: true });
+// Forward-geocode a free-typed address (Confirm pressed without picking a suggestion).
+export const geocodeServerApi = (q: string) =>
+  apiRequest<{ location: GeoLocation | null }>(`/api/geo/geocode?q=${encodeURIComponent(q)}`, { auth: true });
+// Reverse-geocode a map-pan position into a display address.
+export const reverseGeocodeApi = (lat: number, lng: number) =>
+  apiRequest<{ location: GeoLocation | null }>(`/api/geo/reverse?lat=${lat}&lng=${lng}`, { auth: true });
 
 // --- favors ---
 export type CreateFavorInput = {

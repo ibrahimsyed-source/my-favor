@@ -1,7 +1,7 @@
-import React, { useState, useRef, useCallback } from 'react';
+import React, { useState, useRef, useCallback, useEffect } from 'react';
 import {
   View, Text, Image, TextInput, TouchableOpacity, StyleSheet, ScrollView,
-  KeyboardAvoidingView, Platform, useWindowDimensions,
+  KeyboardAvoidingView, Platform, useWindowDimensions, Keyboard,
 } from 'react-native';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
@@ -10,7 +10,9 @@ import Svg, { Defs, RadialGradient, Stop, Circle } from 'react-native-svg';
 import { useFonts, Poppins_400Regular, Poppins_400Regular_Italic } from '@expo-google-fonts/poppins';
 import { useStore } from '../store';
 import { FAVOR_TIERS } from '../types';
-import { geocodeAddress } from '../lib/geocode';
+import { geocodeAddress, GEOCODE_FALLBACK } from '../lib/geocode';
+import { suggestAddressesApi, resolvePlaceApi, reverseGeocodeApi, AddressSuggestion } from '../api/endpoints';
+import { MapPicker } from '../components/MapPicker';
 
 // ---------------------------------------------------------------------------
 // Request flow — rebuilt to the v.2 Figma frames (light theme):
@@ -486,35 +488,148 @@ const MapBackdrop: React.FC<{ userAvatar?: string }> = ({ userAvatar }) => {
 // 4. ConfirmAddress — "Confirm Address" #125:11243
 //    White top panel (label + address field + CONFIRM ADDRESS) over the map,
 //    HOME / REQUEST A FAVOR tab bar at the bottom.
+//
+//    Native: the backdrop is a REAL pannable map (MapPicker, Apple Maps on
+//    iOS) with a fixed center pin — drag the map and the address field updates
+//    via reverse geocoding. Typing shows live suggestions from the server's
+//    /api/geo proxy; picking one glides the map there. Web keeps the Figma
+//    static backdrop (MapBackdrop) and the type-then-confirm flow.
 // ---------------------------------------------------------------------------
 export function ConfirmAddress({ navigation }: any) {
   const s = useStore();
   const fontsLoaded = usePoppinsRegular();
   const insets = useSafeAreaInsets();
   const [address, setAddress] = useState(
-    s.draftFavor?.location?.address ?? s.user?.homeAddress ?? '2099 Woodvine Rd, Lorman…'
+    s.draftFavor?.location?.address ?? s.user?.homeAddress ?? ''
   );
+  const [suggestions, setSuggestions] = useState<AddressSuggestion[]>([]);
   const [geocoding, setGeocoding] = useState(false);
+  // Coordinates that match the CURRENT address text (from a picked suggestion
+  // or a map pan). Typing clears them — Confirm then forward-geocodes the text.
+  const [coord, setCoord] = useState<{ lat: number; lng: number } | null>(
+    s.draftFavor?.location ? { lat: s.draftFavor.location.lat, lng: s.draftFavor.location.lng } : null
+  );
+  // Where the map sits. Only ever moves forward (pick/pan) — never snaps back.
+  const [mapCenter, setMapCenter] = useState<{ lat: number; lng: number }>(
+    s.draftFavor?.location
+      ? { lat: s.draftFavor.location.lat, lng: s.draftFavor.location.lng }
+      : { ...GEOCODE_FALLBACK }
+  );
 
-  const canConfirm = address.trim().length > 0;
+  // One epoch guards ALL background lookups (suggest / resolve / reverse): any
+  // newer user action — typing, picking a suggestion, panning the map — bumps
+  // it, and a response only applies if the epoch it was born under is still
+  // current. This is what keeps a slow response (cold Render dyno + Google
+  // round trip) from clobbering text the user has since changed, re-opening a
+  // dismissed dropdown, or attaching stale coordinates to new text.
+  const geoEpoch = useRef(0);
+  const suggestTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const reverseTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // True from a pan settling until its address label lands (or fails) — the
+  // Confirm button is held in 'Locating…' so the member can't save fresh
+  // coordinates paired with the previous location's text.
+  const [reversePending, setReversePending] = useState(false);
+
+  const supersedeLookups = useCallback(() => {
+    geoEpoch.current += 1;
+    if (suggestTimer.current) {
+      clearTimeout(suggestTimer.current);
+      suggestTimer.current = null;
+    }
+    if (reverseTimer.current) {
+      clearTimeout(reverseTimer.current);
+      reverseTimer.current = null;
+    }
+    setReversePending(false);
+  }, []);
+  useEffect(() => () => supersedeLookups(), [supersedeLookups]); // unmount: drop everything in flight
+
+  const onChangeAddress = useCallback((t: string) => {
+    supersedeLookups();
+    setAddress(t);
+    setCoord(null); // edited text no longer matches any picked/panned point
+    const q = t.trim();
+    if (q.length < 3) {
+      setSuggestions([]);
+      return;
+    }
+    const epoch = geoEpoch.current;
+    suggestTimer.current = setTimeout(async () => {
+      try {
+        const { suggestions: list } = await suggestAddressesApi(q);
+        if (epoch === geoEpoch.current) setSuggestions(list);
+      } catch {
+        // Suggestions are best-effort — typing + Confirm keeps working.
+      }
+    }, 350);
+  }, [supersedeLookups]);
+
+  const pickSuggestion = useCallback(async (sug: AddressSuggestion) => {
+    supersedeLookups();
+    const epoch = geoEpoch.current;
+    setSuggestions([]);
+    setAddress(sug.description);
+    Keyboard.dismiss();
+    try {
+      const { location } = await resolvePlaceApi(sug.id);
+      if (epoch !== geoEpoch.current || !location) return; // superseded / unresolvable
+      const c = { lat: location.lat, lng: location.lng };
+      setCoord(c);
+      setMapCenter(c); // MapPicker glides there
+    } catch {
+      // Keep the description text; Confirm will forward-geocode it.
+    }
+  }, [supersedeLookups]);
+
+  // A map pan settled (native only). The panned point is the source of truth;
+  // the reverse-geocoded label is display-only — but Confirm is gated until it
+  // lands so the saved address text always describes the pinned coordinates.
+  const onCenterChange = useCallback((c: { lat: number; lng: number }) => {
+    supersedeLookups();
+    const epoch = geoEpoch.current;
+    setCoord(c);
+    setMapCenter(c); // keep the prop in sync so a later same-coords pick still glides
+    setSuggestions([]);
+    setReversePending(true);
+    reverseTimer.current = setTimeout(async () => {
+      let label: string | null = null;
+      try {
+        const { location } = await reverseGeocodeApi(c.lat, c.lng);
+        label = location?.address ?? null;
+      } catch {
+        label = null;
+      }
+      if (epoch !== geoEpoch.current) return; // a newer action took over
+      // No nameable address for this point (rural pin, lookup failure): show
+      // honest coordinates rather than leaving the previous location's text.
+      setAddress(label ?? `Pinned location (${c.lat.toFixed(5)}, ${c.lng.toFixed(5)})`);
+      setReversePending(false);
+    }, 400);
+  }, [supersedeLookups]);
+
+  const canConfirm = address.trim().length > 0 && !reversePending;
   const onConfirm = useCallback(async () => {
     if (!canConfirm || geocoding) return;
     setGeocoding(true);
-    // Geocode the typed address to real coordinates (Google Geocoding API, keyed
-    // by EXPO_PUBLIC_GOOGLE_MAPS_KEY). Falls back to a Miami-area point when no
-    // key is set (dev) or the lookup fails, so distances stay realistic.
     const trimmed = address.trim();
-    const { lat, lng } = await geocodeAddress(trimmed);
+    // A picked suggestion / panned pin already carries exact coordinates; only
+    // free-typed text needs the server geocode (which falls back to the demo
+    // point if the server has no key).
+    const { lat, lng } = coord ?? (await geocodeAddress(trimmed));
     s.setDraft({ location: { lat, lng, address: trimmed } });
     setGeocoding(false);
     navigation.navigate('FavorSummary');
-  }, [address, canConfirm, geocoding, navigation, s]);
+  }, [address, canConfirm, coord, geocoding, navigation, s]);
 
   if (!fontsLoaded) return <View style={{ flex: 1, backgroundColor: WHITE }} />;
 
   return (
     <View style={{ flex: 1, backgroundColor: WHITE }}>
-      <MapBackdrop userAvatar={s.user?.avatar} />
+      {Platform.OS === 'web' ? (
+        <MapBackdrop userAvatar={s.user?.avatar} />
+      ) : (
+        <MapPicker center={mapCenter} onCenterChange={onCenterChange} pinAvatar={s.user?.avatar} />
+      )}
 
       {/* Top address panel */}
       <View style={[styles.addressPanel, { paddingTop: insets.top + 8 }]}>
@@ -534,7 +649,7 @@ export function ConfirmAddress({ navigation }: any) {
           <Ionicons name="locate" size={20} color={RED} style={{ marginLeft: 16 }} />
           <TextInput
             value={address}
-            onChangeText={setAddress}
+            onChangeText={onChangeAddress}
             placeholder="Enter the favor address"
             placeholderTextColor={PLACEHOLDER}
             numberOfLines={1}
@@ -543,7 +658,7 @@ export function ConfirmAddress({ navigation }: any) {
             accessibilityLabel="Favor address"
           />
           <TouchableOpacity
-            onPress={() => setAddress('')}
+            onPress={() => onChangeAddress('')}
             hitSlop={12}
             accessibilityRole="button"
             accessibilityLabel="Clear address"
@@ -552,7 +667,23 @@ export function ConfirmAddress({ navigation }: any) {
             <Ionicons name="close" size={18} color={INK} />
           </TouchableOpacity>
         </View>
-        <BlackButton title={geocoding ? 'Locating…' : 'Confirm Address'} disabled={!canConfirm || geocoding} onPress={() => void onConfirm()} style={{ marginTop: 16 }} />
+        {suggestions.length > 0 ? (
+          <View style={styles.suggestBox}>
+            {suggestions.map((sug, i) => (
+              <TouchableOpacity
+                key={sug.id}
+                style={[styles.suggestRow, i > 0 && styles.suggestDivider]}
+                onPress={() => void pickSuggestion(sug)}
+                accessibilityRole="button"
+                accessibilityLabel={`Use address ${sug.description}`}
+              >
+                <Ionicons name="location-outline" size={16} color={RED} />
+                <Text style={styles.suggestText} numberOfLines={1}>{sug.description}</Text>
+              </TouchableOpacity>
+            ))}
+          </View>
+        ) : null}
+        <BlackButton title={geocoding || reversePending ? 'Locating…' : 'Confirm Address'} disabled={!canConfirm || geocoding} onPress={() => void onConfirm()} style={{ marginTop: 16 }} />
       </View>
 
       {/* Bottom tab bar (HOME / REQUEST A FAVOR) exactly as the frame */}
@@ -907,6 +1038,35 @@ const styles = StyleSheet.create({
     paddingVertical: 0,
     fontFamily: 'Poppins_400Regular',
     fontSize: 18,
+    color: INK,
+  },
+  // Live address suggestions (server /api/geo proxy) under the address field.
+  suggestBox: {
+    marginTop: 8,
+    backgroundColor: WHITE,
+    borderRadius: 8,
+    shadowColor: '#000000',
+    shadowOpacity: 0.12,
+    shadowRadius: 10,
+    shadowOffset: { width: 0, height: 4 },
+    elevation: 4,
+    overflow: 'hidden',
+  },
+  suggestRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    paddingVertical: 12,
+    paddingHorizontal: 16,
+  },
+  suggestDivider: {
+    borderTopWidth: StyleSheet.hairlineWidth,
+    borderTopColor: '#E5E5E5',
+  },
+  suggestText: {
+    flex: 1,
+    fontFamily: 'Poppins_400Regular',
+    fontSize: 13,
     color: INK,
   },
   tabBar: {

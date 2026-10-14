@@ -75,7 +75,7 @@ interface StoreValue {
   recheckConfig: () => Promise<void>;
   signup: (data: Partial<User> & { password: string; ageAffirmed?: boolean; acceptedTerms?: boolean; dateOfBirth?: string }) => Promise<void>;
   verifyOtp: (code: string) => Promise<boolean>;
-  submitVetting: (data: { legalFirstName: string; legalLastName: string; ssn: string; dateOfBirth: string; consent: boolean }) => Promise<'approved' | 'rejected' | 'error'>;
+  submitVetting: (data: { legalFirstName: string; legalLastName: string; dateOfBirth: string; consent: boolean }) => Promise<'approved' | 'rejected' | 'error'>;
   login: (email: string, password: string) => Promise<'ok' | 'unverified' | 'invalid' | 'error' | 'suspended'>;
   logout: () => void;
   deleteAccount: () => Promise<void>;
@@ -413,7 +413,7 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
   // Submit the pal vetting application (Driver Information). On success the user
   // becomes palVerified, unlocking favor acceptance. Returns true on success.
   const submitVetting = useCallback(async (data: {
-    legalFirstName: string; legalLastName: string; ssn: string; dateOfBirth: string; consent: boolean;
+    legalFirstName: string; legalLastName: string; dateOfBirth: string; consent: boolean;
   }): Promise<'approved' | 'rejected' | 'error'> => {
     try {
       const { user: u } = await verifyPalApi(data);

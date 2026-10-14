@@ -13,6 +13,7 @@ import { paymentRouter } from './routes/payment.routes';
 import { messageRouter } from './routes/message.routes';
 import { notificationRouter } from './routes/notification.routes';
 import { moderationRouter } from './routes/moderation.routes';
+import { geoRouter } from './routes/geo.routes';
 import { stripeRouter } from './routes/stripe.routes';
 import { legalRouter } from './routes/legal.routes';
 
@@ -100,6 +101,13 @@ export function createApp() {
   // URLs (App Store 5.1.1 / Play). Static HTML, mounted before the rate
   // limiter so a store reviewer's fetch is never throttled.
   app.use(legalRouter);
+
+  // Geo proxy (authed + its own per-user geoLimiter). Mounted BEFORE the
+  // global per-IP limiter so bursty (debounced) autocomplete traffic doesn't
+  // drain the shared 300/15min budget and 429 the whole API for everyone
+  // behind one NAT — same exemption-by-mount-order as /health and /api/config,
+  // except this one still carries authentication and its own cap.
+  app.use('/api/geo', geoRouter);
 
   // Global rate limit across the API (production only; see rateLimit.ts).
   app.use(globalLimiter);

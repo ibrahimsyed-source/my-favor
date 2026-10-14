@@ -112,7 +112,7 @@ All data is **linked to the user's identity**, used for **App Functionality**
 - **Privacy Policy:** https://my-favor-api.onrender.com/privacy
 - **Terms of Service:** https://my-favor-api.onrender.com/terms
 - **Support URL:** https://my-favor-api.onrender.com/support
-- **Marketing URL (optional):** https://myfavrapp.com (if/when the site exists)
+- **Marketing URL (optional):** https://myfavorr.com (if/when the site exists)
 
 The pages are static HTML rendered by `server/src/routes/legal.routes.ts` with
 the SAME copy as the in-app legal screen (`src/screens/legal.tsx`). Before

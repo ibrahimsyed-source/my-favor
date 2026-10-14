@@ -45,6 +45,12 @@ const rawSchema = z.object({
     .default('false')
     .transform((v) => v === 'true'),
   MIN_APP_VERSION: z.string().optional().default('0.0.0'),
+  // Server-side Google Maps Platform key (Places Autocomplete + Geocoding) for
+  // the /api/geo proxy routes. Kept out of the app bundle on purpose — the
+  // client's EXPO_PUBLIC key stays restricted to the Static Maps image API.
+  // Leave blank in dev: the geo routes then return empty results and the app
+  // degrades to free-typed addresses.
+  GOOGLE_MAPS_SERVER_KEY: z.string().optional().default(''),
 });
 
 const parsed = rawSchema.safeParse(process.env);
@@ -117,6 +123,10 @@ export const config = {
     maintenance: env.MAINTENANCE_MODE,
     minVersion: env.MIN_APP_VERSION,
   },
+  maps: {
+    serverKey: env.GOOGLE_MAPS_SERVER_KEY,
+    enabled: env.GOOGLE_MAPS_SERVER_KEY.length > 0,
+  },
 } as const;
 
 // In production you need a real way to deliver OTP codes (dev-return is blocked
@@ -134,6 +144,16 @@ function emailMisconfig(msg: string) {
   // eslint-disable-next-line no-console
   console.warn('⚠️  ' + msg + ' Booting anyway; set REQUIRE_EMAIL_PROVIDER=true to enforce.');
 }
+// Maps is softer than email (the app degrades to free-typed addresses), but a
+// silent blank key in prod re-creates the "every favor pinned to the demo
+// point" bug — make it loud in the boot log.
+if (isProd && !env.GOOGLE_MAPS_SERVER_KEY) {
+  // eslint-disable-next-line no-console
+  console.warn(
+    '⚠️  GOOGLE_MAPS_SERVER_KEY is not set — /api/geo returns empty results: no address autocomplete, and confirmed addresses fall back to the demo coordinates.',
+  );
+}
+
 if (isProd && !env.RESEND_API_KEY) {
   emailMisconfig('No RESEND_API_KEY set in production — OTP codes cannot be delivered, so users cannot sign up, log in, or reset a password.');
 }

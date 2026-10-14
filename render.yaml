@@ -58,6 +58,9 @@ services:
         sync: false
       - key: OTP_FROM_EMAIL        # verified sender, e.g. My Favor <noreply@yourdomain.com>
         sync: false
-      # NOTE: STRIPE_PUBLISHABLE_KEY and GOOGLE_MAPS_API_KEY are CLIENT-side vars
-      # (EXPO_PUBLIC_* in the EAS build environment) — the server never reads
-      # them, so they are intentionally not declared here.
+      - key: GOOGLE_MAPS_SERVER_KEY # server-side Google key (Places API (New) + Geocoding) for /api/geo
+        sync: false                 # blank = no autocomplete and addresses fall back to demo coords
+      # NOTE: STRIPE_PUBLISHABLE_KEY and the EXPO_PUBLIC_GOOGLE_MAPS_KEY used for
+      # Static Maps images are CLIENT-side vars (EXPO_PUBLIC_* in the EAS build
+      # environment) — the server never reads those. GOOGLE_MAPS_SERVER_KEY above
+      # is a SEPARATE server-only key and must be set here.

@@ -28,7 +28,7 @@ type ScreenProps = { navigation: any; route?: any };
 // Ionicons in directly.
 type IconName = React.ComponentProps<typeof FullScreenState>['icon'];
 
-const SUPPORT_EMAIL = 'support@myfavor.app';
+const SUPPORT_EMAIL = 'support@myfavorr.com';
 
 // Fire-and-forget helpers — Linking rejects on unsupported platforms (e.g. web),
 // so swallow the rejection instead of leaving an unhandled promise.

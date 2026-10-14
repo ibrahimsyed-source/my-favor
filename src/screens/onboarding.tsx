@@ -188,7 +188,8 @@ export function SignupLogin({ navigation }: any) {
 //
 // Favor Pals enter members' homes, so a pal must pass identity + background
 // vetting before they can earn. This screen collects the applicant's legal
-// Personal Information (name / SSN / DOB) and walks the 5 Driver Requirements;
+// Personal Information (name / DOB — no SSN; the mocked vendors don't need it
+// and we don't want to hold it) and walks the 5 Driver Requirements;
 // submitting "Finish applying" puts the application into an Approval-pending
 // state (a reviewer clears it) rather than an instant self-serve go-online.
 // The checks below are a faithful MOCK of the ID/selfie/background vendors.
@@ -207,9 +208,6 @@ export function Vetting({ navigation }: any) {
   const [firstName, setFirstName] = useState('');
   const [middleName, setMiddleName] = useState('');
   const [lastName, setLastName] = useState('');
-  const [ssn1, setSsn1] = useState('');
-  const [ssn2, setSsn2] = useState('');
-  const [ssn3, setSsn3] = useState('');
   const [dob, setDob] = useState('');
 
   // Driver Requirements checklist (5 items required) + background-check consent.
@@ -294,11 +292,8 @@ export function Vetting({ navigation }: any) {
   const doneCount = steps.filter((st) => phaseOf(st.key) === 'done').length;
   const allCleared = doneCount === steps.length;
 
-  const ssnComplete = ssn1.length === 3 && ssn2.length === 2 && ssn3.length === 4;
-  const infoComplete = !!firstName.trim() && !!lastName.trim() && ssnComplete && !!dob.trim();
+  const infoComplete = !!firstName.trim() && !!lastName.trim() && !!dob.trim();
   const canSubmit = allCleared && consent && infoComplete;
-
-  const digits = (t: string) => t.replace(/[^0-9]/g, '');
 
   const onStep = (index: number) => {
     const st = steps[index];
@@ -317,7 +312,6 @@ export function Vetting({ navigation }: any) {
     const result = await s.submitVetting({
       legalFirstName: firstName.trim(),
       legalLastName: lastName.trim(),
-      ssn: `${ssn1}${ssn2}${ssn3}`,
       dateOfBirth: dob.trim(),
       consent,
     });
@@ -392,19 +386,6 @@ export function Vetting({ navigation }: any) {
         <Field label="Legal first name" value={firstName} onChangeText={setFirstName} placeholder="First name" autoCapitalize="words" />
         <Field label="Legal middle name" value={middleName} onChangeText={setMiddleName} placeholder="Middle name (optional)" autoCapitalize="words" />
         <Field label="Legal last name" value={lastName} onChangeText={setLastName} placeholder="Last name" autoCapitalize="words" />
-
-        <Txt variant="label" style={{ marginBottom: 8 }}>Social Security Number</Txt>
-        <View style={{ flexDirection: 'row', gap: 10 }}>
-          <View style={{ flex: 3 }}>
-            <Field value={ssn1} onChangeText={(t) => setSsn1(digits(t))} placeholder="XXX" keyboardType="number-pad" maxLength={3} />
-          </View>
-          <View style={{ flex: 2 }}>
-            <Field value={ssn2} onChangeText={(t) => setSsn2(digits(t))} placeholder="XX" keyboardType="number-pad" maxLength={2} />
-          </View>
-          <View style={{ flex: 4 }}>
-            <Field value={ssn3} onChangeText={(t) => setSsn3(digits(t))} placeholder="XXXX" keyboardType="number-pad" maxLength={4} />
-          </View>
-        </View>
 
         <Field label="Date of birth" value={dob} onChangeText={setDob} placeholder="MM/DD/YYYY" keyboardType="numbers-and-punctuation" maxLength={10} />
 

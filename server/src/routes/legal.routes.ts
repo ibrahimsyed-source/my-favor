@@ -14,7 +14,7 @@ import { Router } from 'express';
 //   Support: https://<api-host>/support
 // ===========================================================================
 
-const CONTACT_EMAIL = 'support@myfavor.app';
+const CONTACT_EMAIL = 'support@myfavorr.com';
 const COMPANY = 'My Favor';
 const LAST_UPDATED = 'July 1, 2026';
 

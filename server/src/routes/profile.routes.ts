@@ -92,14 +92,15 @@ profileRouter.post(
 );
 
 // POST /api/profile/verify-pal — submit the pal vetting application (legal name,
-// SSN, DOB, driver-requirements consent). In this build the identity/background
-// vendors are mocked, so a complete, consented submission is auto-approved and
-// sets palVerified. In production this endpoint would only RECORD the application
-// and a real vendor callback / admin review would flip palVerified.
+// DOB, driver-requirements consent). No SSN is collected — identity/background
+// vendors are mocked in this build, so a complete, consented submission is
+// auto-approved and sets palVerified. In production this endpoint would only
+// RECORD the application and a real vendor callback / admin review would flip
+// palVerified. (Old app builds may still send an `ssn` key; zod strips unknown
+// keys, so they keep working.)
 const vettingSchema = z.object({
   legalFirstName: z.string().trim().min(1).max(80),
   legalLastName: z.string().trim().min(1).max(80),
-  ssn: z.string().trim().regex(/^\d{9}$/, 'SSN must be 9 digits'),
   dateOfBirth: z.string().trim().min(1).max(40),
   consent: z.literal(true, { errorMap: () => ({ message: 'Background-check consent is required' }) }),
 });

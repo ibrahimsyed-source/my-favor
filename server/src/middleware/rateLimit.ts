@@ -49,6 +49,24 @@ export const otpLimiter = rateLimit({
   message: { error: { code: 'too_many_requests', message: 'Too many code requests, try again later.' } },
 });
 
+// Geo proxy (/api/geo): autocomplete fires on a typing debounce, so bursts are
+// normal — but each call spends Google quota on our server key, so keep it
+// bounded. Keyed per USER, not per IP: authenticate runs before this limiter
+// on the geo router, so req.user is always set here. Per-IP keying would both
+// let one account farm the key through rotating proxies (unbounded aggregate)
+// and starve everyone behind a shared NAT; per-user is the budget this proxy
+// actually promises. ('anon' is unreachable — unauthenticated calls 401 in
+// authenticate before reaching the limiter.)
+export const geoLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 120,
+  standardHeaders: true,
+  legacyHeaders: false,
+  skip,
+  keyGenerator: (req) => req.user?.id ?? 'anon',
+  message: { error: { code: 'too_many_requests', message: 'Too many location lookups, try again later.' } },
+});
+
 // Session/token endpoints (refresh, logout, change-password). Looser than the
 // login/signup budget because a healthy client rotates its token roughly every
 // access-token lifetime, but still bounded so a stolen/guessed refresh token

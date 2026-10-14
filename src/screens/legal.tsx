@@ -29,7 +29,7 @@ import { fonts, useTheme } from '../theme';
 // (App Store 5.1.1 / Play Store) — see previous revision notes.
 // ===========================================================================
 
-const CONTACT_EMAIL = 'support@myfavor.app';
+const CONTACT_EMAIL = 'support@myfavorr.com';
 const COMPANY = 'My Favor';
 
 // LEGAL: The bracketed placeholder below MUST be replaced with the registered

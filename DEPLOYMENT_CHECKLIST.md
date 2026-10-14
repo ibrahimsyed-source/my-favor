@@ -123,10 +123,12 @@ under **"Ibrahim must do manually"** — each item needs a human account action
   | `STRIPE_WEBHOOK_SECRET` | `whsec_…` for the Stripe webhook endpoint (blank until created — step 5). |
   | `RESEND_API_KEY` | Resend key for OTP email delivery. |
   | `OTP_FROM_EMAIL` | Verified sender address for OTP emails (sandbox until step 6). |
+  | `GOOGLE_MAPS_SERVER_KEY` | Server-side Google key ("My Favor Server": Places API (New) + Geocoding) powering `/api/geo` autocomplete/geocoding. Blank = no suggestions and confirmed addresses fall back to demo coords. |
   | `NODE_ENV` / `OTP_DEV_RETURN` | Already pinned in render.yaml (`production` / `false`). |
   | `PORT` | Injected by Render automatically — do not set. |
-  (`STRIPE_PUBLISHABLE_KEY` / `GOOGLE_MAPS_API_KEY` are client-side
-  `EXPO_PUBLIC_*` vars in the EAS build env — the server never reads them.)
+  (`STRIPE_PUBLISHABLE_KEY` and the client's Static-Maps `EXPO_PUBLIC_GOOGLE_MAPS_KEY`
+  are client-side `EXPO_PUBLIC_*` vars in the EAS build env — the server never
+  reads those; `GOOGLE_MAPS_SERVER_KEY` is a separate server-only key.)
 - Then Render dashboard ▸ my-favor-api ▸ **Resume** (or "Manual Deploy ▸ latest
   commit" — this also picks up the new render.yaml and publishes the
   `/privacy`, `/terms`, `/support` pages the store listings need).
@@ -206,7 +208,8 @@ npx eas-cli build --platform ios --profile production
   dashboards.
 - Restrict the Google Maps key (API + app restrictions) in Google Cloud.
 - Set a strong `REVIEWER_PASSWORD` and re-run the seed for the demo account.
-- `support@myfavor.app` must become a real monitored inbox (or change it in
+- `support@myfavorr.com` must become a real monitored inbox (the myfavorr.com
+  MX already points at Resend inbound; or change the address in
   `server/src/routes/legal.routes.ts` + both listings).
 
 ### 9. Screenshots & graphics

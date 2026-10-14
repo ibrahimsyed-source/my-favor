@@ -157,6 +157,9 @@ primary buttons (black label); red accent `#ED1C24`/`#D40000`; white text, gray 
   first/middle/last name, SSN 3-part, DOB) → Vetting scaffold restyle. Lock-screen favor-blast
   notification frame = push mock (skip). "Driver Requirements / Finish applying / 5 items
   required" checklist screen exists (Approval pending flow).
+  ⚠️ DELIBERATE DIVERGENCE (2026-10-13, product decision): the SSN 3-part fields were REMOVED
+  from the built screen — we don't collect SSNs (vendors are mocked; nothing stored it). Do not
+  "re-add" them in a future fidelity pass even though the Figma frame shows them.
 - Dashboard - Approval pending. (frame exists — pal home gated until vetting approved.)
 
 ### Row: Dashboard (dark) — REBUILD pal.tsx home + payouts + dark profile screens
