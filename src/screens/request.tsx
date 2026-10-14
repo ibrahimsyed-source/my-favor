@@ -11,6 +11,7 @@ import { useFonts, Poppins_400Regular, Poppins_400Regular_Italic } from '@expo-g
 import { useStore } from '../store';
 import { FAVOR_TIERS } from '../types';
 import { geocodeAddress, GEOCODE_FALLBACK } from '../lib/geocode';
+import { getCurrentLocation } from '../lib/location';
 import { suggestAddressesApi, resolvePlaceApi, reverseGeocodeApi, AddressSuggestion } from '../api/endpoints';
 import { MapPicker } from '../components/MapPicker';
 
@@ -606,6 +607,24 @@ export function ConfirmAddress({ navigation }: any) {
       setReversePending(false);
     }, 400);
   }, [supersedeLookups]);
+
+  // First open with no saved draft location: center the picker on the device's
+  // real position (asks for foreground location permission — the contextual
+  // moment to ask). Runs through onCenterChange so the map glides there and
+  // the member's actual street address fills the field. Denied / unavailable /
+  // web → silently keep the prefill + fallback center; typing still works.
+  const triedGps = useRef(false);
+  useEffect(() => {
+    if (triedGps.current || Platform.OS === 'web' || s.draftFavor?.location) return;
+    triedGps.current = true;
+    let cancelled = false;
+    void getCurrentLocation().then((c) => {
+      if (c && !cancelled) onCenterChange(c);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [onCenterChange, s.draftFavor?.location]);
 
   const canConfirm = address.trim().length > 0 && !reversePending;
   const onConfirm = useCallback(async () => {

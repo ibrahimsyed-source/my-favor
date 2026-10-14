@@ -1,5 +1,20 @@
 export type StopBroadcast = () => void;
 
+// One-shot device position (asks for foreground permission on first use).
+// Returns null whenever location isn't available — module absent (web),
+// permission denied, GPS failure — so callers can quietly keep a fallback.
+export async function getCurrentLocation(): Promise<{ lat: number; lng: number } | null> {
+  try {
+    const Location = await import('expo-location');
+    const { status } = await Location.requestForegroundPermissionsAsync();
+    if (status !== 'granted') return null;
+    const pos = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.Balanced });
+    return { lat: pos.coords.latitude, lng: pos.coords.longitude };
+  } catch {
+    return null;
+  }
+}
+
 // Streams the device's foreground location, invoking onUpdate(lat, lng) on each
 // fix. Returns a stop function to end the stream. Degrades gracefully to a no-op
 // whenever location isn't available — the native module is absent from the build
