@@ -7,6 +7,8 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { useFonts, Poppins_400Regular, Poppins_400Regular_Italic } from '@expo-google-fonts/poppins';
 import { Txt, Button, Avatar } from '../components';
+import { MapScene, MAP_SCENE_SUPPORTED } from '../components/MapScene';
+import { GEOCODE_FALLBACK } from '../lib/geocode';
 import { useStore } from '../store';
 import { getPalReviewsApi } from '../api/endpoints';
 import { Review } from '../types';
@@ -59,9 +61,40 @@ const fmtShort = (ms: number) => {
 // distance copy: closest pal is "1 mile away", the rest plural.
 const distanceLabel = (i: number) => `${i + 1} mile${i === 0 ? '' : 's'} away`;
 
-// Full-bleed blurred map backdrop (width-anchored, exactly as the 414-wide frame).
+// Decorative nearby-pal pins for the REAL native map (lat/lng offsets from the
+// favor location) — stand-ins like the frame's, but they live on the map.
+const NEARBY_PAL_OFFSETS = [
+  { dlat: 0.0028, dlng: -0.0024 },
+  { dlat: 0.0012, dlng: 0.0030 },
+  { dlat: -0.0022, dlng: -0.0010 },
+];
+
+// Full-bleed map backdrop. Native: a REAL map of the favor location, dimmed
+// like the v.2 frames (the design's gaussian blur has no RN equivalent — the
+// scrim alone stands in for it, same trade as BeAFavorPalModal's backdrop).
+// Web: the pre-composited blurred Figma export, exactly as the 414-wide frame.
 const MapBackdrop: React.FC = () => {
   const { width } = useWindowDimensions();
+  const { draftFavor, activeFavor } = useStore();
+  if (MAP_SCENE_SUPPORTED) {
+    const loc = activeFavor?.location ?? draftFavor?.location ?? GEOCODE_FALLBACK;
+    return (
+      <MapScene
+        center={loc}
+        zoom={15}
+        interactive={false}
+        scrim="rgba(0,0,0,0.5)"
+        markers={[
+          { lat: loc.lat, lng: loc.lng, kind: 'pin' },
+          ...NEARBY_PAL_OFFSETS.map((o) => ({
+            lat: loc.lat + o.dlat,
+            lng: loc.lng + o.dlng,
+            kind: 'person' as const,
+          })),
+        ]}
+      />
+    );
+  }
   return (
     <Image
       source={MAP_BG}
@@ -136,13 +169,17 @@ export const ProviderResults = ({ navigation }: any) => {
       <MapBackdrop />
 
       {/* The blurred "Switch to be a favor pal" pill on the map opens the
-          Be A Favor Pal modal (Favor Pal Modal v2). */}
-      <Pressable
-        style={{ position: 'absolute', left: 147 * s, top: 63 * s, width: 244 * s, height: 40 * s }}
-        onPress={() => setShowPalModal(true)}
-        accessibilityRole="button"
-        accessibilityLabel="Switch to be a favor pal"
-      />
+          Be A Favor Pal modal (Favor Pal Modal v2). The pill graphic is baked
+          into the web backdrop only — on the real native map there is nothing
+          to tap, so the invisible hotspot is dropped there. */}
+      {!MAP_SCENE_SUPPORTED && (
+        <Pressable
+          style={{ position: 'absolute', left: 147 * s, top: 63 * s, width: 244 * s, height: 40 * s }}
+          onPress={() => setShowPalModal(true)}
+          accessibilityRole="button"
+          accessibilityLabel="Switch to be a favor pal"
+        />
+      )}
 
       {/* Bottom sheet */}
       <View style={[styles.sheet, { paddingBottom: Math.max(insets.bottom, 34) + 23 }]}>

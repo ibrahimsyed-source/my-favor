@@ -10,6 +10,7 @@ import { useFonts, Poppins_400Regular } from '@expo-google-fonts/poppins';
 import { useStore } from '../store';
 import { FAVOR_TIERS, computeFees, FavorTier } from '../types';
 import { LiveMap } from '../components/LiveMap';
+import { MapScene, MAP_SCENE_SUPPORTED } from '../components/MapScene';
 
 // ---------------------------------------------------------------------------
 // Checkout flow — rebuilt to the User App v.2 Figma frames (light theme):
@@ -454,10 +455,22 @@ export const Searching = ({ navigation }: any) => {
 
   return (
     <View style={{ flex: 1, backgroundColor: '#D8D8D8' }}>
-      {/* v.2 light map backdrop with red pins */}
-      <Image source={MAP_IMG} style={[StyleSheet.absoluteFill, { width: '100%', height: '100%' }]} resizeMode="cover" />
-      <Ionicons name="location" size={42} color={RED} style={[styles.pin, { top: SCREEN_H * 0.13, left: SCREEN_W * 0.2 }]} />
-      <Ionicons name="location" size={42} color={RED} style={[styles.pin, { top: SCREEN_H * 0.24, left: SCREEN_W * 0.6 }]} />
+      {/* v.2 light map backdrop with red pins — a REAL map of the favor
+          location on native, the Figma export on web. */}
+      {MAP_SCENE_SUPPORTED && activeFavor?.location ? (
+        <MapScene
+          center={activeFavor.location}
+          zoom={15}
+          interactive={false}
+          markers={[{ lat: activeFavor.location.lat, lng: activeFavor.location.lng, kind: 'pin' }]}
+        />
+      ) : (
+        <>
+          <Image source={MAP_IMG} style={[StyleSheet.absoluteFill, { width: '100%', height: '100%' }]} resizeMode="cover" />
+          <Ionicons name="location" size={42} color={RED} style={[styles.pin, { top: SCREEN_H * 0.13, left: SCREEN_W * 0.2 }]} />
+          <Ionicons name="location" size={42} color={RED} style={[styles.pin, { top: SCREEN_H * 0.24, left: SCREEN_W * 0.6 }]} />
+        </>
+      )}
 
       {/* 50% scrim, then the centered alert card */}
       <View style={[StyleSheet.absoluteFill, { backgroundColor: 'rgba(0,0,0,0.5)' }]} pointerEvents="none" />

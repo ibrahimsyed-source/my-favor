@@ -6,6 +6,8 @@ import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context'
 import { Ionicons } from '@expo/vector-icons';
 import { useFonts, Poppins_400Regular } from '@expo-google-fonts/poppins';
 import { Avatar } from '../components';
+import { MapScene, MAP_SCENE_SUPPORTED } from '../components/MapScene';
+import type { MapSceneMarker } from '../components/MapScene';
 import { useStore } from '../store';
 import { getIncomingApi } from '../api/endpoints';
 import { computePayout, computeFees, FAVOR_TIERS, Favor } from '../types';
@@ -47,7 +49,28 @@ function usePoppins() {
 const CELEBRATION = require('../../assets/img/tracking/celebration.png');
 
 // ---- shared dark-map backdrop -------------------------------------------------
-function MapBackdrop({ route }: { route?: boolean }) {
+// Native: a REAL dark MapView (MapScene) centered on the favor destination (red
+// pin) with the pal's live position as the car marker on en-route screens. Web
+// keeps the drawn v.2 navy backdrop (react-native-maps has no web support).
+function MapBackdrop({ route, dest }: { route?: boolean; dest?: { lat: number; lng: number } | null }) {
+  const origin = usePalOrigin();
+  if (MAP_SCENE_SUPPORTED) {
+    const markers: MapSceneMarker[] = [];
+    if (dest) markers.push({ lat: dest.lat, lng: dest.lng, kind: 'pin' });
+    if (route) markers.push({ lat: origin.lat, lng: origin.lng, kind: 'car' });
+    return (
+      <View style={StyleSheet.absoluteFill}>
+        <MapScene
+          dark
+          center={dest ?? origin}
+          zoom={14}
+          markers={markers}
+          fit={route && dest ? [dest, origin] : undefined}
+          scrim="rgba(13,10,10,0.18)"
+        />
+      </View>
+    );
+  }
   return (
     <View style={StyleSheet.absoluteFill}>
       <View style={[StyleSheet.absoluteFill, { backgroundColor: MAP_BG }]} />
@@ -164,7 +187,7 @@ const PAL_ORIGIN_FALLBACK: Origin = { lat: 25.7617, lng: -80.1918 };
 // getCurrentPositionAsync; keeps the Miami fallback until (and unless) a real fix
 // lands, so the board never shows nonsense distances on web / without permission.
 // Dynamic import so a build lacking the native module can't break the JS bundle.
-function usePalOrigin(): Origin {
+export function usePalOrigin(): Origin {
   const [origin, setOrigin] = useState<Origin>(PAL_ORIGIN_FALLBACK);
   useEffect(() => {
     let cancelled = false;
@@ -519,7 +542,7 @@ export const PalFavorDetail = ({ navigation, route }: any) => {
   if (waiting) {
     return (
       <View style={{ flex: 1, backgroundColor: PAGE_BG }}>
-        <MapBackdrop />
+        <MapBackdrop dest={shownFavor?.location} />
         {/* Neutral back lands on Favor Booked — the favor is already accepted. */}
         <MapTopBar navigation={navigation} onBack={() => navigation.navigate('Navigation')} />
         <View style={st.sheet}>
@@ -585,7 +608,7 @@ export const PalFavorDetail = ({ navigation, route }: any) => {
 
   return (
     <View style={{ flex: 1, backgroundColor: PAGE_BG }}>
-      <MapBackdrop />
+      <MapBackdrop dest={shownFavor?.location} />
       <MapTopBar navigation={navigation} onBack={() => navigation.goBack()} />
       <View style={st.sheet}>
         <Handle />
@@ -697,7 +720,7 @@ export const Navigation = ({ navigation }: any) => {
 
   return (
     <View style={{ flex: 1, backgroundColor: PAGE_BG }}>
-      <MapBackdrop route />
+      <MapBackdrop route dest={fav?.location} />
       <MapTopBar navigation={navigation} banner={banner} />
       <View style={st.sheet}>
         <Handle />
@@ -821,7 +844,7 @@ export const PalFavorInProgress = ({ navigation }: any) => {
 
   return (
     <View style={{ flex: 1, backgroundColor: PAGE_BG }}>
-      <MapBackdrop route />
+      <MapBackdrop route dest={fav?.location} />
       <MapTopBar navigation={navigation} banner={banner} />
       <View style={[st.miniCard, { bottom: insets.bottom + 16 }]}>
         <View style={{ flexDirection: 'row', alignItems: 'center' }}>

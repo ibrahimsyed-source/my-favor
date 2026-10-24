@@ -10,6 +10,14 @@ Buttons: black 48h r8, white Poppins Medium ~15-16 uppercase. White modal card: 
 Poppins Medium 24/36, body 16/24, over rgba(0,0,0,0.5) scrim; primary black btn, secondary gray
 `#E5E5E5` btn (label "CLOSE"). Frames are 414w (some taller than 896 = scrollable).
 
+⚠️ DELIBERATE DIVERGENCE (2026-10-24, product decision — user asked for working maps on every
+screen): every static Figma map export (member Home light map, provider dark map, Searching
+backdrop, providers blurred map, pal.tsx drawn navy map, tracking) is now a REAL map on
+iOS/Android via `src/components/MapScene(.native).tsx` / LiveMap — pannable, centered on real
+coordinates, with the v.2 pin visuals (red teardrops, price tags, avatar ring) rebuilt as map
+markers. The Figma map art remains ONLY as the web fallback (react-native-maps has no web
+support). Do not "restore" the baked map images on native in a future fidelity pass.
+
 ## USER APP v.2
 
 ### Row: Launch/Welcome — onboarding.tsx — MATCHES (verify copy/dots only)

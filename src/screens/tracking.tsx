@@ -217,18 +217,27 @@ export const FavorTracking = ({ navigation }: any) => {
       <StatusBar barStyle="dark-content" />
 
       {/* Live map backdrop — interactive react-native-maps on native, StaticMap
-          image fallback on web (see components/LiveMap). Full-bleed. The member
-          sees the pal's live GPS as a second (blue) marker once it streams in. */}
-      <View style={{ position: 'absolute', top: -16, left: -16, right: -16, bottom: -16 }} pointerEvents="none">
+          image fallback on web (see components/LiveMap). Full-bleed and pannable
+          (the sheet/header are siblings rendered above, so they keep their
+          touches). The member sees the pal's live GPS as a second (blue) marker
+          once it streams in. The decorative Figma route/chips are screen-anchored,
+          so they only make sense over the fixed web image — on native the real
+          pins move with the map and the overlay is skipped. */}
+      <View style={{ position: 'absolute', top: -16, left: -16, right: -16, bottom: -16 }}>
         <LiveMap
           lat={fav?.location?.lat}
           lng={fav?.location?.lng}
-          markers={hasLive && palLoc ? [{ lat: palLoc.lat, lng: palLoc.lng, label: 'Your Pal' }] : undefined}
+          markers={
+            palLoc && (Platform.OS === 'web' ? hasLive : !completed)
+              ? [{ lat: palLoc.lat, lng: palLoc.lng, label: 'Your Pal' }]
+              : undefined
+          }
           height={WIN_H + 32}
           zoom={15}
           label=""
         >
-          <View style={StyleSheet.absoluteFill}>
+          {Platform.OS === 'web' ? (
+          <View style={StyleSheet.absoluteFill} pointerEvents="none">
             {arrived || completed ? (
               // Pal + car together at the member's pin.
               <View style={[styles.mapMarkerRow, { top: '42%', left: '42%' }]}>
@@ -256,6 +265,7 @@ export const FavorTracking = ({ navigation }: any) => {
               </>
             )}
           </View>
+          ) : null}
         </LiveMap>
       </View>
 

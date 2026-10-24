@@ -8,10 +8,13 @@ import { useFocusEffect } from '@react-navigation/native';
 import { Ionicons } from '@expo/vector-icons';
 import { useFonts, Poppins_400Regular } from '@expo-google-fonts/poppins';
 import { Txt, Avatar } from '../components';
+import { MapScene, MAP_SCENE_SUPPORTED } from '../components/MapScene';
 import { useStore } from '../store';
 import { FAVOR_TIERS } from '../types';
+import { getKnownLocation } from '../lib/location';
+import { GEOCODE_FALLBACK } from '../lib/geocode';
 import { TIERS } from './request';
-import { OpenFavorsList } from './pal';
+import { OpenFavorsList, usePalOrigin } from './pal';
 
 // ---------------------------------------------------------------------------
 // Home — "Dashboard Main v2" (Figma 1660:15783, User App v.2 › Dashboard row).
@@ -46,6 +49,15 @@ const PAL_PINS = [
   { x: 0.13, y: 0.08 }, { x: 0.72, y: 0.10 },
   { x: 0.13, y: 0.62 }, { x: 0.75, y: 0.55 },
   { x: 0.60, y: 0.78 }, { x: 0.87, y: 0.30 },
+];
+
+// The same six pins for the REAL native map, as lat/lng offsets (degrees) from
+// the member's position — decorative, like the frame's, but they pan/zoom with
+// the map instead of floating over it. Layout mirrors PAL_PINS spatially.
+const PAL_PIN_OFFSETS = [
+  { dlat: 0.0036, dlng: -0.0034 }, { dlat: 0.0034, dlng: 0.0022 },
+  { dlat: -0.0012, dlng: -0.0036 }, { dlat: -0.0006, dlng: 0.0026 },
+  { dlat: -0.0028, dlng: 0.0010 }, { dlat: 0.0016, dlng: 0.0038 },
 ];
 
 const PalPin: React.FC<{ x: number; y: number }> = ({ x, y }) => (
@@ -146,6 +158,9 @@ function PalHome({ navigation }: any) {
   // bottom. The Map view stays one tap away via the segmented toggle.
   const [viewMode, setViewMode] = React.useState<'list' | 'map'>('list');
   const [showMemberModal, setShowMemberModal] = React.useState(false);
+  // The pal's real position (device GPS with the demo-city fallback) — centre of
+  // the real native map and origin of the radius circle / avatar ring.
+  const origin = usePalOrigin();
 
   // Confirm from the Favor Member Modal — flip role in place; the role-aware
   // Home re-renders as the member request-a-favor dashboard.
@@ -242,25 +257,62 @@ function PalHome({ navigation }: any) {
           style={{ flex: 1 }}
           onLayout={(e) => setBox({ w: e.nativeEvent.layout.width, h: e.nativeEvent.layout.height })}
         >
-          <Image source={DARK_MAP} style={StyleSheet.absoluteFill} resizeMode="cover" accessible={false} />
-
-          {/* the pal's avatar inside the baked red ring */}
-          {box.w > 0 && (
-            <View pointerEvents="none" style={[palStyles.avatarRing, { left: pin.x - 20, top: pin.y - 20 }]}>
-              <Avatar uri={s.user?.avatar} size={33} name={s.user?.firstName ?? '?'} />
-            </View>
-          )}
-
-          {/* open favors as red price pins — tap to view + accept */}
-          {incoming.slice(0, PIN_SPOTS.length).map((f, i) => (
-            <PricePin
-              key={f.id}
-              price={f.price}
-              x={PIN_SPOTS[i].x}
-              y={PIN_SPOTS[i].y}
-              onPress={() => navigation.navigate('PalFavorDetail', { favorId: f.id })}
+          {MAP_SCENE_SUPPORTED ? (
+            // Native: REAL dark map — open favors as red price pins at their
+            // actual locations (tap to view + accept), the pal's avatar at their
+            // real position inside the radius circle. Fits every pin in view.
+            <MapScene
+              dark
+              center={origin}
+              zoom={13}
+              radiusM={1500}
+              markers={[
+                ...incoming
+                  .filter((f) => f.location)
+                  .map((f) => ({
+                    lat: f.location.lat,
+                    lng: f.location.lng,
+                    kind: 'price' as const,
+                    price: f.price,
+                    onPress: () => navigation.navigate('PalFavorDetail', { favorId: f.id }),
+                  })),
+                {
+                  lat: origin.lat,
+                  lng: origin.lng,
+                  kind: 'avatar' as const,
+                  avatarUri: s.user?.avatar,
+                  avatarName: s.user?.firstName ?? '?',
+                },
+              ]}
+              fit={
+                incoming.length > 0
+                  ? [origin, ...incoming.filter((f) => f.location).map((f) => ({ lat: f.location.lat, lng: f.location.lng }))]
+                  : undefined
+              }
             />
-          ))}
+          ) : (
+            <>
+              <Image source={DARK_MAP} style={StyleSheet.absoluteFill} resizeMode="cover" accessible={false} />
+
+              {/* the pal's avatar inside the baked red ring */}
+              {box.w > 0 && (
+                <View pointerEvents="none" style={[palStyles.avatarRing, { left: pin.x - 20, top: pin.y - 20 }]}>
+                  <Avatar uri={s.user?.avatar} size={33} name={s.user?.firstName ?? '?'} />
+                </View>
+              )}
+
+              {/* open favors as red price pins — tap to view + accept */}
+              {incoming.slice(0, PIN_SPOTS.length).map((f, i) => (
+                <PricePin
+                  key={f.id}
+                  price={f.price}
+                  x={PIN_SPOTS[i].x}
+                  y={PIN_SPOTS[i].y}
+                  onPress={() => navigation.navigate('PalFavorDetail', { favorId: f.id })}
+                />
+              ))}
+            </>
+          )}
 
           {incoming.length === 0 && (
             <View pointerEvents="none" style={palStyles.mapEmpty}>
@@ -482,6 +534,20 @@ function MemberHome({ navigation }: any) {
   const active = s.activeFavor;
   const address = s.draftFavor?.location?.address ?? s.user?.homeAddress ?? 'Set your favor location';
 
+  // Centre of the REAL native map: the device's position when location
+  // permission was already granted (never prompts here — ConfirmAddress asks at
+  // the contextual moment), else the draft favor's location, else the demo city.
+  const [deviceLoc, setDeviceLoc] = React.useState<{ lat: number; lng: number } | null>(null);
+  React.useEffect(() => {
+    if (!MAP_SCENE_SUPPORTED) return;
+    let cancelled = false;
+    void getKnownLocation().then((l) => {
+      if (l && !cancelled) setDeviceLoc(l);
+    });
+    return () => { cancelled = true; };
+  }, []);
+  const mapCenter = deviceLoc ?? s.draftFavor?.location ?? GEOCODE_FALLBACK;
+
   // Dark header → light status-bar content while this screen is focused.
   useFocusEffect(
     React.useCallback(() => {
@@ -628,18 +694,44 @@ function MemberHome({ navigation }: any) {
 
         {/* ---- MAP ------------------------------------------------------- */}
         <View style={styles.mapBox}>
-          <Image source={MAP_IMG} style={StyleSheet.absoluteFill} resizeMode="cover" accessible={false} />
-          {/* soft radius circle around the user */}
-          <View pointerEvents="none" style={styles.radius} />
-          {PAL_PINS.map((p, i) => <PalPin key={i} x={p.x} y={p.y} />)}
-          {/* the user's avatar pin at the circle centre */}
-          <View pointerEvents="none" style={styles.avatarPin} accessibilityLabel="Your location on the map">
-            {s.user?.avatar ? (
-              <Avatar uri={s.user.avatar} size={26} name={s.user?.firstName ?? '?'} />
-            ) : (
-              <Image source={PIN_AVATAR} style={{ width: 30, height: 30, borderRadius: 15 }} />
-            )}
-          </View>
+          {MAP_SCENE_SUPPORTED ? (
+            // Native: a REAL pannable map around the member (radius circle +
+            // avatar at centre, decorative pal pins pinned to coordinates).
+            <MapScene
+              center={mapCenter}
+              zoom={15}
+              radiusM={420}
+              markers={[
+                ...PAL_PIN_OFFSETS.map((o) => ({
+                  lat: mapCenter.lat + o.dlat,
+                  lng: mapCenter.lng + o.dlng,
+                  kind: 'person' as const,
+                })),
+                {
+                  lat: mapCenter.lat,
+                  lng: mapCenter.lng,
+                  kind: 'avatar' as const,
+                  avatarUri: s.user?.avatar,
+                  avatarName: s.user?.firstName ?? '?',
+                },
+              ]}
+            />
+          ) : (
+            <>
+              <Image source={MAP_IMG} style={StyleSheet.absoluteFill} resizeMode="cover" accessible={false} />
+              {/* soft radius circle around the user */}
+              <View pointerEvents="none" style={styles.radius} />
+              {PAL_PINS.map((p, i) => <PalPin key={i} x={p.x} y={p.y} />)}
+              {/* the user's avatar pin at the circle centre */}
+              <View pointerEvents="none" style={styles.avatarPin} accessibilityLabel="Your location on the map">
+                {s.user?.avatar ? (
+                  <Avatar uri={s.user.avatar} size={26} name={s.user?.firstName ?? '?'} />
+                ) : (
+                  <Image source={PIN_AVATAR} style={{ width: 30, height: 30, borderRadius: 15 }} />
+                )}
+              </View>
+            </>
+          )}
         </View>
       </ScrollView>
 
