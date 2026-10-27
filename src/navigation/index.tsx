@@ -26,6 +26,7 @@ import * as LegalScr from '../screens/legal';
 import * as Sys from '../screens/system';
 import * as Scenario from '../screens/scenarios';
 import { OfflineBanner } from '../components/OfflineBanner';
+import { ActiveFavorPill } from '../components/ActiveFavorPill';
 
 const Stack = createNativeStackNavigator<RootStackParamList>();
 const Tab = createBottomTabNavigator<TabParamList>();
@@ -282,6 +283,9 @@ export default function RootNavigator() {
         </Stack.Group>
       )}
     </Stack.Navigator>
+      {/* Uber-style live-favor bar — persists across every screen while a favor
+          is active (the store's 4s poll feeds it the pal's live position). */}
+      <ActiveFavorPill />
       {/* Connectivity indicator overlays the whole stack (non-interactive). */}
       <OfflineBanner />
     </View>

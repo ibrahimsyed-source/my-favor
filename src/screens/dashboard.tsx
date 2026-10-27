@@ -7,7 +7,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useFocusEffect } from '@react-navigation/native';
 import { Ionicons } from '@expo/vector-icons';
 import { useFonts, Poppins_400Regular } from '@expo-google-fonts/poppins';
-import { Txt, Avatar } from '../components';
+import { Avatar } from '../components';
 import { MapScene, MAP_SCENE_SUPPORTED } from '../components/MapScene';
 import { useStore } from '../store';
 import { FAVOR_TIERS } from '../types';
@@ -144,15 +144,6 @@ function PalHome({ navigation }: any) {
   const s = useStore();
 
   const incoming = s.incomingFavors;
-  // A favor the pal has already accepted. Navigation / PalFavorInProgress are
-  // root-stack screens with no tab bar, so once a pal leaves them (Home tab,
-  // drawer, Android back) there is otherwise no route back to the live job.
-  const active = s.activeFavor;
-  const resumeActive = () => {
-    if (!active) return;
-    const dest = active.status === 'arrived' || active.status === 'in_progress' ? 'PalFavorInProgress' : 'Navigation';
-    navigation.navigate(dest);
-  };
   // Default to the LIST view (closest favors first) so a pal sees every open
   // request the moment they open the app — not a single blast card at the
   // bottom. The Map view stays one tap away via the segmented toggle.
@@ -322,28 +313,9 @@ function PalHome({ navigation }: any) {
         </View>
       )}
 
-      {/* Resume the pal's in-progress favor — the only route back to the live
-          Navigation / Mark-as-done screens once they've left them. */}
-      {active ? (
-        <TouchableOpacity
-          activeOpacity={0.9}
-          onPress={resumeActive}
-          accessibilityRole="button"
-          accessibilityLabel="Resume active favor"
-          style={[palStyles.resumeCard, { bottom: insets.bottom + 16 }]}
-        >
-          <View style={palStyles.resumeIcon}>
-            <Ionicons name="navigate" size={20} color={WHITE} />
-          </View>
-          <View style={{ flex: 1 }}>
-            <Text style={palStyles.resumeCaption}>Resume active favor</Text>
-            <Text style={palStyles.resumeTitle} numberOfLines={1}>
-              {active.description || 'Favor in progress'}
-            </Text>
-          </View>
-          <Ionicons name="chevron-forward" size={18} color="rgba(255,255,255,0.6)" />
-        </TouchableOpacity>
-      ) : null}
+      {/* Route back to a live favor: the app-wide ActiveFavorPill (Uber-style
+          trip bar, mounted at the navigation root) replaces the old per-screen
+          resume card. */}
 
       {/* Favor Member Modal v2 — gates the "Switch to request a favor" pill */}
       <FavorMemberModal
@@ -412,35 +384,6 @@ const palStyles = StyleSheet.create({
   segmentText: { fontFamily: P500, fontSize: 13, color: WHITE },
   segmentTextActive: { color: INK },
   openCount: { fontFamily: P400, fontSize: 13, color: NAVY_SUB },
-  resumeCard: {
-    position: 'absolute',
-    left: 16,
-    right: 16,
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 12,
-    backgroundColor: NAVY,
-    borderRadius: 16,
-    paddingHorizontal: 12,
-    height: 64,
-    borderWidth: StyleSheet.hairlineWidth,
-    borderColor: 'rgba(255,255,255,0.12)',
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.4,
-    shadowRadius: 10,
-    elevation: 6,
-  },
-  resumeIcon: {
-    width: 40,
-    height: 40,
-    borderRadius: 12,
-    backgroundColor: RED,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  resumeCaption: { fontFamily: P400, fontSize: 12, lineHeight: 16, color: 'rgba(255,255,255,0.6)' },
-  resumeTitle: { fontFamily: P500, fontSize: 14, lineHeight: 20, color: WHITE },
   mapEmpty: { position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, alignItems: 'center', justifyContent: 'center' },
   mapEmptyText: {
     fontFamily: P500,
@@ -531,7 +474,6 @@ function MemberHome({ navigation }: any) {
   const s = useStore();
   const [fontsLoaded] = useFonts({ Poppins_400Regular });
 
-  const active = s.activeFavor;
   const address = s.draftFavor?.location?.address ?? s.user?.homeAddress ?? 'Set your favor location';
 
   // Centre of the REAL native map: the device's position when location
@@ -567,17 +509,6 @@ function MemberHome({ navigation }: any) {
     if (!s.user?.palVerified) { navigation.navigate('Vetting'); return; }
     // Flips Home into the provider dashboard in place (design toggle metaphor).
     s.setRole('pal');
-  };
-
-  const resumeActive = () => {
-    if (!active) return;
-    const iAmPal = active.palId === s.user?.id;
-    if (iAmPal) {
-      const dest = active.status === 'arrived' || active.status === 'in_progress' ? 'PalFavorInProgress' : 'Navigation';
-      navigation.navigate(dest);
-    } else {
-      navigation.navigate('FavorTracking');
-    }
   };
 
   if (!fontsLoaded) return <View style={{ flex: 1, backgroundColor: INK }} />;
@@ -735,27 +666,8 @@ function MemberHome({ navigation }: any) {
         </View>
       </ScrollView>
 
-      {/* RESUME ACTIVE FAVOR (app addition — only while a favor is live) */}
-      {active ? (
-        <TouchableOpacity
-          activeOpacity={0.9}
-          onPress={resumeActive}
-          accessibilityRole="button"
-          accessibilityLabel="Resume active favor"
-          style={styles.resumeCard}
-        >
-          <View style={styles.resumeIcon}>
-            <Ionicons name="navigate" size={20} color={WHITE} />
-          </View>
-          <View style={{ flex: 1 }}>
-            <Txt variant="caption" color="rgba(255,255,255,0.6)">Resume active favor</Txt>
-            <Txt variant="label" color={WHITE} numberOfLines={1}>
-              {active.description || (active.palId === s.user?.id ? 'Favor in progress' : 'Track your favor')}
-            </Txt>
-          </View>
-          <Ionicons name="chevron-forward" size={18} color="rgba(255,255,255,0.5)" />
-        </TouchableOpacity>
-      ) : null}
+      {/* Route back to a live favor: handled app-wide by ActiveFavorPill (the
+          Uber-style trip bar at the navigation root). */}
     </View>
   );
 }
@@ -900,31 +812,4 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
   },
 
-  // Resume-active floating card (kept from the previous build)
-  resumeCard: {
-    position: 'absolute',
-    left: 24,
-    right: 24,
-    bottom: 16,
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 12,
-    backgroundColor: INK,
-    borderRadius: 16,
-    paddingHorizontal: 12,
-    height: 64,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.4,
-    shadowRadius: 10,
-    elevation: 6,
-  },
-  resumeIcon: {
-    width: 40,
-    height: 40,
-    borderRadius: 12,
-    backgroundColor: RED,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
 });

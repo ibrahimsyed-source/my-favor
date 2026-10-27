@@ -356,8 +356,11 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
   // stream their device GPS to the server so the member can watch them approach.
   // Derived from stable fields (not the activeFavor object) so the 4s poll above,
   // which swaps in a fresh favor object each tick, doesn't restart the GPS watch. ----
+  // Role-independent on purpose: being the ASSIGNED PAL of the favor is what
+  // obligates streaming — flipping the UI toggle back to member mid-favor must
+  // not blind the member's live map.
   const palBroadcastFavorId =
-    user?.role === 'pal' &&
+    user &&
     activeFavor &&
     activeFavor.palId === user.id &&
     PAL_BROADCAST_STATUSES.includes(activeFavor.status)

@@ -3,6 +3,7 @@ import { StyleSheet, Text, View } from 'react-native';
 import MapView, { Circle, Marker } from 'react-native-maps';
 import { Ionicons } from '@expo/vector-icons';
 import { Avatar } from './index';
+import { PalMarkerBadge } from './PalMarker';
 import type { MapSceneMarker, MapSceneProps } from './MapScene';
 
 // MapScene — NATIVE implementation (iOS/Android): a real MapView (Apple Maps on
@@ -26,7 +27,13 @@ const SceneMarker: React.FC<{ m: MapSceneMarker; index: number }> = ({ m, index 
   const key = `${m.kind ?? 'pin'}-${index}`;
   switch (m.kind) {
     case 'pal':
-      return <Marker key={key} coordinate={coordinate} pinColor="#2563EB" onPress={m.onPress} />;
+      // Live pal position — the My Favor logo badge (same marker the tracking
+      // screen's LiveMap uses), not a stock pin.
+      return (
+        <Marker key={key} coordinate={coordinate} anchor={{ x: 0.5, y: 0.5 }} onPress={m.onPress}>
+          <PalMarkerBadge size={40} />
+        </Marker>
+      );
     case 'price':
       return (
         <Marker key={key} coordinate={coordinate} anchor={{ x: 0.5, y: 1 }} onPress={m.onPress}>
