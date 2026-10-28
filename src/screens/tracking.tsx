@@ -95,12 +95,12 @@ export const FavorTracking = ({ navigation }: any) => {
   const [arrivedSeen, setArrivedSeen] = useState(false);
   const [repostDismissed, setRepostDismissed] = useState(false);
 
-  // Display values from live state, with the Figma literals as fallbacks.
-  const palName = pal ? `${pal.firstName} ${pal.lastName}` : 'Fabrizio L.';
-  const palAvatar = pal?.avatar ?? 'https://i.pravatar.cc/150?img=12';
-  const palRating = (pal?.rating ?? 4.9).toFixed(1);
-  const etaShort = fav?.etaWindow ?? '11:50 - 12:10';
-  const etaLong = fav?.etaWindow ?? '11:50 - 12:10PM';
+  // Real pal identity only — the pal record arrives via the store's 4s poll
+  // (getPalApi/mergePal). Until then: a neutral name and an initials avatar,
+  // never a placeholder person.
+  const palName = pal ? `${pal.firstName} ${pal.lastName}`.trim() : 'Your Favor Pal';
+  const palAvatar = pal?.avatar; // undefined → Avatar renders initials from name
+  const palRating = pal?.rating && pal.rating > 0 ? pal.rating.toFixed(1) : 'New';
 
   const status = fav?.status ?? 'matched';
   const arrived = status === 'arrived' || status === 'in_progress';
@@ -120,6 +120,23 @@ export const FavorTracking = ({ navigation }: any) => {
       : liveMiles != null
         ? `${fmtMiles(liveMiles)} away`
         : 'Locating your Pal…';
+
+  // Arrival window: production favors carry no server etaWindow, so compute one
+  // from the live distance (~20 mph urban average, 10-minute window, min 3 min).
+  const fmtClock = (ms: number) => new Date(ms).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
+  const etaWindow = (() => {
+    if (fav?.etaWindow) return fav.etaWindow;
+    if (liveMiles != null && !arrived && !completed) {
+      const mins = Math.max(3, Math.round(liveMiles * 3));
+      const from = fmtClock(Date.now() + mins * 60000).replace(/\s?[AP]M$/i, '');
+      const to = fmtClock(Date.now() + (mins + 10) * 60000).replace(/\s/g, '');
+      return `${from} - ${to}`;
+    }
+    if (fav?.scheduledFor) return fmtClock(fav.scheduledFor);
+    return null;
+  })();
+  const etaShort = etaWindow ?? 'ETA pending';
+  const etaLong = etaWindow ?? 'ETA pending';
 
   // Unread messages from this Pal → red "Message your Favor Pal" row + badge.
   const thread = pal ? s.threads.find((t) => t.withUser.id === pal.id) : undefined;
@@ -212,6 +229,27 @@ export const FavorTracking = ({ navigation }: any) => {
     </TouchableOpacity>
   );
 
+  // Nothing to track (deep link / stale notification after the favor ended) —
+  // a safe exit instead of a fabricated "booked" sheet. Local `cancelled` keeps
+  // its modal mounted through our own cancel flow (which nulls the favor).
+  if (!fav && !cancelled) {
+    return (
+      <SafeAreaView style={{ flex: 1, backgroundColor: WHITE, justifyContent: 'center' }} edges={['top', 'bottom']}>
+        <StatusBar barStyle="dark-content" />
+        <Text style={styles.sheetTitle}>No active favor to track</Text>
+        <TouchableOpacity
+          style={styles.blackBtn}
+          activeOpacity={0.85}
+          onPress={() => navigation.navigate('Tabs', { screen: 'Home' })}
+          accessibilityRole="button"
+          accessibilityLabel="Back to home"
+        >
+          <Text style={styles.blackBtnText}>BACK TO HOME</Text>
+        </TouchableOpacity>
+      </SafeAreaView>
+    );
+  }
+
   return (
     <View style={{ flex: 1, backgroundColor: '#E9EEF3' }}>
       <StatusBar barStyle="dark-content" />
@@ -242,7 +280,7 @@ export const FavorTracking = ({ navigation }: any) => {
               // Pal + car together at the member's pin.
               <View style={[styles.mapMarkerRow, { top: '42%', left: '42%' }]}>
                 <View style={styles.palPin}>
-                  <Avatar uri={palAvatar} size={30} />
+                  <Avatar uri={palAvatar} size={30} name={palName} />
                 </View>
                 <Ionicons name="car-sport" size={24} color={RED} style={{ marginLeft: 2 }} />
               </View>
@@ -259,7 +297,7 @@ export const FavorTracking = ({ navigation }: any) => {
                 <MapChip label="13 mins ETA" top="40%" left="55%" />
                 <View style={[styles.routeH, { top: '52%', left: '45%', width: '8%' }]} />
                 <View style={[styles.palPin, { position: 'absolute', top: '49.5%', left: '38%' }]}>
-                  <Avatar uri={palAvatar} size={30} />
+                  <Avatar uri={palAvatar} size={30} name={palName} />
                 </View>
                 <MapChip label="2nd St." top="56%" left="35%" />
               </>
@@ -338,7 +376,7 @@ export const FavorTracking = ({ navigation }: any) => {
             <View style={styles.divider} />
             <View style={styles.arrivedProfileRow}>
               <View>
-                <Avatar uri={palAvatar} size={64} />
+                <Avatar uri={palAvatar} size={64} name={palName} />
                 {unread > 0 ? (
                   <View style={styles.unreadBadge}>
                     <Text style={styles.unreadBadgeText}>{unread}</Text>
@@ -372,7 +410,7 @@ export const FavorTracking = ({ navigation }: any) => {
             <Text style={styles.sheetTitle}>Favor Booked</Text>
             <View style={styles.divider} />
             <View style={styles.expandedProfileRow}>
-              <Avatar uri={palAvatar} size={64} />
+              <Avatar uri={palAvatar} size={64} name={palName} />
               {profileCol}
             </View>
             <Text style={styles.etaBig}>{etaLong}</Text>
@@ -402,7 +440,7 @@ export const FavorTracking = ({ navigation }: any) => {
           // ------------------- Favor Booked - Minimized (#125:8826) -------------------
           <TouchableOpacity activeOpacity={0.85} onPress={() => setExpanded(true)}>
             <View style={styles.minRow}>
-              <Avatar uri={palAvatar} size={48} />
+              <Avatar uri={palAvatar} size={48} name={palName} />
               <View style={{ flex: 1, marginLeft: 12 }}>
                 <Text style={styles.palName}>{palName}</Text>
                 <View style={styles.starRow}>

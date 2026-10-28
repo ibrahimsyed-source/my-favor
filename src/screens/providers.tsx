@@ -58,16 +58,11 @@ const fmtShort = (ms: number) => {
   return `${d.getDate()} ${MONTHS[d.getMonth()].slice(0, 3)} ${d.getFullYear()}`;
 };
 
-// distance copy: closest pal is "1 mile away", the rest plural.
-const distanceLabel = (i: number) => `${i + 1} mile${i === 0 ? '' : 's'} away`;
-
-// Decorative nearby-pal pins for the REAL native map (lat/lng offsets from the
-// favor location) — stand-ins like the frame's, but they live on the map.
-const NEARBY_PAL_OFFSETS = [
-  { dlat: 0.0028, dlng: -0.0024 },
-  { dlat: 0.0012, dlng: 0.0030 },
-  { dlat: -0.0022, dlng: -0.0010 },
-];
+// Honest locality copy: the pals directory carries no live position (only
+// city/state), so never fabricate a mileage. The old build showed "N miles
+// away" derived from the LIST INDEX.
+const palArea = (p: { city?: string; state?: string }) =>
+  p.city ? `${p.city}${p.state ? `, ${p.state}` : ''}` : 'Nearby';
 
 // Full-bleed map backdrop. Native: a REAL map of the favor location, dimmed
 // like the v.2 frames (the design's gaussian blur has no RN equivalent — the
@@ -84,14 +79,9 @@ const MapBackdrop: React.FC = () => {
         zoom={15}
         interactive={false}
         scrim="rgba(0,0,0,0.5)"
-        markers={[
-          { lat: loc.lat, lng: loc.lng, kind: 'pin' },
-          ...NEARBY_PAL_OFFSETS.map((o) => ({
-            lat: loc.lat + o.dlat,
-            lng: loc.lng + o.dlng,
-            kind: 'person' as const,
-          })),
-        ]}
+        // Only the favor-location pin: pals have no live positions outside an
+        // active favor, so decorative "nearby pal" pins would be fiction.
+        markers={[{ lat: loc.lat, lng: loc.lng, kind: 'pin' }]}
       />
     );
   }
@@ -199,7 +189,7 @@ export const ProviderResults = ({ navigation }: any) => {
               activeOpacity={0.85}
               style={styles.palCard}
               accessibilityRole="button"
-              accessibilityLabel={`${pal.firstName} ${pal.lastName}, ${pal.rating.toFixed(1)} stars, ${distanceLabel(i)}. View details`}
+              accessibilityLabel={`${pal.firstName} ${pal.lastName}, ${pal.rating.toFixed(1)} stars, ${palArea(pal)}. View details`}
               onPress={() => navigation.navigate('ProviderDetail', { palId: pal.id })}
             >
               <Avatar uri={pal.avatar} size={80} name={pal.firstName} />
@@ -208,9 +198,9 @@ export const ProviderResults = ({ navigation }: any) => {
               </Txt>
               <View style={styles.rateRow}>
                 <Ionicons name="star" size={18} color={STAR} />
-                <Txt style={styles.rateText}>{pal.rating.toFixed(1)}</Txt>
+                <Txt style={styles.rateText}>{pal.rating > 0 ? pal.rating.toFixed(1) : 'New'}</Txt>
               </View>
-              <Txt style={styles.palDistance}>{distanceLabel(i)}</Txt>
+              <Txt style={styles.palDistance}>{palArea(pal)}</Txt>
             </TouchableOpacity>
           ))}
         </ScrollView>
@@ -232,7 +222,7 @@ export const ProviderResults = ({ navigation }: any) => {
 // continue to FavorTracking.)
 // ---------------------------------------------------------------------------
 const FavorPalProfile: React.FC<{
-  pal: { avatar?: string; firstName: string; lastName: string; rating: number; totalFavors: number; yearsActive: number };
+  pal: { avatar?: string; firstName: string; lastName: string; rating: number; totalFavors: number; yearsActive: number; city?: string; state?: string };
   reviews: Review[];
   onBack: () => void;
   onBook: () => void;
@@ -258,11 +248,11 @@ const FavorPalProfile: React.FC<{
         showsVerticalScrollIndicator={false}
         contentContainerStyle={{ paddingBottom: Math.max(insets.bottom, 24) + 16 }}
       >
-        {/* Avatar / name / distance */}
+        {/* Avatar / name / locality (no live pal position exists — never fake a mileage) */}
         <View style={{ alignItems: 'center', marginTop: 24 }}>
           <Avatar uri={pal.avatar} size={134} name={pal.firstName} />
           <Txt style={styles.profileName}>{pal.firstName} {pal.lastName}</Txt>
-          <Txt style={styles.profileDistance}>1 mile away</Txt>
+          <Txt style={styles.profileDistance}>{palArea(pal)}</Txt>
         </View>
 
         <View style={[styles.divider, { marginTop: 23 }]} />
@@ -274,14 +264,14 @@ const FavorPalProfile: React.FC<{
             <Txt style={styles.statLabel}>Total Favors</Txt>
           </View>
           <View style={styles.statCell}>
-            <Txt style={styles.statValue}>{pal.rating.toFixed(1)}</Txt>
+            <Txt style={styles.statValue}>{pal.rating > 0 ? pal.rating.toFixed(1) : 'New'}</Txt>
             <View style={styles.statLabelRow}>
               <Ionicons name="star" size={18} color={STAR} />
               <Txt style={{ ...styles.statLabel, marginLeft: 4 }}>Rating</Txt>
             </View>
           </View>
           <View style={styles.statCell}>
-            <Txt style={styles.statValue}>{pal.yearsActive}</Txt>
+            <Txt style={styles.statValue}>{pal.yearsActive > 0 ? pal.yearsActive : '—'}</Txt>
             <Txt style={styles.statLabel}>Years</Txt>
           </View>
         </View>
@@ -336,18 +326,31 @@ export const ProviderDetail = ({ navigation, route }: any) => {
   const { width } = useWindowDimensions();
   const insets = useSafeAreaInsets();
   const [fontsLoaded] = useFonts({ Poppins_400Regular, Poppins_400Regular_Italic });
-  const pal = pals.find((p) => p.id === route?.params?.palId) ?? pals[0];
+  // Strictly the routed pal — the old `?? pals[0]` silently showed (and could
+  // BOOK) the wrong person when the id wasn't in the directory.
+  const pal = pals.find((p) => p.id === route?.params?.palId);
 
   // Real reviews members have left for this pal (fetched from the backend).
   const [palRevs, setPalRevs] = useState<Review[]>([]);
   const [showProfile, setShowProfile] = useState(false);
+  const palId = pal?.id;
   useEffect(() => {
+    if (!palId) return;
     let alive = true;
-    getPalReviewsApi(pal.id).then(({ reviews }) => { if (alive) setPalRevs(reviews); }).catch(() => undefined);
+    getPalReviewsApi(palId).then(({ reviews }) => { if (alive) setPalRevs(reviews); }).catch(() => undefined);
     return () => { alive = false; };
-  }, [pal.id]);
+  }, [palId]);
 
   if (!fontsLoaded) return <View style={{ flex: 1, backgroundColor: '#FFFFFF' }} />;
+
+  if (!pal) {
+    return (
+      <View style={{ flex: 1, backgroundColor: '#FFFFFF', alignItems: 'center', justifyContent: 'center', padding: 32 }}>
+        <Txt style={styles.detailName}>This Favor Pal is unavailable</Txt>
+        <Button title="GO BACK" variant="primary" onPress={() => navigation.goBack()} style={{ marginTop: 20, alignSelf: 'stretch' }} />
+      </View>
+    );
+  }
 
   const s = width / FRAME_W;
   const quote = palRevs[0];
@@ -387,20 +390,29 @@ export const ProviderDetail = ({ navigation, route }: any) => {
                 </Txt>
                 <View style={styles.rateRow}>
                   <Ionicons name="star" size={20} color={STAR} />
-                  <Txt style={styles.detailRating}>{pal.rating.toFixed(1)}</Txt>
+                  <Txt style={styles.detailRating}>{pal.rating > 0 ? pal.rating.toFixed(1) : 'New'}</Txt>
                 </View>
               </View>
-              <Txt style={styles.detailDistance}>1 mile away</Txt>
-              <View style={{ marginTop: 8 }}>
-                <View style={styles.statIconRow}>
-                  <Ionicons name="thumbs-up" size={18} color={ICON_GRAY} />
-                  <Txt style={styles.statIconText}>{pal.reliability}% Reliable</Txt>
+              <Txt style={styles.detailDistance}>{palArea(pal)}</Txt>
+              {/* Reliability / positive-review stats only once they're real —
+                  the server computes them from history; new pals show neither
+                  rather than a fabricated "0%". */}
+              {pal.reliability > 0 || pal.positiveReviews > 0 ? (
+                <View style={{ marginTop: 8 }}>
+                  {pal.reliability > 0 ? (
+                    <View style={styles.statIconRow}>
+                      <Ionicons name="thumbs-up" size={18} color={ICON_GRAY} />
+                      <Txt style={styles.statIconText}>{pal.reliability}% Reliable</Txt>
+                    </View>
+                  ) : null}
+                  {pal.positiveReviews > 0 ? (
+                    <View style={[styles.statIconRow, { marginTop: 7 }]}>
+                      <Ionicons name="star" size={18} color={ICON_GRAY} />
+                      <Txt style={styles.statIconText}>{pal.positiveReviews}% Positive Reviews</Txt>
+                    </View>
+                  ) : null}
                 </View>
-                <View style={[styles.statIconRow, { marginTop: 7 }]}>
-                  <Ionicons name="star" size={18} color={ICON_GRAY} />
-                  <Txt style={styles.statIconText}>{pal.positiveReviews}% Positive Reviews</Txt>
-                </View>
-              </View>
+              ) : null}
             </View>
           </TouchableOpacity>
 
@@ -408,7 +420,7 @@ export const ProviderDetail = ({ navigation, route }: any) => {
 
           {/* Bio */}
           <Txt style={styles.helpHeading}>How I can help?</Txt>
-          <Txt style={styles.helpBody}>{pal.bio}</Txt>
+          <Txt style={styles.helpBody}>{pal.bio || 'This pal hasn’t written a bio yet.'}</Txt>
 
           {/* Latest review quote */}
           {quote && (

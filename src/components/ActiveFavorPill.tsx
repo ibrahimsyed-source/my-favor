@@ -113,8 +113,14 @@ export const ActiveFavorPill: React.FC = () => {
     title = `${palFirst} completed your favor`;
     sub = 'Tap to rate your Pal';
   } else if (status === 'requested') {
-    title = 'Finding your Favor Pal…';
-    sub = 'We’re blasting your favor to nearby pals';
+    const pendingOffers = (fav.offers ?? []).filter((o) => o.status === 'pending');
+    if (pendingOffers.length > 0) {
+      title = `${pendingOffers.length} price offer${pendingOffers.length === 1 ? '' : 's'} received`;
+      sub = 'Tap to review and respond';
+    } else {
+      title = 'Finding your Favor Pal…';
+      sub = 'We’re blasting your favor to nearby pals';
+    }
   } else if (status === 'arrived') {
     title = `${palFirst} has arrived`;
     sub = 'Tap to view your favor';

@@ -89,6 +89,7 @@ model User {
   threadsAsA     Thread[]       @relation("ThreadUserA")
   threadsAsB     Thread[]       @relation("ThreadUserB")
   favorEvents    FavorEvent[]
+  palOffers      FavorOffer[]   @relation("PalOffers")
 }
 
 // ---------------------------------------------------------------------------
@@ -148,10 +149,33 @@ model Favor {
   member User         @relation("MemberFavors", fields: [memberId], references: [id], onDelete: Cascade)
   pal    User?        @relation("PalFavors", fields: [palId], references: [id], onDelete: SetNull)
   events FavorEvent[]
+  offers FavorOffer[]
 
   @@index([memberId])
   @@index([palId])
   @@index([status])
+}
+
+// Price negotiation on an open favor: a pal proposes a price, the member accepts
+// or counters, the pal accepts or counters back — accepting the other side's
+// price matches the favor at that price. One offer row per (favor, pal); counters
+// update the row in place with `lastBy` recording whose number is on the table.
+model FavorOffer {
+  id        String   @id @default(uuid())
+  favorId   String
+  palId     String
+  price     Float
+  lastBy    String   // "pal" | "member" — who proposed the current price
+  status    String   @default("pending") // "pending" | "accepted" | "declined"
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  favor Favor @relation(fields: [favorId], references: [id], onDelete: Cascade)
+  pal   User  @relation("PalOffers", fields: [palId], references: [id], onDelete: Cascade)
+
+  @@unique([favorId, palId])
+  @@index([favorId])
+  @@index([palId])
 }
 
 // Status timeline / audit trail for a favor — drives the tracking UI.

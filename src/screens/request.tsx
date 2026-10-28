@@ -260,7 +260,9 @@ export function FavorDescription({ navigation }: any) {
   const onNext = () => {
     if (!canNext) return;
     s.setDraft({ description: desc.trim() });
-    navigation.navigate('ConfirmAddress');
+    // Address already confirmed (the member started from Home's "Where to?") →
+    // straight to the summary; otherwise confirm the address next as usual.
+    navigation.navigate(s.draftFavor?.location ? 'FavorSummary' : 'ConfirmAddress');
   };
 
   if (!fontsLoaded) return <View style={{ flex: 1, backgroundColor: WHITE }} />;
@@ -393,7 +395,9 @@ export function Negotiate({ navigation }: any) {
     if (!canNext || priceRef.current.price <= 0) return;
     const { hours, price } = priceRef.current;
     s.setDraft({ tier: 'negotiate', hours, price, description: desc.trim() });
-    navigation.navigate('ConfirmAddress');
+    // Same order-agnostic hop as FavorDescription: skip the address screen when
+    // the member already confirmed one from Home's "Where to?".
+    navigation.navigate(s.draftFavor?.location ? 'FavorSummary' : 'ConfirmAddress');
   };
 
   if (!fontsLoaded) return <View style={{ flex: 1, backgroundColor: WHITE }} />;
@@ -637,7 +641,11 @@ export function ConfirmAddress({ navigation }: any) {
     const { lat, lng } = coord ?? (await geocodeAddress(trimmed));
     s.setDraft({ location: { lat, lng, address: trimmed } });
     setGeocoding(false);
-    navigation.navigate('FavorSummary');
+    // Entered from Home's "Where to?" (no tier picked yet) → continue into the
+    // normal flow (size → description → price) instead of skipping straight to a
+    // summary with nothing in it. Draft already has tier+description → summary.
+    const d = s.draftFavor;
+    navigation.navigate(!d?.tier ? 'SelectFavor' : !d.description ? 'FavorDescription' : 'FavorSummary');
   }, [address, canConfirm, coord, geocoding, navigation, s]);
 
   if (!fontsLoaded) return <View style={{ flex: 1, backgroundColor: WHITE }} />;

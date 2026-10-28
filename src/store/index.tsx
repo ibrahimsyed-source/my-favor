@@ -12,6 +12,7 @@ import {
   getConfigApi, getMeApi, updateProfileApi, setRoleApi, verifyPalApi, setStatusApi, getPalsApi, getPalApi,
   createFavorApi, getFavorsApi, getActiveFavorApi, getFavorApi, getIncomingApi,
   acceptFavorApi, declineFavorApi, abandonFavorApi, assignPalApi, advanceFavorApi, updateFavorLocationApi, finishFavorApi, cancelFavorApi, rateFavorApi, rateMemberApi,
+  acceptOfferApi,
   getCardsApi, addCardApi, removeCardApi, getTransactionsApi, getEarningsApi, cashoutApi,
   getPaymentsConfigApi, createSetupCheckoutApi, syncCardsApi, connectOnboardApi, connectStatusApi,
   getThreadsApi, getMessagesApi, sendMessageApi, createThreadApi,
@@ -101,6 +102,13 @@ interface StoreValue {
   incomingFavors: Favor[];
   refreshIncoming: () => Promise<void>;
   acceptFavor: (favorId: string) => Promise<{ ok: boolean; reason?: string; code?: 'unavailable' | 'error' }>;
+  // Accept the OTHER side's negotiated price (member accepting a pal's offer, or
+  // a pal accepting the member's counter) — matches the favor at exactly `price`
+  // (the number the user saw; the server 409s if the offer changed underneath).
+  acceptOffer: (favorId: string, offerId: string, price: number) => Promise<{ ok: boolean; reason?: string }>;
+  // Re-pull the active favor from the server (e.g. a pal learning their offer
+  // was accepted while they had nothing active to poll on).
+  refreshActive: () => Promise<Favor | null>;
   declineFavor: (favorId: string) => void;
   abandonFavor: () => Promise<boolean>;
   assignPal: (palId: string) => void;
@@ -195,19 +203,6 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
   }, []);
 
   // ---- bulk loaders ----
-  const loadMessagesFor = useCallback(async (list: Thread[]) => {
-    const all: Message[] = [];
-    for (const t of list) {
-      try {
-        const { messages: m } = await getMessagesApi(t.id);
-        all.push(...m);
-      } catch {
-        /* skip a thread that fails */
-      }
-    }
-    setMessages(all);
-  }, []);
-
   const loadAll = useCallback(async (u: User) => {
     // Every account can both request and fulfill favors, so the open-favors
     // board is loaded for everyone (the API excludes the caller's own favors).
@@ -232,9 +227,11 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     if (payCfg.status === 'fulfilled') setPaymentsLive(payCfg.value.stripeEnabled);
     if (thr.status === 'fulfilled') {
       setThreads(thr.value.threads);
-      void loadMessagesFor(thr.value.threads);
+      // Deliberately NO bulk message prefetch: the server GET clears the viewer's
+      // unread counter as a side effect, so prefetching every thread at login
+      // silently wiped all unread badges. MessageThread fetches on open instead.
     }
-  }, [loadMessagesFor]);
+  }, []);
 
   const resetState = useCallback(() => {
     setUser(null); setPendingDest(null); setDraftFavor(null); setActiveFavor(null);
@@ -528,7 +525,13 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
   const requestFavor = useCallback(async () => {
     const d = draftFavor ?? {};
     const tier = (d.tier as FavorTier) ?? 'tiny';
-    const location = (d.location as GeoPoint) ?? { lat: 25.77, lng: -80.19, address: 'Current location' };
+    // A real confirmed location is REQUIRED — a favor silently pinned to a demo
+    // coordinate would send the pal (and the live map) to the wrong city. The
+    // request flow guarantees one via ConfirmAddress before this is callable.
+    const location = d.location as GeoPoint | undefined;
+    if (!location || typeof location.lat !== 'number') {
+      throw new Error('location_required');
+    }
     const { favor } = await createFavorApi({
       tier,
       ...(d.price != null ? { price: d.price } : {}),
@@ -634,6 +637,32 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       return { ok: false, reason: e?.message || 'This favor is no longer available.', code: gone ? 'unavailable' : 'error' };
     }
   }, [activeFavor]);
+
+  const acceptOffer = useCallback(async (favorId: string, offerId: string, price: number): Promise<{ ok: boolean; reason?: string }> => {
+    // One favor at a time — same guard as acceptFavor, except the member
+    // accepting an offer ON their own active favor is of course allowed.
+    if (activeFavor && activeFavor.id !== favorId) {
+      return { ok: false, reason: 'You already have an active favor. Finish it before accepting another.' };
+    }
+    try {
+      const { favor } = await acceptOfferApi(favorId, offerId, price);
+      setIncomingFavors((list) => list.filter((x) => x.id !== favorId));
+      setActiveFavor(favor);
+      return { ok: true };
+    } catch (e: any) {
+      return { ok: false, reason: e?.message || 'This offer is no longer available.' };
+    }
+  }, [activeFavor]);
+
+  const refreshActive = useCallback(async (): Promise<Favor | null> => {
+    try {
+      const { favor } = await getActiveFavorApi();
+      setActiveFavor(favor);
+      return favor;
+    } catch {
+      return null;
+    }
+  }, []);
 
   const declineFavor = useCallback((favorId: string) => {
     setIncomingFavors((list) => list.filter((x) => x.id !== favorId));
@@ -801,7 +830,11 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
         const seen = new Set<string>();
         return replaced.filter((x) => (seen.has(x.id) ? false : (seen.add(x.id), true)));
       }))
-      .catch(() => undefined);
+      .catch(() => {
+        // Send failed (offline / server error): remove the optimistic bubble so a
+        // message that never reached the other side doesn't read as delivered.
+        setMessages((m) => m.filter((x) => x.id !== optimistic.id));
+      });
   }, []);
 
   // Live-ish messaging: re-fetch a thread's messages (polled while it's open).
@@ -860,13 +893,25 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     }
   }, []);
 
-  // Poll notifications so the bell's unread count + the list stay current.
-  // (Real device push needs expo-notifications + APNs/FCM — see NEXT_STEPS.)
+  // Poll notifications + thread list so the bell's unread count AND message
+  // badges stay current app-wide (a message push points people at the app; this
+  // keeps what they see when they arrive honest). The same tick re-checks for a
+  // REMOTELY-started active favor when none is held locally — e.g. a pal whose
+  // price offer the member accepted while they were on another screen has no
+  // active-favor poll running; without this they'd never learn they're booked.
+  // Ref (not dep) so the interval isn't torn down on every activeFavor change;
+  // refreshActive(null → null) is a no-op setState, so idle ticks cost nothing.
+  const activeFavorIdRef = useRef<string | null>(null);
+  activeFavorIdRef.current = activeFavor?.id ?? null;
   useEffect(() => {
     if (!user) return;
-    const id = setInterval(() => { void refreshNotifications(); }, 20000);
+    const id = setInterval(() => {
+      void refreshNotifications();
+      void refreshThreads();
+      if (!activeFavorIdRef.current) void refreshActive();
+    }, 20000);
     return () => clearInterval(id);
-  }, [user, refreshNotifications]);
+  }, [user, refreshNotifications, refreshThreads, refreshActive]);
 
   const value = useMemo<StoreValue>(
     () => ({
@@ -876,6 +921,7 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       pals, draftFavor, setDraft, clearDraft,
       activeFavor, activePal: palById(activeFavor?.palId) ?? null, palById, history,
       requestFavor, advanceFavor, cancelFavor, rateFavor, incomingFavors, refreshIncoming, acceptFavor,
+      acceptOffer, refreshActive,
       declineFavor, abandonFavor, assignPal, finishFavorAsPal, rateMember,
       blockedUsers, reportUser, blockUser,
       cards, addCard, removeCard, transactions, earnings, cashOut,
@@ -885,7 +931,7 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     }),
     [user, restoring, maintenance, updateRequired, suspended, recheckConfig, signup, verifyOtp, submitVetting, login, logout, deleteAccount, updateProfile, changePassword, setRole, setStatus,
       pals, draftFavor, setDraft, clearDraft, activeFavor, palById, history, requestFavor, advanceFavor, cancelFavor,
-      rateFavor, incomingFavors, refreshIncoming, acceptFavor, declineFavor, abandonFavor, assignPal, finishFavorAsPal, rateMember, blockedUsers, reportUser,
+      rateFavor, incomingFavors, refreshIncoming, acceptFavor, acceptOffer, refreshActive, declineFavor, abandonFavor, assignPal, finishFavorAsPal, rateMember, blockedUsers, reportUser,
       blockUser, cards, addCard, removeCard, transactions, earnings, cashOut,
       paymentsLive, startAddCard, syncCards, connectOnboard, connectStatus,
       threads, messagesFor, sendMessage,

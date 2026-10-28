@@ -37,6 +37,7 @@ const POPPINS_MEDIUM = 'Poppins_500Medium';
 const ACTION_LABEL: Record<AppNotification['type'], string> = {
   match: 'OKAY',
   arrived: 'OK',
+  offer: 'VIEW',
   general: 'OKAY',
   cancellation: 'CLOSE',
   no_pal: 'CLOSE',
@@ -59,7 +60,7 @@ let permPromptShownThisSession = false;
 // card; the newest unread one also pops as the full-screen alert over the
 // dimmed list, exactly like the Match/Cancellation Alert Notification frames.
 export function Notifications({ navigation }: any) {
-  const { notifications, markNotificationRead, markAllNotificationsRead, refreshNotifications, activeFavor } = useStore();
+  const { notifications, markNotificationRead, markAllNotificationsRead, refreshNotifications, activeFavor, user } = useStore();
   // Anchor relative timestamps to the real clock so a day-old item reads "1d",
   // not "5m" relative to the newest notification.
   const now = Date.now();
@@ -97,15 +98,33 @@ export function Notifications({ navigation }: any) {
   // Mark read, then deep-link to the related favor when one is implied by type.
   const handlePress = (item: AppNotification) => {
     markNotificationRead(item.id);
+    const iAmPal = !!activeFavor && !!user && activeFavor.palId === user.id;
     switch (item.type) {
       case 'match':
       case 'arrived':
-        if (activeFavor) navigation.navigate('FavorTracking');
+        // Role-aware: the assigned pal's live screens are Navigation /
+        // PalFavorInProgress; the member's is FavorTracking. ('match' also
+        // reaches a pal whose price offer was accepted remotely.)
+        if (activeFavor && iAmPal) {
+          navigation.navigate(
+            activeFavor.status === 'arrived' || activeFavor.status === 'in_progress'
+              ? 'PalFavorInProgress'
+              : 'Navigation',
+          );
+        } else if (activeFavor) navigation.navigate('FavorTracking');
         else navigation.navigate('History');
         break;
       case 'cancellation':
       case 'no_pal':
         navigation.navigate('History');
+        break;
+      case 'offer':
+        // Member with an open request → review offers on Searching. A pal's
+        // counter/decline news → back to the board (the favor detail shows
+        // their offer state); members with nothing open → History.
+        if (activeFavor?.status === 'requested' && !iAmPal) navigation.navigate('Searching');
+        else if (user?.role === 'pal') navigation.navigate('BrowseFavors');
+        else navigation.navigate('History');
         break;
       default:
         break; // 'general' — no destination, mark-read only

@@ -1,6 +1,6 @@
 import { apiRequest } from './client';
 import {
-  User, Favor, PaymentCard, Transaction, Thread, Message, AppNotification, Role, UserStatus, Review,
+  User, Favor, FavorOffer, PaymentCard, Transaction, Thread, Message, AppNotification, Role, UserStatus, Review,
 } from '../types';
 
 // Typed wrappers over the backend routes. Response shapes mirror the server's
@@ -104,6 +104,21 @@ export const rateFavorApi = (id: string, body: { rating: number; feedback: strin
   apiRequest<{ favor: Favor }>(`/api/favors/${id}/rate`, { method: 'POST', auth: true, body });
 export const rateMemberApi = (id: string, body: { rating: number; feedback: string }) =>
   apiRequest<{ ok: boolean }>(`/api/favors/${id}/rate-member`, { method: 'POST', auth: true, body });
+
+// --- price negotiation (see server favor.routes.ts offers endpoints) ---
+export const makeOfferApi = (favorId: string, price: number) =>
+  apiRequest<{ offer: FavorOffer }>(`/api/favors/${favorId}/offers`, { method: 'POST', auth: true, body: { price } });
+export const getFavorOffersApi = (favorId: string) =>
+  apiRequest<{ offers: FavorOffer[]; favorStatus: string }>(`/api/favors/${favorId}/offers`, { auth: true });
+export const counterOfferApi = (favorId: string, offerId: string, price: number) =>
+  apiRequest<{ offer: FavorOffer }>(`/api/favors/${favorId}/offers/${offerId}/counter`, { method: 'POST', auth: true, body: { price } });
+// `price` echoes the number the user tapped ACCEPT on — the server matches only
+// if the offer still says exactly that, so a concurrent re-price can't book
+// anyone at a price their screen never showed.
+export const acceptOfferApi = (favorId: string, offerId: string, price: number) =>
+  apiRequest<{ favor: Favor }>(`/api/favors/${favorId}/offers/${offerId}/accept`, { method: 'POST', auth: true, body: { price } });
+export const declineOfferApi = (favorId: string, offerId: string) =>
+  apiRequest<{ ok: boolean }>(`/api/favors/${favorId}/offers/${offerId}/decline`, { method: 'POST', auth: true });
 
 // --- payments ---
 export const getCardsApi = () => apiRequest<{ cards: PaymentCard[] }>('/api/payments/cards', { auth: true });

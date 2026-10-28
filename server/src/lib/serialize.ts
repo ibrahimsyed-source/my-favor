@@ -1,4 +1,4 @@
-import type { User, Favor, Transaction, Notification, Thread, Message, PaymentMethod } from '@prisma/client';
+import type { User, Favor, FavorOffer, Transaction, Notification, Thread, Message, PaymentMethod } from '@prisma/client';
 
 // Presenters map DB rows to API responses. They are the single place that
 // decides what leaves the server — most importantly they DROP passwordHash and
@@ -61,10 +61,40 @@ function parseImages(raw: string): string[] {
   }
 }
 
+// A price offer on an open favor. The pal relation is included on member-facing
+// reads so the member can judge who is offering; the pal's own reads carry the
+// same shape (their own public info — nothing sensitive).
+export function publicOffer(o: FavorOffer & { pal?: User | null }) {
+  return {
+    id: o.id,
+    favorId: o.favorId,
+    palId: o.palId,
+    price: o.price,
+    lastBy: o.lastBy,
+    status: o.status,
+    updatedAt: o.updatedAt.getTime(),
+    pal: o.pal
+      ? {
+          id: o.pal.id,
+          firstName: o.pal.firstName,
+          lastName: o.pal.lastName,
+          avatar: o.pal.avatar ?? undefined,
+          rating: o.pal.rating,
+          totalFavors: o.pal.totalFavors,
+        }
+      : undefined,
+  };
+}
+
 // Accepts an optionally-included `member` relation; when present (participant-
 // facing queries) the assigned pal sees the member's first name. The open feed
 // (publicFavorOpen) never includes the relation, so it stays anonymous.
-export function publicFavor(f: Favor & { member?: { firstName: string } | null }) {
+// An optionally-included `offers` relation (pending price offers, with pal info)
+// rides along on participant-facing reads so the requester sees negotiation
+// state through the same 4s active-favor poll that drives everything else.
+export function publicFavor(
+  f: Favor & { member?: { firstName: string } | null; offers?: (FavorOffer & { pal?: User | null })[] },
+) {
   return {
     id: f.id,
     memberId: f.memberId,
@@ -92,6 +122,7 @@ export function publicFavor(f: Favor & { member?: { firstName: string } | null }
     rating: f.rating ?? undefined,
     feedback: f.feedback ?? undefined,
     etaWindow: f.etaWindow ?? undefined,
+    offers: f.offers ? f.offers.map(publicOffer) : undefined,
   };
 }
 
@@ -105,6 +136,8 @@ export function publicFavorOpen(f: Favor) {
   const area = parts.length > 1 ? parts.slice(1).join(', ') : 'Approximate area';
   return {
     ...full,
+    // Negotiation state is participant-private — never on the open feed.
+    offers: undefined,
     location: {
       // ~2 decimal places ≈ 1.1km of fuzzing — enough to gauge distance, not to locate a home.
       lat: Math.round(f.locationLat * 100) / 100,

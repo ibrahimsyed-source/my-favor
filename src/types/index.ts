@@ -87,6 +87,29 @@ export interface Favor {
   // live pal position while in flight — present once the assigned pal's device
   // starts sharing GPS; drives the member's "how far away is my Pal" tracking.
   palLocation?: { lat: number; lng: number; at?: number };
+  // pending price offers while the favor is open (participant-facing only) —
+  // the requester reviews/accepts/counters these from the Searching screen.
+  offers?: FavorOffer[];
+}
+
+// A price negotiation on an open favor: one row per (favor, pal); counters
+// update it in place and `lastBy` records whose number is on the table.
+export interface FavorOffer {
+  id: string;
+  favorId: string;
+  palId: string;
+  price: number;
+  lastBy: 'pal' | 'member';
+  status: 'pending' | 'accepted' | 'declined';
+  updatedAt: number;
+  pal?: {
+    id: string;
+    firstName: string;
+    lastName?: string;
+    avatar?: string;
+    rating?: number;
+    totalFavors?: number;
+  };
 }
 
 export interface PaymentCard {
@@ -145,7 +168,7 @@ export interface Thread {
 
 export interface AppNotification {
   id: string;
-  type: 'match' | 'cancellation' | 'no_pal' | 'arrived' | 'general';
+  type: 'match' | 'cancellation' | 'no_pal' | 'arrived' | 'offer' | 'general';
   title: string;
   body: string;
   date: number;

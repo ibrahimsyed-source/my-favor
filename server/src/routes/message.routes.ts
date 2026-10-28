@@ -5,6 +5,7 @@ import { validate, validatedQuery } from '../lib/validate';
 import { asyncHandler, badRequest, forbidden, notFound } from '../lib/errors';
 import { authenticate } from '../middleware/authenticate';
 import { publicThread, publicMessage } from '../lib/serialize';
+import { sendPushNotification } from '../lib/push';
 
 export const messageRouter = Router();
 messageRouter.use(authenticate);
@@ -126,6 +127,15 @@ messageRouter.post(
     const { text } = req.body as { text: string };
     const thread = await loadThreadForViewer(req.params.id, me);
 
+    // Blocks created AFTER a thread existed must stop messages too (thread
+    // creation already refuses blocked pairs; the send path re-checks so a
+    // blocked sender can't keep pushing texts to the victim's device).
+    const otherId = thread.userAId === me ? thread.userBId : thread.userAId;
+    const blocked = await prisma.block.findFirst({
+      where: { OR: [{ blockerId: me, blockedId: otherId }, { blockerId: otherId, blockedId: me }] },
+    });
+    if (blocked) throw forbidden('Cannot message this user');
+
     const message = await prisma.$transaction(async (tx) => {
       const m = await tx.message.create({ data: { threadId: thread.id, senderId: me, text } });
       // Bump the recipient's unread + denormalized last message.
@@ -138,6 +148,19 @@ messageRouter.post(
       });
       return m;
     });
+
+    // Best-effort device push so the recipient learns about the message without
+    // having the thread open (the unread counter above is the durable record —
+    // no Notification row, or every chat would also spam the Activity feed).
+    const recipientId = thread.userAId === me ? thread.userBId : thread.userAId;
+    const sender = thread.userAId === me ? thread.userA : thread.userB;
+    void sendPushNotification(
+      recipientId,
+      `Message from ${sender.firstName}`,
+      text.slice(0, 120),
+      { type: 'message', threadId: thread.id },
+    );
+
     res.status(201).json({ message: publicMessage(message, me) });
   }),
 );

@@ -43,29 +43,9 @@ const PIN_AVATAR = require('../../assets/img/request/pin-avatar.png');
 type TierKey = keyof typeof FAVOR_TIERS;
 const TIER_KEYS: TierKey[] = ['tiny', 'small', 'big', 'huge'];
 
-// Red favor-pal map pins (person silhouette in a red teardrop), placed like the
-// frame's six pins — positions are fractions of the map area.
-const PAL_PINS = [
-  { x: 0.13, y: 0.08 }, { x: 0.72, y: 0.10 },
-  { x: 0.13, y: 0.62 }, { x: 0.75, y: 0.55 },
-  { x: 0.60, y: 0.78 }, { x: 0.87, y: 0.30 },
-];
-
-// The same six pins for the REAL native map, as lat/lng offsets (degrees) from
-// the member's position — decorative, like the frame's, but they pan/zoom with
-// the map instead of floating over it. Layout mirrors PAL_PINS spatially.
-const PAL_PIN_OFFSETS = [
-  { dlat: 0.0036, dlng: -0.0034 }, { dlat: 0.0034, dlng: 0.0022 },
-  { dlat: -0.0012, dlng: -0.0036 }, { dlat: -0.0006, dlng: 0.0026 },
-  { dlat: -0.0028, dlng: 0.0010 }, { dlat: 0.0016, dlng: 0.0038 },
-];
-
-const PalPin: React.FC<{ x: number; y: number }> = ({ x, y }) => (
-  <View pointerEvents="none" style={{ position: 'absolute', left: `${x * 100}%`, top: `${y * 100}%` }}>
-    <Ionicons name="location" size={46} color={RED} />
-    <Ionicons name="person" size={16} color={WHITE} style={{ position: 'absolute', top: 8, left: 15 }} />
-  </View>
-);
+// (The frame's six decorative "nearby pal" pins are gone on purpose: no pal
+// position data exists outside an active favor's GPS stream, so the member map
+// shows only REAL things — their own position and radius.)
 
 // ---------------------------------------------------------------------------
 // Pal-mode Home — provider "Dashboard - Main v2" (dark): full-bleed dark map,
@@ -498,7 +478,11 @@ function MemberHome({ navigation }: any) {
     }, [])
   );
 
+  // Every Home entry point starts a FRESH request: a leftover draft from an
+  // abandoned flow (especially its confirmed location) would silently skip
+  // steps further in — the flow screens hop past whatever the draft already has.
   const pickTier = (tier: TierKey) => {
+    s.clearDraft();
     s.setDraft({ tier, price: FAVOR_TIERS[tier].price });
     navigation.navigate('FavorDescription');
   };
@@ -583,7 +567,7 @@ function MemberHome({ navigation }: any) {
         {/* ---- NEGOTIATE ------------------------------------------------- */}
         <TouchableOpacity
           activeOpacity={0.85}
-          onPress={() => navigation.navigate('Negotiate')}
+          onPress={() => { s.clearDraft(); navigation.navigate('Negotiate'); }}
           accessibilityRole="button"
           style={styles.negotiateBtn}
         >
@@ -595,7 +579,7 @@ function MemberHome({ navigation }: any) {
 
         <TouchableOpacity
           activeOpacity={0.85}
-          onPress={() => navigation.navigate('ConfirmAddress')}
+          onPress={() => { s.clearDraft(); navigation.navigate('ConfirmAddress'); }}
           accessibilityRole="button"
           accessibilityLabel="Where to?"
           style={styles.searchField}
@@ -611,7 +595,7 @@ function MemberHome({ navigation }: any) {
 
         <TouchableOpacity
           activeOpacity={0.85}
-          onPress={() => navigation.navigate('ConfirmAddress')}
+          onPress={() => { s.clearDraft(); navigation.navigate('ConfirmAddress'); }}
           accessibilityRole="button"
           accessibilityLabel={`Address: ${address}`}
           style={styles.addressRow}
@@ -633,11 +617,6 @@ function MemberHome({ navigation }: any) {
               zoom={15}
               radiusM={420}
               markers={[
-                ...PAL_PIN_OFFSETS.map((o) => ({
-                  lat: mapCenter.lat + o.dlat,
-                  lng: mapCenter.lng + o.dlng,
-                  kind: 'person' as const,
-                })),
                 {
                   lat: mapCenter.lat,
                   lng: mapCenter.lng,
@@ -652,7 +631,6 @@ function MemberHome({ navigation }: any) {
               <Image source={MAP_IMG} style={StyleSheet.absoluteFill} resizeMode="cover" accessible={false} />
               {/* soft radius circle around the user */}
               <View pointerEvents="none" style={styles.radius} />
-              {PAL_PINS.map((p, i) => <PalPin key={i} x={p.x} y={p.y} />)}
               {/* the user's avatar pin at the circle centre */}
               <View pointerEvents="none" style={styles.avatarPin} accessibilityLabel="Your location on the map">
                 {s.user?.avatar ? (

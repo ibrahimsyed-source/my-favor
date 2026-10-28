@@ -1,14 +1,14 @@
-import React, { useState, useEffect, useRef, useCallback } from 'react';
+import React, { useState } from 'react';
 import {
   View, Text, Image, ScrollView, TouchableOpacity, Pressable, StyleSheet,
-  Dimensions, ActivityIndicator, Modal, ViewStyle,
+  Dimensions, ActivityIndicator, Modal, TextInput, ViewStyle,
 } from 'react-native';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
-import { useFocusEffect } from '@react-navigation/native';
 import { Ionicons } from '@expo/vector-icons';
 import { useFonts, Poppins_400Regular } from '@expo-google-fonts/poppins';
 import { useStore } from '../store';
-import { FAVOR_TIERS, computeFees, FavorTier } from '../types';
+import { FAVOR_TIERS, computeFees, FavorTier, FavorOffer } from '../types';
+import { counterOfferApi, declineOfferApi } from '../api/endpoints';
 import { LiveMap } from '../components/LiveMap';
 import { MapScene, MAP_SCENE_SUPPORTED } from '../components/MapScene';
 
@@ -213,11 +213,38 @@ function SummaryBody() {
 export const FavorSummary = ({ navigation }: any) => {
   const fontsReady = usePoppins();
   const insets = useSafeAreaInsets();
-  const { cards } = useStore();
+  const { requestFavor, draftFavor } = useStore();
+  // In-flight guard: a second tap while the request is posting would create a
+  // duplicate favor.
+  const [requesting, setRequesting] = useState(false);
+  const [requestError, setRequestError] = useState(false);
+
+  // Payments are waived while Stripe is in sandbox: REQUEST FAVOR NOW posts the
+  // favor directly — no card required, nothing is charged (the server's mock
+  // ledger settles with no money moving). The SelectPayment sheet stays in the
+  // codebase for when payments go live.
+  const onRequest = async () => {
+    if (requesting) return;
+    // A confirmed location is required (requestFavor refuses without one) —
+    // send the member to ConfirmAddress if the draft somehow lacks it.
+    if (!draftFavor?.location || typeof draftFavor.location.lat !== 'number') {
+      navigation.navigate('ConfirmAddress');
+      return;
+    }
+    setRequesting(true);
+    try {
+      await requestFavor();
+      // replace (not navigate): the favor now exists, so drop this summary from
+      // the stack — back must never return to a live REQUEST button.
+      navigation.replace('Searching');
+    } catch {
+      setRequestError(true);
+    } finally {
+      setRequesting(false);
+    }
+  };
+
   if (!fontsReady) return <View style={{ flex: 1, backgroundColor: WHITE }} />;
-  // Can't pay for a favor without a card on file — route to the "add a payment
-  // method" screen instead of a payment sheet with nothing to select.
-  const onRequest = () => navigation.navigate(cards.length === 0 ? 'NoPaymentMethod' : 'SelectPayment');
   return (
     <SafeAreaView style={{ flex: 1, backgroundColor: WHITE }} edges={['top']}>
       {navigation.canGoBack() ? (
@@ -235,8 +262,15 @@ export const FavorSummary = ({ navigation }: any) => {
         <SummaryBody />
       </ScrollView>
       <View style={{ paddingHorizontal: 23, paddingTop: 8, paddingBottom: Math.max(insets.bottom, 18) + 16 }}>
-        <BlackButton title="REQUEST FAVOR NOW" onPress={onRequest} />
+        <BlackButton title={requesting ? 'REQUESTING…' : 'REQUEST FAVOR NOW'} onPress={onRequest} />
       </View>
+      <AlertModal
+        visible={requestError}
+        title="Request Failed"
+        message="We couldn't post your favor. Please check your connection and try again — you have not been charged."
+        buttonLabel="TRY AGAIN"
+        onClose={() => setRequestError(false)}
+      />
     </SafeAreaView>
   );
 };
@@ -412,44 +446,73 @@ export const SelectPayment = ({ navigation }: any) => {
 // ===========================================================================
 export const Searching = ({ navigation }: any) => {
   const fontsReady = usePoppins();
-  const { pals, advanceFavor, assignPal, activeFavor } = useStore();
-  const matchedPal = pals[0];
-  const palName = matchedPal?.firstName ?? 'a Favor Pal';
+  const { activeFavor, activePal, acceptOffer } = useStore();
 
-  // A favor booked for a future time should NOT be matched/en-route the instant
-  // it is paid for — it stays "Scheduled" until its window. Only the immediate
-  // ("Now") flow runs the live-match simulation below.
+  // A favor booked for a future time stays "Scheduled" until its window.
   const isScheduled = activeFavor?.scheduledFor != null && activeFavor.scheduledFor > Date.now();
 
-  // v.2 "Match Alert Notification" (#125:10778): once the Pal accepts, the member
-  // gets a match popup ("{Pal} accepted your favor." + OKAY) instead of being
-  // dropped silently into tracking. Tapping OKAY enters live tracking.
-  const [matched, setMatched] = useState(false);
+  // REAL matching: the store's app-wide 4s poll refreshes activeFavor; the moment
+  // a pal accepts (at list price or a negotiated one) the status leaves
+  // 'requested' and the v.2 Match Alert shows. The old 2.5s simulated match (it
+  // force-booked the first directory pal) is gone.
+  const isMatched =
+    !!activeFavor && ['matched', 'enroute', 'arrived', 'in_progress'].includes(activeFavor.status);
+  const palName = activePal?.firstName ?? 'Your Favor Pal';
 
-  // Simulate the Pal accepting shortly after payment: bind the matched pal so the
-  // tracking screen shows the same person named here, advance the favor to
-  // 'matched', then surface the match alert (the "Choose another Favor Pal"
-  // button below stays as the genuine impatient-user fallback until then).
-  // One-shot + focus-scoped: the store callbacks are re-memoized on every
-  // activeFavor change, and the native stack keeps this screen mounted behind
-  // ProviderResults — without the ref the timer re-arms and can re-assign a
-  // pal the member just navigated away to avoid.
-  const hasMatchedRef = useRef(false);
-  const matchRefs = useRef({ matchedPal, assignPal, advanceFavor });
-  matchRefs.current = { matchedPal, assignPal, advanceFavor };
-  useFocusEffect(
-    useCallback(() => {
-      if (isScheduled || hasMatchedRef.current) return;
-      const t = setTimeout(() => {
-        hasMatchedRef.current = true;
-        const { matchedPal: pal, assignPal: assign, advanceFavor: advance } = matchRefs.current;
-        if (pal) assign(pal.id);
-        else advance('matched');
-        setMatched(true);
-      }, 2500);
-      return () => clearTimeout(t);
-    }, [isScheduled]),
-  );
+  // Price negotiation: pending offers ride the polled favor. The member accepts,
+  // counters, or declines right here while waiting. Local `declined`/`countered`
+  // sets bridge the ≤4s gap until the poll reflects an action, so a card can't
+  // be double-tapped into a stale state.
+  const [counterFor, setCounterFor] = useState<FavorOffer | null>(null);
+  const [counterText, setCounterText] = useState('');
+  const [offerBusy, setOfferBusy] = useState<string | null>(null);
+  const [offerError, setOfferError] = useState('');
+  const [declinedIds, setDeclinedIds] = useState<Record<string, true>>({});
+  // Keyed to the offer row's updatedAt at counter time: once the server row
+  // changes (our counter landed, or the pal re-priced), the local flag expires
+  // and the server state wins.
+  const [counteredIds, setCounteredIds] = useState<Record<string, { price: number; baseUpdatedAt: number }>>({});
+
+  const offers = ((!isMatched && activeFavor?.offers) || []).filter((o) => !declinedIds[o.id]);
+
+  const onAcceptOffer = async (o: FavorOffer) => {
+    if (offerBusy) return;
+    setOfferBusy(o.id);
+    // Echo the exact price on the card — the server refuses if it changed.
+    const res = await acceptOffer(o.favorId, o.id, o.price);
+    setOfferBusy(null);
+    if (!res.ok) setOfferError(res.reason || 'This offer is no longer available.');
+    // Success flips activeFavor to 'matched' → the match alert renders.
+  };
+
+  const onDeclineOffer = async (o: FavorOffer) => {
+    if (offerBusy) return;
+    setOfferBusy(o.id);
+    try {
+      await declineOfferApi(o.favorId, o.id);
+      setDeclinedIds((m) => ({ ...m, [o.id]: true }));
+    } catch {
+      setOfferError('Could not decline the offer. Please try again.');
+    }
+    setOfferBusy(null);
+  };
+
+  const counterValue = Math.round(parseFloat(counterText) * 100) / 100;
+  const counterValid = !Number.isNaN(counterValue) && counterValue > 0 && counterValue <= 100000;
+  const sendCounter = async () => {
+    const target = counterFor;
+    if (!target || !counterValid || offerBusy) return;
+    setOfferBusy(target.id);
+    try {
+      await counterOfferApi(target.favorId, target.id, counterValue);
+      setCounteredIds((m) => ({ ...m, [target.id]: { price: counterValue, baseUpdatedAt: target.updatedAt } }));
+    } catch {
+      setOfferError('Could not send your counter offer. Please try again.');
+    }
+    setOfferBusy(null);
+    setCounterFor(null);
+    setCounterText('');
+  };
 
   if (!fontsReady) return <View style={{ flex: 1, backgroundColor: WHITE }} />;
 
@@ -477,7 +540,17 @@ export const Searching = ({ navigation }: any) => {
 
       <View style={[StyleSheet.absoluteFill, styles.scrimCenter, { backgroundColor: 'transparent' }]}>
         <View style={styles.alertCard}>
-          {isScheduled ? (
+          {!activeFavor ? (
+            <>
+              {/* The favor left the active set (cancelled / completed elsewhere). */}
+              <Text style={styles.alertTitle}>This favor is no longer active</Text>
+              <BlackButton
+                title="BACK TO HOME"
+                onPress={() => navigation.reset({ index: 0, routes: [{ name: 'Tabs' }] })}
+                style={{ marginTop: 20 }}
+              />
+            </>
+          ) : isScheduled ? (
             <>
               {/* Scheduled-request modal (v.2): "YOUR FAVOR HAS BEEN REQUESTED" +
                   date chip + "Please wait while we search for a favor pal near you!" */}
@@ -491,7 +564,7 @@ export const Searching = ({ navigation }: any) => {
               {/* app addition — no v2 frame shows an exit, but the member needs one */}
               <BlackButton title="BACK TO HOME" onPress={() => navigation.popToTop()} style={{ marginTop: 20 }} />
             </>
-          ) : matched ? (
+          ) : isMatched ? (
             <>
               {/* v.2 Match Alert Notification #125:10778 — "Fabrizio has accepted
                   your favor! / You favor pal is on their way." (typo corrected) */}
@@ -500,27 +573,84 @@ export const Searching = ({ navigation }: any) => {
               <BlackButton
                 title="OKAY"
                 // Collapse the whole checkout flow: tracking sits directly on
-                // Tabs so back from tracking lands on Home, not a stale/paid sheet.
+                // Tabs so back from tracking lands on Home, not a stale sheet.
                 onPress={() => navigation.reset({ index: 1, routes: [{ name: 'Tabs' }, { name: 'FavorTracking' }] })}
                 style={{ marginTop: 20 }}
               />
             </>
           ) : (
             <>
-              <Text style={styles.alertTitle}>{`You have asked a favor from ${palName}`}</Text>
-              <Text style={styles.alertBody}>Please wait while we confirm.</Text>
-              <Text style={styles.tooLong}>Taking too long?</Text>
-              <BlackButton
-                title="CHOOSE ANOTHER FAVOR PAL"
-                textSize={14}
-                onPress={() => navigation.navigate('ProviderResults')}
-                style={{ marginTop: 20 }}
-              />
-              {/* Exit while waiting — the favor stays live and is reachable again
-                  from the Home "Resume active favor" card. */}
+              <Text style={styles.alertTitle}>Finding your Favor Pal…</Text>
+              <Text style={styles.alertBody}>
+                Your favor is out to nearby Favor Pals. Offers and the match will show up right here.
+              </Text>
+              <ActivityIndicator color={INK} style={{ marginTop: 16 }} />
+
+              {/* Incoming price offers — accept / counter / decline inline. */}
+              {offers.length > 0 ? (
+                <View style={{ alignSelf: 'stretch', marginTop: 18 }}>
+                  {offers.map((o) => {
+                    // Our counter is on the table (server-confirmed, or sent
+                    // moments ago and not yet reflected by the 4s poll).
+                    const local = counteredIds[o.id];
+                    const justCountered = local != null && o.lastBy !== 'member' && o.updatedAt === local.baseUpdatedAt;
+                    const waitingOnPal = o.lastBy === 'member' || justCountered;
+                    const shownPrice = justCountered ? local.price : o.price;
+                    return (
+                      <View key={o.id} style={styles.offerCard}>
+                        <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+                          <View style={{ flex: 1 }}>
+                            <Text style={styles.offerName}>
+                              {(o.pal?.firstName ?? 'A Favor Pal') +
+                                (o.pal?.rating ? `  ·  ★ ${o.pal.rating.toFixed(1)}` : '')}
+                            </Text>
+                            <Text style={styles.offerPrice}>
+                              {waitingOnPal
+                                ? `You countered $${shownPrice.toFixed(2)} — waiting on their reply`
+                                : `Offers $${o.price.toFixed(2)}`}
+                            </Text>
+                          </View>
+                          {!waitingOnPal ? (
+                            <TouchableOpacity
+                              style={[styles.offerAccept, offerBusy != null && { opacity: 0.5 }]}
+                              disabled={offerBusy != null}
+                              onPress={() => onAcceptOffer(o)}
+                              accessibilityRole="button"
+                              accessibilityLabel={`Accept ${o.pal?.firstName ?? 'pal'}'s offer of $${o.price.toFixed(2)}`}
+                            >
+                              <Text style={styles.offerAcceptText}>{offerBusy === o.id ? '…' : 'ACCEPT'}</Text>
+                            </TouchableOpacity>
+                          ) : null}
+                        </View>
+                        {!waitingOnPal ? (
+                          <View style={{ flexDirection: 'row', marginTop: 8, gap: 20 }}>
+                            <TouchableOpacity
+                              onPress={() => { setCounterFor(o); setCounterText(''); }}
+                              accessibilityRole="button"
+                              accessibilityLabel="Counter this offer"
+                            >
+                              <Text style={styles.offerLink}>COUNTER</Text>
+                            </TouchableOpacity>
+                            <TouchableOpacity
+                              onPress={() => onDeclineOffer(o)}
+                              accessibilityRole="button"
+                              accessibilityLabel="Decline this offer"
+                            >
+                              <Text style={[styles.offerLink, { color: SUB }]}>DECLINE</Text>
+                            </TouchableOpacity>
+                          </View>
+                        ) : null}
+                      </View>
+                    );
+                  })}
+                </View>
+              ) : null}
+
+              {/* Exit while waiting — the favor stays live and reachable from the
+                  app-wide trip bar. */}
               <TouchableOpacity
                 onPress={() => navigation.reset({ index: 0, routes: [{ name: 'Tabs' }] })}
-                style={{ marginTop: 14, alignSelf: 'center', paddingVertical: 4 }}
+                style={{ marginTop: 18, alignSelf: 'center', paddingVertical: 4 }}
                 accessibilityRole="button"
                 accessibilityLabel="Back to home"
               >
@@ -530,6 +660,50 @@ export const Searching = ({ navigation }: any) => {
           )}
         </View>
       </View>
+
+      {/* Counter-offer input */}
+      <Modal visible={counterFor != null} transparent animationType="fade" onRequestClose={() => setCounterFor(null)}>
+        <View style={styles.scrimCenter}>
+          <View style={styles.alertCard}>
+            <Text style={styles.alertTitle}>Counter offer</Text>
+            <Text style={styles.alertBody}>
+              {`${counterFor?.pal?.firstName ?? 'The pal'} offered $${(counterFor?.price ?? 0).toFixed(2)}. Name your price — they can accept or counter back.`}
+            </Text>
+            <View style={styles.counterField}>
+              <TextInput
+                value={counterText}
+                onChangeText={setCounterText}
+                keyboardType="decimal-pad"
+                placeholder="$ Your price"
+                placeholderTextColor="#9E9E9E"
+                style={styles.counterInput}
+                accessibilityLabel="Counter offer amount"
+              />
+            </View>
+            <BlackButton
+              title={counterValid ? `SEND COUNTER — $${counterValue.toFixed(2)}` : 'SEND COUNTER'}
+              onPress={sendCounter}
+              style={{ marginTop: 16, opacity: counterValid ? 1 : 0.5 }}
+            />
+            <TouchableOpacity
+              onPress={() => setCounterFor(null)}
+              style={{ marginTop: 12, alignSelf: 'center' }}
+              accessibilityRole="button"
+              accessibilityLabel="Cancel counter offer"
+            >
+              <Text style={styles.tooLong}>Cancel</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      </Modal>
+
+      <AlertModal
+        visible={!!offerError}
+        title="Offer unavailable"
+        message={offerError}
+        buttonLabel="OK"
+        onClose={() => setOfferError('')}
+      />
     </View>
   );
 };
@@ -684,4 +858,37 @@ const styles = StyleSheet.create({
 
   // --- Searching map -------------------------------------------------------
   pin: { position: 'absolute' },
+
+  // --- Negotiation (offers on the Searching card) ----------------------------
+  offerCard: {
+    borderWidth: 1,
+    borderColor: DIVIDER,
+    borderRadius: 10,
+    paddingHorizontal: 14,
+    paddingVertical: 12,
+    marginTop: 10,
+  },
+  offerName: { fontFamily: P500, fontSize: 15, color: INK },
+  offerPrice: { fontFamily: P400, fontSize: 13, color: SUB, marginTop: 2 },
+  offerAccept: {
+    backgroundColor: INK,
+    borderRadius: 8,
+    paddingHorizontal: 14,
+    height: 36,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginLeft: 12,
+  },
+  offerAcceptText: { fontFamily: P500, fontSize: 13, color: WHITE, letterSpacing: 0.4 },
+  offerLink: { fontFamily: P500, fontSize: 13, color: INK, letterSpacing: 0.4 },
+  counterField: {
+    marginTop: 16,
+    height: 46,
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: '#DFDFDF',
+    paddingHorizontal: 14,
+    justifyContent: 'center',
+  },
+  counterInput: { fontFamily: P400, fontSize: 16, color: INK, padding: 0 },
 });

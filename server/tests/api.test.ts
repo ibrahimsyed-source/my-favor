@@ -5,6 +5,7 @@ import crypto from 'node:crypto';
 import type { Server } from 'node:http';
 import { createApp } from '../src/app';
 import { prisma } from '../src/db';
+import { computeFees } from '../src/lib/money';
 
 // End-to-end API tests. Spins the real app up in-process against the dev SQLite
 // DB and drives the full favor lifecycle plus the security controls. Uses unique
@@ -571,4 +572,121 @@ test('geo proxy degrades to empty results without a server key and validates inp
   // Validation: too-short queries are a 400, not a Google call.
   const short = await api('/api/geo/suggest?q=ab', { token: u.token });
   assert.equal(short.status, 400, 'q under 3 chars is rejected');
+});
+
+test('price negotiation: pal offers → member counters → pal accepts at the agreed price', async () => {
+  const member = await makeUser('member');
+  const pal = await makeUser('pal');
+
+  const create = await api('/api/favors', {
+    method: 'POST',
+    token: member.token,
+    body: { tier: 'big', description: 'Assemble a bookshelf', location: { lat: 30.26, lng: -97.74, address: '2 Main St' } },
+  });
+  assert.equal(create.status, 201);
+  const favorId = create.json.favor.id;
+
+  // A member can't bid on their own favor.
+  const selfOffer = await api(`/api/favors/${favorId}/offers`, { method: 'POST', token: member.token, body: { price: 10 } });
+  assert.equal(selfOffer.status, 403);
+
+  // Pal opens the negotiation at $60.
+  const offer = await api(`/api/favors/${favorId}/offers`, { method: 'POST', token: pal.token, body: { price: 60 } });
+  assert.equal(offer.status, 201);
+  const offerId = offer.json.offer.id as string;
+  assert.equal(offer.json.offer.lastBy, 'pal');
+
+  // The pending offer rides the member's active-favor poll.
+  const active = await api('/api/favors/active', { token: member.token });
+  assert.equal(active.status, 200);
+  assert.ok(
+    active.json.favor.offers?.some((o: any) => o.id === offerId),
+    'pending offer appears on the active favor',
+  );
+
+  // Nobody may accept their OWN price.
+  const palSelfAccept = await api(`/api/favors/${favorId}/offers/${offerId}/accept`, {
+    method: 'POST',
+    token: pal.token,
+    body: { price: 60 },
+  });
+  assert.equal(palSelfAccept.status, 409);
+
+  // Member counters at $45 — the number on the table flips to the member's.
+  const counter = await api(`/api/favors/${favorId}/offers/${offerId}/counter`, {
+    method: 'POST',
+    token: member.token,
+    body: { price: 45 },
+  });
+  assert.equal(counter.status, 200);
+  assert.equal(counter.json.offer.price, 45);
+  assert.equal(counter.json.offer.lastBy, 'member');
+
+  // SECURITY: an accept must echo the price on the acceptor's screen — a stale
+  // (re-priced) number is refused instead of silently booking at the new one.
+  const staleAccept = await api(`/api/favors/${favorId}/offers/${offerId}/accept`, {
+    method: 'POST',
+    token: pal.token,
+    body: { price: 60 },
+  });
+  assert.equal(staleAccept.status, 409, 'accepting a price that is no longer on the table is refused');
+
+  // Pal accepts the counter → matched at $45 with server-recomputed fees.
+  const accept = await api(`/api/favors/${favorId}/offers/${offerId}/accept`, {
+    method: 'POST',
+    token: pal.token,
+    body: { price: 45 },
+  });
+  assert.equal(accept.status, 200);
+  assert.equal(accept.json.favor.status, 'matched');
+  assert.equal(accept.json.favor.palId, pal.id);
+  assert.equal(accept.json.favor.price, 45);
+  assert.equal(accept.json.favor.total, computeFees(45).total, 'invoice recomputed at the agreed price');
+
+  // The closed negotiation can't be re-accepted.
+  const again = await api(`/api/favors/${favorId}/offers/${offerId}/accept`, {
+    method: 'POST',
+    token: pal.token,
+    body: { price: 45 },
+  });
+  assert.equal(again.status, 409);
+});
+
+test('price negotiation: member accepts a pal offer; rival pending offers are declined', async () => {
+  const member = await makeUser('member');
+  const palA = await makeUser('pal');
+  const palB = await makeUser('pal');
+
+  const create = await api('/api/favors', {
+    method: 'POST',
+    token: member.token,
+    body: { tier: 'tiny', description: 'Drop off a package', location: { lat: 30.26, lng: -97.74, address: '3 Main St' } },
+  });
+  assert.equal(create.status, 201);
+  const favorId = create.json.favor.id;
+
+  const offerA = await api(`/api/favors/${favorId}/offers`, { method: 'POST', token: palA.token, body: { price: 15 } });
+  const offerB = await api(`/api/favors/${favorId}/offers`, { method: 'POST', token: palB.token, body: { price: 18 } });
+  assert.equal(offerA.status, 201);
+  assert.equal(offerB.status, 201);
+
+  // Member accepts pal A's $15 → matched to A at 15.
+  const accept = await api(`/api/favors/${favorId}/offers/${offerA.json.offer.id}/accept`, {
+    method: 'POST',
+    token: member.token,
+    body: { price: 15 },
+  });
+  assert.equal(accept.status, 200);
+  assert.equal(accept.json.favor.palId, palA.id);
+  assert.equal(accept.json.favor.price, 15);
+
+  // Pal B's offer was auto-declined, and B can see that on their offer read.
+  const bView = await api(`/api/favors/${favorId}/offers`, { token: palB.token });
+  assert.equal(bView.status, 200);
+  assert.equal(bView.json.offers[0].status, 'declined');
+  assert.equal(bView.json.favorStatus, 'matched');
+
+  // Late offers on a matched favor are refused.
+  const late = await api(`/api/favors/${favorId}/offers`, { method: 'POST', token: palB.token, body: { price: 12 } });
+  assert.equal(late.status, 409);
 });

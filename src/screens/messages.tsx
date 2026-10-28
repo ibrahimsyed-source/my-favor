@@ -72,12 +72,10 @@ function usePoppinsRegular() {
   return loaded;
 }
 
-// Reference "now" that matches the seed data's NOW constant so the relative
-// timestamps on the list render sensible values (10m / 3h / 1d).
-const REF_NOW = 1717000000000;
-
 function timeAgo(ts: number): string {
-  const diff = Math.max(0, REF_NOW - ts);
+  // Real wall clock — the old frozen seed-era constant made every live
+  // conversation read "now" forever.
+  const diff = Math.max(0, Date.now() - ts);
   const m = Math.round(diff / 60000);
   if (m < 1) return 'now';
   if (m < 60) return `${m}m`;
@@ -239,7 +237,9 @@ export const MessageThread = ({ navigation, route }: any) => {
   const s = useStore();
   const insets = useSafeAreaInsets();
   const fontsReady = usePoppinsRegular();
-  const threadId: string = route?.params?.threadId ?? 's_threads_default';
+  // Server thread ids are UUIDs — no params means there is nothing to show
+  // (the empty id renders the thread-not-found fallbacks below).
+  const threadId: string = route?.params?.threadId ?? '';
   const thread = s.threads.find((t) => t.id === threadId);
   const messages = s.messagesFor(threadId);
   const [text, setText] = useState('');
@@ -251,7 +251,10 @@ export const MessageThread = ({ navigation, route }: any) => {
   // blank area). Reset whenever the open thread changes.
   const [msgsLoaded, setMsgsLoaded] = useState(false);
 
-  const myAvatar = s.user?.avatar ?? 'https://i.pravatar.cc/150?img=12';
+  // No stock-photo stand-in: absent avatar → the Avatar component renders
+  // initials from the user's name.
+  const myAvatar = s.user?.avatar;
+  const myName = s.user?.firstName ?? 'Me';
   const theirAvatar = thread?.withUser.avatar;
   const title = thread?.withUser.name ?? 'Chat';
   const otherUserId = thread?.withUser.id;
@@ -287,10 +290,11 @@ export const MessageThread = ({ navigation, route }: any) => {
           showAvatar={tail}
           gapAbove={gapAbove}
           avatarUri={item.fromMe ? myAvatar : theirAvatar}
+          avatarName={item.fromMe ? myName : title}
         />
       );
     },
-    [reversed, myAvatar, theirAvatar]
+    [reversed, myAvatar, theirAvatar, myName, title]
   );
 
   const canSend = text.trim().length > 0;
@@ -479,13 +483,14 @@ const Bubble = React.memo<{
   showAvatar: boolean;
   gapAbove: number;
   avatarUri?: string;
-}>(({ message, showAvatar, gapAbove, avatarUri }) => {
+  avatarName?: string;
+}>(({ message, showAvatar, gapAbove, avatarUri, avatarName }) => {
   const mine = message.fromMe;
   // 24px avatar slot on the outer side; kept (empty) on non-tail rows so every
   // bubble in a run lines up on the same column, exactly like the frame.
   const avatarSlot = (
     <View style={{ width: 24 }}>
-      {showAvatar && <Avatar uri={avatarUri} size={24} />}
+      {showAvatar && <Avatar uri={avatarUri} size={24} name={avatarName} />}
     </View>
   );
   return (

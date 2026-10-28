@@ -20,9 +20,15 @@ import { config } from '../config';
 // out of scope here.
 const skip = () => !config.isProd;
 
+// Sized against the app's own steady-state traffic: during an active favor ONE
+// device legitimately generates ~315 req/15min (4s active-favor poll = 225,
+// notifications + incoming every 20s = 90) before messaging — and NAT'd testers
+// share an IP. 300 was below the app's own floor and 429'd live tracking
+// mid-favor; 1200 covers two busy devices behind one IP with headroom while
+// still bounding abuse.
 export const globalLimiter = rateLimit({
   windowMs: 15 * 60 * 1000, // 15 minutes
-  max: 300,
+  max: 1200,
   standardHeaders: true,
   legacyHeaders: false,
   skip,

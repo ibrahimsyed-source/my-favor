@@ -131,7 +131,9 @@ export function Welcome({ navigation }: any) {
           <Button
             title="BE A FAVOR PAL"
             variant="secondary"
-            onPress={() => navigation.navigate('Signup')}
+            // Carry the chosen role into signup — the server accepts it and the
+            // account starts as a pal instead of defaulting everyone to member.
+            onPress={() => navigation.navigate('Signup', { role: 'pal' })}
             style={{ ...BTN, flex: 1, paddingHorizontal: 0, backgroundColor: GRAY_BTN }}
           />
         </View>
@@ -464,7 +466,7 @@ export function Vetting({ navigation }: any) {
             {consent ? <Ionicons name="checkmark" size={15} color="#FFFFFF" /> : null}
           </View>
           <Txt variant="bodySm" color={theme.textSecondary} style={{ flex: 1 }}>
-            I certify the information above is accurate and consent to identity verification and a background check. This is a demo, no real data is collected.
+            I certify the information above is accurate and consent to identity verification and a background check.
           </Txt>
         </TouchableOpacity>
 

@@ -251,10 +251,19 @@ function ProfileBody({ navigation, onBack, showSetStatus }: { navigation: any; o
 
         <Txt style={dark ? { ...st.profileBio, color: D.sub } : st.profileBio} center>{user.bio}</Txt>
 
-        {/* Role switch pill — white in both themes (dark text reads on white) */}
+        {/* Role switch pill — white in both themes (dark text reads on white).
+            Same vetting gate as the dashboard/providers switches: an unvetted
+            user heads to Driver Information instead of a pal mode they can't
+            accept favors in. */}
         <View style={st.switchPill}>
           <Txt style={st.switchPillText}>{isPal ? 'Switch to request a favor' : 'Switch to be a favor pal'}</Txt>
-          <TinyToggle value={isPal} onChange={() => s.setRole(isPal ? 'member' : 'pal')} />
+          <TinyToggle
+            value={isPal}
+            onChange={() => {
+              if (!isPal && !user.palVerified) { navigation.navigate('Vetting'); return; }
+              s.setRole(isPal ? 'member' : 'pal');
+            }}
+          />
         </View>
 
         {/* Stats */}
