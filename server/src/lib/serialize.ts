@@ -92,13 +92,26 @@ export function publicOffer(o: FavorOffer & { pal?: User | null }) {
 // An optionally-included `offers` relation (pending price offers, with pal info)
 // rides along on participant-facing reads so the requester sees negotiation
 // state through the same 4s active-favor poll that drives everything else.
+// Statuses during which the two matched parties may see each other's phone
+// number — never before a pal commits, never after the favor ends.
+const CONTACT_STATUSES = ['matched', 'enroute', 'arrived', 'in_progress'];
+
 export function publicFavor(
-  f: Favor & { member?: { firstName: string } | null; offers?: (FavorOffer & { pal?: User | null })[] },
+  f: Favor & {
+    member?: { firstName: string; phone?: string } | null;
+    pal?: { phone: string } | null;
+    offers?: (FavorOffer & { pal?: User | null })[];
+  },
 ) {
+  const inContact = CONTACT_STATUSES.includes(f.status);
   return {
     id: f.id,
     memberId: f.memberId,
     memberName: f.member?.firstName ?? undefined,
+    // Real phone numbers, participant-facing only (the relations are only ever
+    // loaded on participant queries) and only while the favor is in flight.
+    memberPhone: inContact ? f.member?.phone ?? undefined : undefined,
+    palPhone: inContact ? f.pal?.phone ?? undefined : undefined,
     palId: f.palId ?? undefined,
     tier: f.tier,
     price: f.price,

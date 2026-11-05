@@ -25,8 +25,10 @@ import { API_URL } from '../api/client';
 // layout of any screen underneath.
 // ---------------------------------------------------------------------------
 
-const POLL_INTERVAL_MS = 15000; // native reachability poll cadence
-const PING_TIMEOUT_MS = 6000; // abort a hung /health probe well under the poll
+const POLL_INTERVAL_MS = 15000; // native reachability poll cadence while online
+const RETRY_INTERVAL_MS = 5000; // faster recheck after a failed probe (confirm + recover quickly)
+const PING_TIMEOUT_MS = 10000; // generous: /health awaits a DB roundtrip and races the launch request storm
+const OFFLINE_STRIKES = 2; // consecutive failures required before flagging offline
 
 // Native reachability probe: resolves true if we reached the server at all.
 async function pingHealth(): Promise<boolean> {
@@ -62,13 +64,26 @@ function useIsOnline(): boolean {
     }
 
     // Native: poll /health on an interval; guard against setState-after-unmount.
+    // A single failed probe is NOT offline — on cold start the first probe races
+    // a dozen parallel launch requests against a possibly-cold backend and loses,
+    // which used to flash a false "No internet" every app open. Require two
+    // consecutive failures (rechecked quickly) before flagging, and keep the
+    // fast cadence while offline so recovery is prompt too.
     let cancelled = false;
     let timer: ReturnType<typeof setTimeout> | undefined;
+    let fails = 0;
     const tick = async () => {
       const ok = await pingHealth();
       if (cancelled) return;
-      setOnline(ok);
-      timer = setTimeout(tick, POLL_INTERVAL_MS);
+      if (ok) {
+        fails = 0;
+        setOnline(true);
+        timer = setTimeout(tick, POLL_INTERVAL_MS);
+      } else {
+        fails += 1;
+        if (fails >= OFFLINE_STRIKES) setOnline(false);
+        timer = setTimeout(tick, RETRY_INTERVAL_MS);
+      }
     };
     void tick();
     return () => {

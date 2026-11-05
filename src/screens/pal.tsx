@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import {
   View, Text, TextInput, TouchableOpacity, ScrollView, Image, StyleSheet, FlatList, RefreshControl, Modal, ActivityIndicator,
+  Linking, Platform,
 } from 'react-native';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
@@ -241,13 +242,18 @@ function FavorCard({ favor, onPress, origin }: { favor: Favor; onPress: () => vo
       accessibilityLabel={`${tierLabel(favor)}, $${favor.price}. ${favor.description}. You earn $${payout.toFixed(2)}.`}
     >
       <View style={bw.cardTop}>
-        <View style={bw.tierPill}><Text style={bw.tierPillText}>{tierLabel(favor)}</Text></View>
+        {/* Pill shrinks (with ellipsis) before it can shove the price off-card. */}
+        <View style={[bw.tierPill, { flexShrink: 1, marginRight: 10 }]}>
+          <Text style={bw.tierPillText} numberOfLines={1}>{tierLabel(favor)}</Text>
+        </View>
         <Text style={bw.price}>${favor.price}</Text>
       </View>
       <Text style={bw.desc} numberOfLines={2}>{favor.description || 'No details provided.'}</Text>
       <View style={bw.metaRow}>
         <Ionicons name="location-outline" size={14} color={SUBTLE} />
-        <Text style={bw.meta} numberOfLines={1}>{favor.location?.address || 'Nearby'}</Text>
+        {/* flexShrink so the address truncates instead of pushing the miles/time
+            (and itself) past the card edge — Text defaults to flexShrink:0 in a row. */}
+        <Text style={[bw.meta, { flexShrink: 1 }]} numberOfLines={1}>{favor.location?.address || 'Nearby'}</Text>
         <Text style={bw.dot}>·</Text>
         <Text style={bw.meta}>{fmtMiles(favorDistance(favor, origin))}</Text>
         {favor.createdAt ? <Text style={bw.dot}>·</Text> : null}
@@ -256,13 +262,15 @@ function FavorCard({ favor, onPress, origin }: { favor: Favor; onPress: () => vo
       {favor.scheduledFor ? (
         <View style={bw.schedRow}>
           <Ionicons name="calendar-outline" size={13} color={RED} />
-          <Text style={bw.schedText}>
+          <Text style={[bw.schedText, { flex: 1 }]} numberOfLines={1}>
             Scheduled · {new Date(favor.scheduledFor).toLocaleString([], { weekday: 'short', hour: 'numeric', minute: '2-digit' })}
           </Text>
         </View>
       ) : null}
       <View style={bw.cardFooter}>
-        <Text style={bw.earn}>You earn <Text style={bw.earnAmt}>${payout.toFixed(2)}</Text></Text>
+        <Text style={[bw.earn, { flexShrink: 1, marginRight: 10 }]} numberOfLines={1}>
+          You earn <Text style={bw.earnAmt}>${payout.toFixed(2)}</Text>
+        </Text>
         <View style={bw.viewBtn}>
           <Text style={bw.viewText}>View</Text>
           <Ionicons name="chevron-forward" size={15} color={CTA_TEXT} />
@@ -454,7 +462,7 @@ const bw = StyleSheet.create({
   chipActive: { backgroundColor: RED },
   chipText: { color: SUBTLE, fontSize: 13, fontFamily: P500 },
   chipTextActive: { color: TEXT },
-  card: { backgroundColor: SHEET, borderRadius: 16, padding: 16, marginBottom: 12, borderWidth: StyleSheet.hairlineWidth, borderColor: BORDER },
+  card: { backgroundColor: SHEET, borderRadius: 16, padding: 16, marginBottom: 12, borderWidth: StyleSheet.hairlineWidth, borderColor: BORDER, overflow: 'hidden' },
   cardTop: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
   tierPill: { backgroundColor: 'rgba(237,28,36,0.18)', borderRadius: 999, paddingHorizontal: 10, paddingVertical: 4 },
   tierPillText: { color: '#FF6B70', fontSize: 12, fontFamily: P600 },
@@ -903,10 +911,31 @@ export const Navigation = ({ navigation }: any) => {
   // v.2 banner reads "↑ Head west on 2nd St." — steer to the favor's address.
   const banner = fav?.location?.address ? `Head to ${fav.location.address}` : 'Head to the favor location.';
 
+  const [msgBusy, setMsgBusy] = useState(false);
+  // Fast path: a thread with this member is usually already in the store —
+  // open it instantly instead of blocking on a create-thread round trip.
+  const memberThread = s.threads.find((t) => t.withUser.id === fav?.memberId);
   const openMessage = async () => {
     if (!fav?.memberId) return;
+    if (memberThread) {
+      navigation.navigate('MessageThread', { threadId: memberThread.id });
+      return;
+    }
+    setMsgBusy(true);
     const id = await s.openThreadWith(fav.memberId);
+    setMsgBusy(false);
     if (id) navigation.navigate('MessageThread', { threadId: id });
+  };
+
+  // Real phone call — the in-flight favor carries the member's number for the
+  // assigned pal. Web / missing number falls back to the info modal.
+  const callMember = () => {
+    const phone = fav?.memberPhone;
+    if (Platform.OS === 'web' || !phone) {
+      setCallOpen(true);
+      return;
+    }
+    Linking.openURL(`tel:${phone}`).catch(() => setCallOpen(true));
   };
 
   if (!fontsLoaded) return <View style={{ flex: 1, backgroundColor: PAGE_BG }} />;
@@ -933,8 +962,8 @@ export const Navigation = ({ navigation }: any) => {
         <Text style={{ color: TEXT, fontSize: 28, fontFamily: P500, textAlign: 'center', marginTop: 18 }}>{window}</Text>
         <View style={st.windowPill}><Text style={{ color: SUBTLE, fontSize: 13, fontFamily: P400 }}>Arrival Window</Text></View>
 
-        <ActionRow icon="call" label="Call About This Favor" onPress={() => setCallOpen(true)} />
-        <ActionRow icon="mail" label="Message Favor Member" red onPress={openMessage} />
+        <ActionRow icon="call" label="Call About This Favor" onPress={callMember} />
+        <ActionRow icon="mail" label={msgBusy ? 'Opening chat…' : 'Message Favor Member'} red onPress={openMessage} />
 
         <TouchableOpacity
           style={st.whiteBtn}
@@ -982,11 +1011,11 @@ export const Navigation = ({ navigation }: any) => {
         primaryLabel="FIND ANOTHER FAVOR"
         onPrimary={() => { setCancelledOpen(false); navigation.reset({ index: 0, routes: [{ name: 'Tabs' }] }); }}
       />
-      {/* Privacy: the call is relayed — the pal never sees the member's real number. */}
+      {/* Fallback when a phone call can't start on this device (web / no number). */}
       <NavyModal
         visible={callOpen}
-        title="Calling privately"
-        message="We connect you and the Favor Member through a private relay, so neither of you ever sees the other's real phone number."
+        title="Call unavailable"
+        message={`We couldn't start a phone call to ${memberName} on this device. You can message them instead.`}
         primaryLabel="OK"
         onPrimary={() => setCallOpen(false)}
       />

@@ -142,19 +142,28 @@ export const FavorTracking = ({ navigation }: any) => {
   const thread = pal ? s.threads.find((t) => t.withUser.id === pal.id) : undefined;
   const unread = thread?.unread ?? 0;
 
+  const [msgBusy, setMsgBusy] = useState(false);
   const openThread = async () => {
-    if (pal) {
-      const threadId = await s.openThreadWith(pal.id);
-      if (threadId) {
-        navigation.navigate('MessageThread', { threadId });
-        return;
-      }
+    if (!pal) {
+      navigation.navigate('Messages');
+      return;
     }
-    navigation.navigate('Messages');
+    // Fast path: the thread is already known locally — open it instantly
+    // instead of blocking on a create-thread round trip every tap.
+    if (thread) {
+      navigation.navigate('MessageThread', { threadId: thread.id });
+      return;
+    }
+    setMsgBusy(true);
+    const threadId = await s.openThreadWith(pal.id);
+    setMsgBusy(false);
+    if (threadId) navigation.navigate('MessageThread', { threadId });
+    else navigation.navigate('Messages');
   };
 
   const callPal = () => {
-    const phone = pal?.phone;
+    // The in-flight favor carries the pal's real number (participants only).
+    const phone = fav?.palPhone || pal?.phone;
     // On web, react-native-web's openURL resolves even when the browser can't
     // handle tel:, so the .catch fallback never fires — show the modal directly.
     if (Platform.OS === 'web' || !phone) {
@@ -400,7 +409,7 @@ export const FavorTracking = ({ navigation }: any) => {
               <>
                 {actionRow('Call your Favor Pal', 'call', callPal)}
                 <View style={styles.divider} />
-                {actionRow('Message your Favor Pal', 'chatbox', openThread, unread > 0)}
+                {actionRow(msgBusy ? 'Opening chat…' : 'Message your Favor Pal', 'chatbox', openThread, unread > 0)}
               </>
             )}
           </View>
@@ -425,7 +434,7 @@ export const FavorTracking = ({ navigation }: any) => {
             <View style={styles.divider} />
             {actionRow('Call your Favor Pal', 'call', callPal)}
             <View style={styles.divider} />
-            {actionRow('Message your Favor Pal', 'chatbox', openThread, unread > 0)}
+            {actionRow(msgBusy ? 'Opening chat…' : 'Message your Favor Pal', 'chatbox', openThread, unread > 0)}
             <TouchableOpacity
               style={styles.blackBtn}
               activeOpacity={0.85}
@@ -562,8 +571,8 @@ export const FavorTracking = ({ navigation }: any) => {
       {/* Call fallback (web / no dialer) — styled like the v.2 alert modals */}
       <V2Modal
         visible={callVisible}
-        title="Connecting call"
-        body={`We're connecting you with ${palName} through a private number to keep both phone numbers protected.`}
+        title="Call unavailable"
+        body={`We couldn't start a phone call to ${palName} on this device. You can message them instead.`}
         buttons={[{ label: 'OK', onPress: () => setCallVisible(false) }]}
         onDismiss={() => setCallVisible(false)}
       />

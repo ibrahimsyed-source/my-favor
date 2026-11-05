@@ -436,6 +436,29 @@ test('role slots are independent: an open request does not block pal work', asyn
   assert.equal(active.json.favor?.id, theirs.json.favor.id, 'legacy field prefers the pal-side job');
 });
 
+test('phones are shared between participants only while the favor is in flight', async () => {
+  const { member, pal, favorId } = await activeFavor({ advanceTo: 'matched' });
+  // Both participants see each other's number on the matched favor.
+  const palView = await api(`/api/favors/${favorId}`, { token: pal.token });
+  assert.equal(palView.status, 200);
+  assert.ok(palView.json.favor.memberPhone, 'assigned pal sees the member phone');
+  const memberView = await api(`/api/favors/${favorId}`, { token: member.token });
+  assert.ok(memberView.json.favor.palPhone, 'member sees the assigned pal phone');
+  // The open feed never carries phones.
+  const stranger = await makeUser('pal');
+  const feed = await api('/api/favors/incoming', { token: stranger.token });
+  assert.ok(
+    feed.json.favors.every((f: any) => f.memberPhone === undefined && f.palPhone === undefined),
+    'open feed has no phone numbers',
+  );
+  // After completion the numbers disappear again.
+  await api(`/api/favors/${favorId}/advance`, { method: 'POST', token: pal.token, body: { status: 'arrived' } });
+  await api(`/api/favors/${favorId}/finish`, { method: 'POST', token: pal.token });
+  const done = await api(`/api/favors/${favorId}`, { token: pal.token });
+  assert.equal(done.json.favor.status, 'completed');
+  assert.equal(done.json.favor.memberPhone, undefined, 'phone gone after completion');
+});
+
 test('decline persists: a declined favor leaves only that pal’s feed', async () => {
   const member = await makeUser('member');
   const pal1 = await makeUser('pal');

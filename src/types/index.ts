@@ -63,6 +63,10 @@ export interface Favor {
   id: string;
   memberId: string;
   memberName?: string; // first name of the requester — present to the assigned pal
+  // Real phone numbers, shared between the two matched parties ONLY while the
+  // favor is in flight (matched → in_progress); absent otherwise.
+  memberPhone?: string;
+  palPhone?: string;
   palId?: string;
   tier: FavorTier;
   price: number; // base price

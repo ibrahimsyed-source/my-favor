@@ -15,9 +15,14 @@ favorRouter.use(authenticate);
 
 const ACTIVE_STATUSES = ['requested', 'matched', 'enroute', 'arrived', 'in_progress'];
 
-// Include the member's first name on participant-facing favor responses so the
-// assigned pal sees who they're helping (the open feed never uses this).
-const memberInclude = { member: { select: { firstName: true } } } as const;
+// Include the member's first name + phone, and the assigned pal's phone, on
+// participant-facing favor responses so the two matched parties can reach each
+// other (the open feed never uses this; the serializer only emits phones while
+// the favor is in a matched/in-flight status).
+const memberInclude = {
+  member: { select: { firstName: true, phone: true } },
+  pal: { select: { phone: true } },
+} as const;
 
 // Participant-facing reads also carry pending price offers (with the offering
 // pal's public info) so the requester sees negotiation state via the normal
