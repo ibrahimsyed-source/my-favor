@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import {
   View, Text, Image, ScrollView, TouchableOpacity, Pressable, StyleSheet,
   Dimensions, ActivityIndicator, Modal, TextInput, ViewStyle,
@@ -7,8 +7,9 @@ import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context'
 import { Ionicons } from '@expo/vector-icons';
 import { useFonts, Poppins_400Regular } from '@expo-google-fonts/poppins';
 import { useStore } from '../store';
-import { FAVOR_TIERS, computeFees, FavorTier, FavorOffer } from '../types';
-import { counterOfferApi, declineOfferApi } from '../api/endpoints';
+import { Avatar } from '../components';
+import { FAVOR_TIERS, computeFees, FavorTier, FavorOffer, Review } from '../types';
+import { counterOfferApi, declineOfferApi, getPalApi, getPalReviewsApi } from '../api/endpoints';
 import { LiveMap } from '../components/LiveMap';
 import { MapScene, MAP_SCENE_SUPPORTED } from '../components/MapScene';
 
@@ -441,6 +442,80 @@ export const SelectPayment = ({ navigation }: any) => {
   );
 };
 
+// ---------------------------------------------------------------------------
+// PalProfileModal — the approval surface's "who is this person?" view: full
+// profile + the reviews other members left, fetched on open. The member reads
+// this BEFORE approving a candidate from the offer cards.
+// ---------------------------------------------------------------------------
+function PalProfileModal({ palId, onClose }: { palId: string | null; onClose: () => void }) {
+  const [pal, setPal] = useState<any | null>(null);
+  const [reviews, setReviews] = useState<Review[]>([]);
+  const [loading, setLoading] = useState(false);
+  useEffect(() => {
+    if (!palId) return;
+    let cancelled = false;
+    setLoading(true);
+    setPal(null);
+    setReviews([]);
+    void Promise.all([getPalApi(palId), getPalReviewsApi(palId)])
+      .then(([p, r]) => {
+        if (cancelled) return;
+        setPal(p.pal);
+        setReviews(r.reviews);
+      })
+      .catch(() => undefined)
+      .finally(() => { if (!cancelled) setLoading(false); });
+    return () => { cancelled = true; };
+  }, [palId]);
+
+  const name = pal ? `${pal.firstName ?? ''} ${pal.lastName ?? ''}`.trim() : '';
+  return (
+    <Modal visible={palId != null} transparent animationType="fade" onRequestClose={onClose}>
+      <View style={styles.scrimCenter}>
+        <View style={[styles.alertCard, { maxHeight: '78%' }]}>
+          {loading || !pal ? (
+            <ActivityIndicator color={INK} style={{ marginVertical: 28 }} />
+          ) : (
+            <ScrollView style={{ alignSelf: 'stretch' }} showsVerticalScrollIndicator={false}>
+              <View style={{ alignItems: 'center' }}>
+                <Avatar uri={pal.avatar} size={72} name={name || 'Favor Pal'} />
+                <Text style={[styles.alertTitle, { marginTop: 10 }]}>{name || 'Favor Pal'}</Text>
+                <Text style={styles.alertBody}>
+                  {`★ ${pal.rating && pal.rating > 0 ? Number(pal.rating).toFixed(1) : 'New'}   ·   ${pal.totalFavors ?? 0} favors`}
+                  {pal.city ? `   ·   ${pal.city}` : ''}
+                </Text>
+              </View>
+              {pal.bio ? <Text style={[styles.alertBody, { textAlign: 'left', marginTop: 12 }]}>{pal.bio}</Text> : null}
+              <Text style={[styles.alertTitle, { fontSize: 15, textAlign: 'left', marginTop: 16 }]}>Reviews</Text>
+              {reviews.length === 0 ? (
+                <Text style={[styles.alertBody, { textAlign: 'left' }]}>No reviews yet.</Text>
+              ) : (
+                reviews.map((r) => (
+                  <View key={r.id} style={{ marginTop: 10 }}>
+                    <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+                      {[1, 2, 3, 4, 5].map((n) => (
+                        <Ionicons key={n} name={n <= r.rating ? 'star' : 'star-outline'} size={13} color="#FFBD00" />
+                      ))}
+                      <Text style={[styles.alertBody, { marginTop: 0 }]}>
+                        {'   '}{r.authorName}{' · '}
+                        {new Date(r.date).toLocaleDateString([], { month: 'short', year: 'numeric' })}
+                      </Text>
+                    </View>
+                    {r.comment ? (
+                      <Text style={[styles.alertBody, { textAlign: 'left', marginTop: 2 }]}>{r.comment}</Text>
+                    ) : null}
+                  </View>
+                ))
+              )}
+            </ScrollView>
+          )}
+          <BlackButton title="CLOSE" onPress={onClose} style={{ marginTop: 16, alignSelf: 'stretch' }} />
+        </View>
+      </View>
+    </Modal>
+  );
+}
+
 // ===========================================================================
 // 3. Searching  (v.2 #125:10708 — white waiting modal over the dimmed map)
 // ===========================================================================
@@ -469,6 +544,8 @@ export const Searching = ({ navigation }: any) => {
   // sets bridge the ≤4s gap until the poll reflects an action, so a card can't
   // be double-tapped into a stale state.
   const [counterFor, setCounterFor] = useState<FavorOffer | null>(null);
+  // Candidate pal whose full profile + reviews the member is inspecting.
+  const [profilePalId, setProfilePalId] = useState<string | null>(null);
   const [counterText, setCounterText] = useState('');
   const [offerBusy, setOfferBusy] = useState<string | null>(null);
   const [offerError, setOfferError] = useState('');
@@ -614,18 +691,32 @@ export const Searching = ({ navigation }: any) => {
                     const justCountered = local != null && o.lastBy !== 'member' && o.updatedAt === local.baseUpdatedAt;
                     const waitingOnPal = o.lastBy === 'member' || justCountered;
                     const shownPrice = justCountered ? local.price : o.price;
+                    // A list-price request is the pal "accepting" the favor —
+                    // the member's ACCEPT here is the approval of the PERSON.
+                    const isListPrice = !waitingOnPal && o.lastBy === 'pal' && o.price === activeFavor?.price;
+                    const palLabel = o.pal?.firstName ?? 'A Favor Pal';
                     return (
                       <View key={o.id} style={styles.offerCard}>
                         <View style={{ flexDirection: 'row', alignItems: 'center' }}>
-                          <View style={{ flex: 1 }}>
-                            <Text style={styles.offerName}>
-                              {(o.pal?.firstName ?? 'A Favor Pal') +
-                                (o.pal?.rating ? `  ·  ★ ${o.pal.rating.toFixed(1)}` : '')}
+                          <TouchableOpacity
+                            onPress={() => { if (o.pal?.id) setProfilePalId(o.pal.id); }}
+                            accessibilityRole="button"
+                            accessibilityLabel={`View ${palLabel}'s profile and reviews`}
+                          >
+                            <Avatar uri={o.pal?.avatar} size={42} name={palLabel} />
+                          </TouchableOpacity>
+                          <View style={{ flex: 1, marginLeft: 10 }}>
+                            <Text style={styles.offerName} numberOfLines={1}>
+                              {palLabel +
+                                (o.pal?.rating ? `  ·  ★ ${o.pal.rating.toFixed(1)}` : '  ·  New') +
+                                (o.pal?.totalFavors ? `  ·  ${o.pal.totalFavors} favors` : '')}
                             </Text>
                             <Text style={styles.offerPrice}>
                               {waitingOnPal
                                 ? `You countered $${shownPrice.toFixed(2)} — waiting on their reply`
-                                : `Offers $${o.price.toFixed(2)}`}
+                                : isListPrice
+                                  ? `Wants your favor at your listed $${o.price.toFixed(2)}`
+                                  : `Offers $${o.price.toFixed(2)}`}
                             </Text>
                           </View>
                           {!waitingOnPal ? (
@@ -634,14 +725,27 @@ export const Searching = ({ navigation }: any) => {
                               disabled={offerBusy != null}
                               onPress={() => onAcceptOffer(o)}
                               accessibilityRole="button"
-                              accessibilityLabel={`Accept ${o.pal?.firstName ?? 'pal'}'s offer of $${o.price.toFixed(2)}`}
+                              accessibilityLabel={
+                                isListPrice
+                                  ? `Approve ${palLabel} for your favor`
+                                  : `Accept ${palLabel}'s offer of $${o.price.toFixed(2)}`
+                              }
                             >
-                              <Text style={styles.offerAcceptText}>{offerBusy === o.id ? '…' : 'ACCEPT'}</Text>
+                              <Text style={styles.offerAcceptText}>
+                                {offerBusy === o.id ? '…' : isListPrice ? 'APPROVE' : 'ACCEPT'}
+                              </Text>
                             </TouchableOpacity>
                           ) : null}
                         </View>
                         {!waitingOnPal ? (
                           <View style={{ flexDirection: 'row', marginTop: 8, gap: 20 }}>
+                            <TouchableOpacity
+                              onPress={() => { if (o.pal?.id) setProfilePalId(o.pal.id); }}
+                              accessibilityRole="button"
+                              accessibilityLabel={`View ${palLabel}'s profile`}
+                            >
+                              <Text style={styles.offerLink}>PROFILE</Text>
+                            </TouchableOpacity>
                             <TouchableOpacity
                               onPress={() => { setCounterFor(o); setCounterText(''); }}
                               accessibilityRole="button"
@@ -686,6 +790,9 @@ export const Searching = ({ navigation }: any) => {
           )}
         </View>
       </View>
+
+      {/* Candidate pal's full profile + reviews — read before approving. */}
+      <PalProfileModal palId={profilePalId} onClose={() => setProfilePalId(null)} />
 
       {/* Cancel-while-waiting confirm — an unmatched favor cancels fee-free. */}
       <Modal visible={cancelAsk} transparent animationType="fade" onRequestClose={() => setCancelAsk(false)}>

@@ -1,7 +1,7 @@
 import React, { createContext, useContext, useMemo, useState, useCallback, useEffect, useRef } from 'react';
 import { Platform } from 'react-native';
 import {
-  User, Favor, PaymentCard, Transaction, Thread, Message, AppNotification,
+  User, Favor, FavorOffer, PaymentCard, Transaction, Thread, Message, AppNotification,
   Role, UserStatus, FavorTier, GeoPoint, FavorStatus, computeFees, computePayout,
 } from '../types';
 import { setSession, clearSession, getStoredRefresh, getStoredUser, setStoredUser, ApiError, setOnSessionExpired, setOnAccountSuspended } from '../api/client';
@@ -128,7 +128,10 @@ interface StoreValue {
   // pal side
   incomingFavors: Favor[];
   refreshIncoming: () => Promise<void>;
-  acceptFavor: (favorId: string) => Promise<{ ok: boolean; reason?: string; code?: 'unavailable' | 'error' }>;
+  // A pal's "accept" is a REQUEST at the listed price — the member must approve
+  // the person before assignment, so success returns the pending offer (the
+  // favor is NOT matched yet; the offer poll learns the member's decision).
+  acceptFavor: (favorId: string) => Promise<{ ok: boolean; offer?: FavorOffer; reason?: string; code?: 'unavailable' | 'error' }>;
   // Accept the OTHER side's negotiated price (member accepting a pal's offer, or
   // a pal accepting the member's counter) — matches the favor at exactly `price`
   // (the number the user saw; the server 409s if the offer changed underneath).
@@ -140,7 +143,10 @@ interface StoreValue {
   abandonFavor: () => Promise<boolean>;
   assignPal: (palId: string) => Promise<boolean>;
   finishFavorAsPal: () => number;
-  rateMember: (rating: number, feedback: string) => void;
+  // Pal rates the member for a finished favor. Pass the favor id from the
+  // navigation params (survives app restarts); null falls back to the favor
+  // finished this session. Resolves false when nothing was persisted.
+  rateMember: (favorId: string | null, rating: number, feedback: string) => Promise<boolean>;
   // moderation
   blockedUsers: string[];
   reportUser: (userId: string, reason?: string) => void;
@@ -693,34 +699,32 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     return () => clearInterval(id);
   }, [user, refreshIncoming]);
 
-  const acceptFavor = useCallback(async (favorId: string): Promise<{ ok: boolean; reason?: string; code?: 'unavailable' | 'error' }> => {
+  const acceptFavor = useCallback(async (favorId: string): Promise<{ ok: boolean; offer?: FavorOffer; reason?: string; code?: 'unavailable' | 'error' }> => {
     // One JOB at a time: only an in-flight favor the user is FULFILLING blocks
-    // accepting another. Their own open request (member slot) never does —
+    // requesting another. Their own open request (member slot) never does —
     // requesting and fulfilling are independent roles.
     if (palFavor) {
       return { ok: false, reason: 'You already have an active favor. Finish it before accepting another.' };
     }
-    const uid = user?.id ?? '';
     try {
-      const { favor } = await acceptFavorApi(favorId);
-      setIncomingFavors((list) => list.filter((x) => x.id !== favorId));
-      setPalFavor(favor);
-      setMemberCanceled(false);
-      lastFavorWriteRef.current = Date.now();
-      return { ok: true };
+      // Not a match: the server records the pal's request as a list-price offer
+      // and the MEMBER approves the person. The favor stays on the board and in
+      // the pal slot nothing changes until the offer poll sees 'accepted'.
+      const { offer } = await acceptFavorApi(favorId);
+      return { ok: true, offer };
     } catch (e: any) {
-      // lost the race / already taken — refresh the feed + active state
+      // Refresh the feed so a favor that just closed disappears promptly.
       void getIncomingApi().then(({ favors }) => setIncomingFavors(favors)).catch(() => undefined);
-      void getActiveFavorApi().then((a) => {
-        const { member, pal } = splitActive(a, uid);
-        setMemberFavor(member);
-        setPalFavor(pal);
-      }).catch(() => undefined);
-      // 409 (already matched) / 404 (deleted) => the favor is truly gone.
-      const gone = e?.status === 409 || e?.status === 404;
-      return { ok: false, reason: e?.message || 'This favor is no longer available.', code: gone ? 'unavailable' : 'error' };
+      // 404 = deleted outright; a 409 carries a specific reason (no longer
+      // available / declined at this price / finish your active favor) that the
+      // sheet shows verbatim.
+      return {
+        ok: false,
+        reason: e?.message || 'This favor is no longer available.',
+        code: e?.status === 404 ? 'unavailable' : 'error',
+      };
     }
-  }, [palFavor, user]);
+  }, [palFavor]);
 
   const acceptOffer = useCallback(async (favorId: string, offerId: string, price: number): Promise<{ ok: boolean; reason?: string }> => {
     // A member accepting an offer ON their own favor is always allowed; a pal
@@ -828,9 +832,17 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
   }, [palFavor, user]);
 
   // Pal rates the member they just helped (persists to the finished favor).
-  const rateMember = useCallback((rating: number, feedback: string) => {
-    const id = lastFinishedRef.current;
-    if (id) void rateMemberApi(id, { rating, feedback: feedback ?? '' }).catch(() => undefined);
+  // Honest result: the submit screen must not claim success on a silent no-op
+  // (missing id) or a failed request.
+  const rateMember = useCallback(async (favorId: string | null, rating: number, feedback: string): Promise<boolean> => {
+    const id = favorId ?? lastFinishedRef.current;
+    if (!id) return false;
+    try {
+      await rateMemberApi(id, { rating, feedback: feedback ?? '' });
+      return true;
+    } catch {
+      return false;
+    }
   }, []);
 
   // ---- moderation ----

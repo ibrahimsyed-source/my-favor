@@ -24,6 +24,7 @@ export function publicUser(u: User) {
     palVetStatus: u.palVetStatus,
     suspended: u.suspended,
     rating: u.rating,
+    memberRating: u.memberRating,
     totalFavors: u.totalFavors,
     yearsActive: u.yearsActive,
     reliability: u.reliability,
@@ -98,7 +99,7 @@ const CONTACT_STATUSES = ['matched', 'enroute', 'arrived', 'in_progress'];
 
 export function publicFavor(
   f: Favor & {
-    member?: { firstName: string; phone?: string } | null;
+    member?: { firstName: string; phone?: string; memberRating?: number } | null;
     pal?: { phone: string } | null;
     offers?: (FavorOffer & { pal?: User | null })[];
   },
@@ -108,6 +109,9 @@ export function publicFavor(
     id: f.id,
     memberId: f.memberId,
     memberName: f.member?.firstName ?? undefined,
+    // Aggregate of pal->member reviews; rides any read that includes the member
+    // relation (incl. the open feed) so pals can judge the requester.
+    memberRating: f.member?.memberRating ?? undefined,
     // Real phone numbers, participant-facing only (the relations are only ever
     // loaded on participant queries) and only while the favor is in flight.
     memberPhone: inContact ? f.member?.phone ?? undefined : undefined,

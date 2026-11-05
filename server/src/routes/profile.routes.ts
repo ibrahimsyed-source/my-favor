@@ -174,6 +174,56 @@ profileRouter.get(
   }),
 );
 
+// GET /api/profile/members/:id — a favor member as seen by pals deciding
+// whether to take their favor. Counterpart of /pals/:id; conservative shape.
+profileRouter.get(
+  '/members/:id',
+  validate({ params: z.object({ id: z.string().uuid() }) }),
+  asyncHandler(async (req, res) => {
+    const member = await prisma.user.findUnique({ where: { id: req.params.id } });
+    if (!member) throw notFound('Member not found');
+    const completedFavors = await prisma.favor.count({
+      where: { memberId: member.id, status: 'completed' },
+    });
+    res.json({
+      member: {
+        id: member.id,
+        firstName: member.firstName,
+        lastName: member.lastName,
+        avatar: member.avatar ?? undefined,
+        bio: member.bio ?? undefined,
+        city: member.city ?? undefined,
+        state: member.state ?? undefined,
+        memberRating: member.memberRating,
+        completedFavors,
+        memberSince: member.createdAt.getTime(),
+      },
+    });
+  }),
+);
+
+// GET /api/profile/members/:id/reviews — reviews pals left for this member.
+profileRouter.get(
+  '/members/:id/reviews',
+  validate({ params: z.object({ id: z.string().uuid() }) }),
+  asyncHandler(async (req, res) => {
+    const rated = await prisma.favor.findMany({
+      where: { memberId: req.params.id, palRating: { not: null } },
+      orderBy: { createdAt: 'desc' },
+      take: 50,
+      include: { pal: { select: { firstName: true, lastName: true } } },
+    });
+    const reviews = rated.map((f) => ({
+      id: f.id,
+      rating: f.palRating ?? 0,
+      comment: f.palFeedback ?? '',
+      authorName: `${f.pal?.firstName ?? 'A Favor Pal'} ${f.pal?.lastName ? f.pal.lastName[0] + '.' : ''}`.trim(),
+      date: f.createdAt.getTime(),
+    }));
+    res.json({ reviews });
+  }),
+);
+
 // GET /api/profile/pals/:id/reviews — reviews members left for this pal.
 profileRouter.get(
   '/pals/:id/reviews',

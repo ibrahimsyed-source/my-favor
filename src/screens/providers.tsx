@@ -357,10 +357,16 @@ export const ProviderDetail = ({ navigation, route }: any) => {
 
   // Bind the chosen pal to the active favor (core of the tracking flow), then
   // track. Server-confirmed: only navigate once the booking actually landed.
+  const [bookError, setBookError] = useState('');
   const book = async () => {
     setShowProfile(false);
     const ok = await assignPal(pal.id);
     if (ok) navigation.navigate('FavorTracking');
+    else {
+      setBookError(
+        'Booking failed. You need an open favor request to book a pal — post a favor first, then book them from here.',
+      );
+    }
   };
 
   return (
@@ -445,6 +451,24 @@ export const ProviderDetail = ({ navigation, route }: any) => {
           onBack={() => setShowProfile(false)}
           onBook={book}
         />
+      </Modal>
+
+      {/* Booking failed (usually: no open favor request to attach the pal to). */}
+      <Modal visible={!!bookError} transparent animationType="fade" onRequestClose={() => setBookError('')}>
+        <View style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', alignItems: 'center', justifyContent: 'center', padding: 24 }}>
+          <View style={{ backgroundColor: '#FFFFFF', borderRadius: 16, padding: 24, width: '100%', maxWidth: 351 }}>
+            <Txt style={{ fontSize: 17, textAlign: 'center' }}>Couldn't book this pal</Txt>
+            <Txt style={{ fontSize: 14, textAlign: 'center', marginTop: 10, lineHeight: 20 }}>{bookError}</Txt>
+            <TouchableOpacity
+              onPress={() => setBookError('')}
+              accessibilityRole="button"
+              accessibilityLabel="Close"
+              style={{ backgroundColor: '#0D0A0A', borderRadius: 8, height: 48, alignItems: 'center', justifyContent: 'center', marginTop: 18 }}
+            >
+              <Txt style={{ color: '#FFFFFF', fontSize: 15 }}>OK</Txt>
+            </TouchableOpacity>
+          </View>
+        </View>
       </Modal>
     </View>
   );

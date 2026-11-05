@@ -296,6 +296,9 @@ favorRouter.get(
       },
       orderBy: { createdAt: 'desc' },
       take: 50,
+      // First name + member rating ride the open feed so pals can judge the
+      // requester (and tap through to their profile/reviews) before committing.
+      include: { member: { select: { firstName: true, memberRating: true } } },
     });
     // Coarse location only — exact address is revealed to the pal once matched.
     res.json({ favors: favors.map(publicFavorOpen) });
@@ -314,8 +317,12 @@ favorRouter.get(
   }),
 );
 
-// POST /api/favors/:id/accept — a pal claims an open favor. Atomic so two pals
-// can't both win the same favor (race-safe via a conditional updateMany).
+// POST /api/favors/:id/accept — a pal REQUESTS an open favor at its listed
+// price. This no longer claims the favor: the member must approve the PERSON
+// before any assignment, so the request lands as the pal's offer row at the
+// current list price. The member reviews candidates (profile + reviews) on the
+// Searching screen, and their ACCEPT — the atomic offer-accept below — is what
+// actually matches the favor. Response carries the pending offer, not a favor.
 favorRouter.post(
   '/:id/accept',
   validate({ params: idParam }),
@@ -324,11 +331,12 @@ favorRouter.post(
     const favor = await prisma.favor.findUnique({ where: { id: req.params.id } });
     if (!favor) throw notFound('Favor not found');
     if (favor.memberId === me) throw forbidden('You cannot accept your own favor');
+    if (favor.status !== 'requested' || favor.palId) throw conflict('This favor is no longer available');
 
     // Trust & safety gate: a pal must have passed identity/background vetting
     // before entering a member's home. Enforced server-side so a client can't
     // bypass it. (palVerified is set by POST /profile/verify-pal.)
-    const meUser = await prisma.user.findUnique({ where: { id: me }, select: { palVerified: true } });
+    const meUser = await prisma.user.findUnique({ where: { id: me }, select: { palVerified: true, firstName: true } });
     if (!meUser?.palVerified) {
       throw forbidden('Complete pal verification (Driver Information) before accepting favors.');
     }
@@ -339,29 +347,39 @@ favorRouter.post(
     });
     if (acceptBlocked) throw forbidden('This favor is not available to you');
 
-    // One favor at a time: a pal already mid-favor can't claim another (server-
-    // side guard for the single active-favor slot; the client guards too).
+    // One favor at a time: a pal already mid-favor can't request another (also
+    // re-checked atomically inside the member's offer-accept).
     const activeAsPal = await prisma.favor.count({
       where: { palId: me, status: { in: ['matched', 'enroute', 'arrived', 'in_progress'] } },
     });
     if (activeAsPal > 0) throw conflict('Finish your active favor before accepting another');
 
-    const claimed = await prisma.favor.updateMany({
-      where: { id: req.params.id, status: 'requested', palId: null },
-      data: { status: 'matched', palId: me },
+    // A declined request doesn't silently reopen at the same number — but the
+    // pal may still negotiate a different price via /offers.
+    const existing = await prisma.favorOffer.findUnique({
+      where: { favorId_palId: { favorId: favor.id, palId: me } },
     });
-    if (claimed.count === 0) throw conflict('This favor is no longer available');
-
-    await prisma.favorEvent.create({ data: { favorId: req.params.id, status: 'matched', actorId: me } });
-    // Matching at list price closes any open negotiations on this favor.
-    await prisma.favorOffer.updateMany({
-      where: { favorId: req.params.id, status: 'pending' },
-      data: { status: 'declined' },
+    if (existing?.status === 'declined' && existing.price === favor.price) {
+      throw conflict('The member declined your request for this favor.');
+    }
+    const changed =
+      !existing || existing.price !== favor.price || existing.status !== 'pending' || existing.lastBy !== 'pal';
+    const offer = await prisma.favorOffer.upsert({
+      where: { favorId_palId: { favorId: favor.id, palId: me } },
+      // List price is server-authoritative — the client can't pick the number.
+      create: { favorId: favor.id, palId: me, price: favor.price, lastBy: 'pal' },
+      update: { price: favor.price, lastBy: 'pal', status: 'pending' },
+      include: { pal: true },
     });
-    await notify(favor.memberId, 'match', 'Favor accepted', 'A Favor Pal accepted your request.');
-
-    const updated = await prisma.favor.findUniqueOrThrow({ where: { id: req.params.id }, include: memberInclude });
-    res.json({ favor: publicFavor(updated) });
+    if (changed) {
+      await notify(
+        favor.memberId,
+        'offer',
+        'A Favor Pal wants your favor',
+        `${meUser.firstName ?? 'A Favor Pal'} wants to do your favor at the listed price. Review and approve them.`,
+      );
+    }
+    res.json({ offer: publicOffer(offer), pending: true });
   }),
 );
 
@@ -590,7 +608,14 @@ favorRouter.post(
     const isPal = offer.palId === me;
     if (!isMember && !isPal) throw forbidden('You are not part of this negotiation');
     if (offer.status === 'pending') {
-      await prisma.favorOffer.update({ where: { id: offer.id }, data: { status: 'declined' } });
+      if (isPal && offer.lastBy === 'pal') {
+        // The pal withdraws their own un-answered offer/request: delete the row
+        // outright so a later re-request at the same (list) price isn't blocked
+        // by the declined-at-this-price guard — that guard is for MEMBER "no"s.
+        await prisma.favorOffer.delete({ where: { id: offer.id } });
+      } else {
+        await prisma.favorOffer.update({ where: { id: offer.id }, data: { status: 'declined' } });
+      }
       await notify(
         isMember ? offer.palId : offer.favor.memberId,
         'offer',
@@ -822,12 +847,23 @@ favorRouter.post(
     if (!favor) throw notFound('Favor not found');
     if (favor.palId !== me) throw forbidden('Only the assigned pal can rate this favor');
     if (favor.status !== 'completed') throw conflict('Only completed favors can be rated');
-    // Atomic single-rating gate (mirrors the member rate flow).
-    const rated = await prisma.favor.updateMany({
-      where: { id: favor.id, palId: me, palRating: null },
-      data: { palRating: rating, palFeedback: feedback },
+    // Atomic single-rating gate (mirrors the member rate flow), then fold the
+    // review into the member's aggregate so pals can see it before accepting.
+    await prisma.$transaction(async (tx) => {
+      const rated = await tx.favor.updateMany({
+        where: { id: favor.id, palId: me, palRating: null },
+        data: { palRating: rating, palFeedback: feedback },
+      });
+      if (rated.count === 0) throw conflict('Favor already rated');
+      const agg = await tx.favor.aggregate({
+        where: { memberId: favor.memberId, palRating: { not: null } },
+        _avg: { palRating: true },
+      });
+      await tx.user.update({
+        where: { id: favor.memberId },
+        data: { memberRating: Math.round((agg._avg.palRating ?? rating) * 10) / 10 },
+      });
     });
-    if (rated.count === 0) throw conflict('Favor already rated');
     res.json({ ok: true });
   }),
 );

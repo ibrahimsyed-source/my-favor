@@ -63,6 +63,15 @@ export const updatePushTokenApi = (pushToken: string | null) =>
 export const getPalsApi = () => apiRequest<{ pals: Partial<User>[] }>('/api/profile/pals', { auth: true });
 export const getPalApi = (id: string) => apiRequest<{ pal: Partial<User> }>(`/api/profile/pals/${id}`, { auth: true });
 export const getPalReviewsApi = (id: string) => apiRequest<{ reviews: Review[] }>(`/api/profile/pals/${id}/reviews`, { auth: true });
+// A favor member as seen by pals deciding whether to take their favor.
+export type MemberProfile = {
+  id: string; firstName: string; lastName: string; avatar?: string; bio?: string;
+  city?: string; state?: string; memberRating: number; completedFavors: number; memberSince: number;
+};
+export const getMemberApi = (id: string) =>
+  apiRequest<{ member: MemberProfile }>(`/api/profile/members/${id}`, { auth: true });
+export const getMemberReviewsApi = (id: string) =>
+  apiRequest<{ reviews: Review[] }>(`/api/profile/members/${id}/reviews`, { auth: true });
 
 // --- geo (server-side Google Maps proxy; see server geo.routes.ts) ---
 export type AddressSuggestion = { id: string; description: string };
@@ -96,7 +105,10 @@ export const getActiveFavorApi = () =>
   apiRequest<{ favor: Favor | null; memberFavor?: Favor | null; palFavor?: Favor | null }>('/api/favors/active', { auth: true });
 export const getIncomingApi = () => apiRequest<{ favors: Favor[] }>('/api/favors/incoming', { auth: true });
 export const getFavorApi = (id: string) => apiRequest<{ favor: Favor }>(`/api/favors/${id}`, { auth: true });
-export const acceptFavorApi = (id: string) => apiRequest<{ favor: Favor }>(`/api/favors/${id}/accept`, { method: 'POST', auth: true });
+// A pal's accept is a REQUEST at the listed price: the member must approve the
+// person before assignment, so this returns the pending offer, not a favor.
+export const acceptFavorApi = (id: string) =>
+  apiRequest<{ offer: FavorOffer; pending: boolean }>(`/api/favors/${id}/accept`, { method: 'POST', auth: true });
 export const declineFavorApi = (id: string) => apiRequest<{ ok: boolean }>(`/api/favors/${id}/decline`, { method: 'POST', auth: true });
 export const abandonFavorApi = (id: string) => apiRequest<{ ok: boolean }>(`/api/favors/${id}/abandon`, { method: 'POST', auth: true });
 export const assignPalApi = (id: string, palId: string) => apiRequest<{ favor: Favor }>(`/api/favors/${id}/assign`, { method: 'POST', auth: true, body: { palId } });

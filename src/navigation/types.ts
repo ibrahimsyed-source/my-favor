@@ -22,6 +22,7 @@ export type RootStackParamList = {
   Searching: undefined;
   ProviderResults: undefined;
   ProviderDetail: { palId: string };
+  MemberProfile: { userId: string };
   FavorTracking: undefined;
   OrderComplete: undefined;
 

@@ -23,6 +23,8 @@ export interface User {
   suspended?: boolean; // moderation: account suspended/banned
   // Pal stats
   rating: number; // 0-5
+  // Aggregate of pal->member reviews — the member-side counterpart of `rating`.
+  memberRating?: number;
   totalFavors: number;
   yearsActive: number;
   reliability: number; // 0-100
@@ -63,6 +65,7 @@ export interface Favor {
   id: string;
   memberId: string;
   memberName?: string; // first name of the requester — present to the assigned pal
+  memberRating?: number; // aggregate of pal->member reviews (rides the open feed too)
   // Real phone numbers, shared between the two matched parties ONLY while the
   // favor is in flight (matched → in_progress); absent otherwise.
   memberPhone?: string;

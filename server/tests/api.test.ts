@@ -78,6 +78,21 @@ async function makeUser(role: 'member' | 'pal') {
   return { email, token, refreshToken: verify.json.refreshToken as string, id: verify.json.user.id as string };
 }
 
+// Approval flow: a pal's /accept is a REQUEST (list-price offer, no match); the
+// member approves the person via the atomic offer-accept. Returns the approval
+// response (matched favor).
+async function requestAndApprove(favorId: string, memberToken: string, palToken: string) {
+  const req = await api(`/api/favors/${favorId}/accept`, { method: 'POST', token: palToken });
+  assert.equal(req.status, 200, 'pal request should land');
+  assert.ok(req.json.offer && req.json.pending, 'accept returns a pending offer, not a match');
+  const approve = await api(`/api/favors/${favorId}/offers/${req.json.offer.id}/accept`, {
+    method: 'POST', token: memberToken, body: { price: req.json.offer.price },
+  });
+  assert.equal(approve.status, 200, 'member approval matches the favor');
+  assert.equal(approve.json.favor.status, 'matched');
+  return approve.json;
+}
+
 test('health check', async () => {
   const res = await api('/health');
   assert.equal(res.status, 200);
@@ -131,14 +146,12 @@ test('full favor lifecycle: request → accept → advance → finish → rate',
   assert.equal(incoming.status, 200);
   assert.ok(incoming.json.favors.some((f: any) => f.id === favorId), 'favor appears for pal');
 
-  // Pal accepts.
-  const accept = await api(`/api/favors/${favorId}/accept`, { method: 'POST', token: pal.token });
-  assert.equal(accept.status, 200);
-  assert.equal(accept.json.favor.status, 'matched');
+  // Pal requests the favor; the member approves them — only then is it matched.
+  await requestAndApprove(favorId, member.token, pal.token);
 
-  // Double-accept is rejected (race safety).
+  // Requesting a matched favor is rejected (race safety).
   const accept2 = await api(`/api/favors/${favorId}/accept`, { method: 'POST', token: pal.token });
-  assert.equal(accept2.status, 409, 'already-taken favor cannot be re-accepted');
+  assert.equal(accept2.status, 409, 'already-taken favor cannot be re-requested');
 
   // Pal advances the status forward.
   for (const status of ['enroute', 'arrived', 'in_progress']) {
@@ -204,9 +217,8 @@ test('any vetted account can browse and fulfill others\' favors, but not their o
   const ownAccept = await api(`/api/favors/${favorId}/accept`, { method: 'POST', token: alice.token });
   assert.equal(ownAccept.status, 403);
 
-  // But anyone else can accept and fulfill it.
-  const bobAccept = await api(`/api/favors/${favorId}/accept`, { method: 'POST', token: bob.token });
-  assert.equal(bobAccept.status, 200);
+  // But anyone else can request it, and the member's approval matches it.
+  await requestAndApprove(favorId, alice.token, bob.token);
 });
 
 test('password reset: forgot -> reset -> login with the new password', async () => {
@@ -239,7 +251,7 @@ test('pal abandon: a released favor returns to the open board, member not strand
     body: { tier: 'tiny', description: 'Abandon test', location: { lat: 30, lng: -97, address: 'X' } },
   });
   const favorId = create.json.favor.id;
-  await api(`/api/favors/${favorId}/accept`, { method: 'POST', token: pal.token });
+  await requestAndApprove(favorId, member.token, pal.token);
 
   // Only the assigned pal can release; a stranger cannot.
   const stranger = await makeUser('pal');
@@ -297,7 +309,7 @@ async function activeFavor(opts: { advanceTo?: 'matched' | 'enroute' | 'arrived'
   });
   const favorId = create.json.favor.id as string;
   const target = opts.advanceTo ?? 'matched';
-  await api(`/api/favors/${favorId}/accept`, { method: 'POST', token: pal.token });
+  await requestAndApprove(favorId, member.token, pal.token);
   for (const s of ['enroute', 'arrived', 'in_progress'] as const) {
     if (['enroute', 'arrived', 'in_progress'].indexOf(target) >= ['enroute', 'arrived', 'in_progress'].indexOf(s) && target !== 'matched') {
       await api(`/api/favors/${favorId}/advance`, { method: 'POST', token: pal.token, body: { status: s } });
@@ -426,8 +438,8 @@ test('role slots are independent: an open request does not block pal work', asyn
     body: { tier: 'small', description: 'Walk my dog', location: { lat: 30.26, lng: -97.74, address: '2 Main St' } },
   });
   assert.equal(theirs.status, 201);
-  const accept = await api(`/api/favors/${theirs.json.favor.id}/accept`, { method: 'POST', token: a.token });
-  assert.equal(accept.status, 200, 'own open request must not block accepting as a pal');
+  // Own open request must not block requesting (and being approved) as a pal.
+  await requestAndApprove(theirs.json.favor.id, b.token, a.token);
   // GET /active returns both slots, split by role.
   const active = await api('/api/favors/active', { token: a.token });
   assert.equal(active.status, 200);
@@ -457,6 +469,23 @@ test('phones are shared between participants only while the favor is in flight',
   const done = await api(`/api/favors/${favorId}`, { token: pal.token });
   assert.equal(done.json.favor.status, 'completed');
   assert.equal(done.json.favor.memberPhone, undefined, 'phone gone after completion');
+});
+
+test('two-way reviews: pal rating aggregates into the member profile + reviews feed', async () => {
+  const { member, pal, favorId } = await activeFavor({ advanceTo: 'arrived' });
+  await api(`/api/favors/${favorId}/finish`, { method: 'POST', token: pal.token });
+  const rate = await api(`/api/favors/${favorId}/rate-member`, {
+    method: 'POST', token: pal.token, body: { rating: 4, feedback: 'Friendly member' },
+  });
+  assert.equal(rate.status, 200);
+  const prof = await api(`/api/profile/members/${member.id}`, { token: pal.token });
+  assert.equal(prof.status, 200);
+  assert.equal(prof.json.member.memberRating, 4, 'pal review aggregates into memberRating');
+  const revs = await api(`/api/profile/members/${member.id}/reviews`, { token: pal.token });
+  assert.ok(
+    revs.json.reviews.some((r: any) => r.comment === 'Friendly member'),
+    'review appears in the member reviews feed',
+  );
 });
 
 test('decline persists: a declined favor leaves only that pal’s feed', async () => {
@@ -573,7 +602,8 @@ test('trust & safety: an unvetted account cannot accept a favor until verified',
   assert.equal(vet.status, 200);
   assert.equal(vet.json.user.palVerified, true, 'vetting sets palVerified');
   const ok = await api(`/api/favors/${favorId}/accept`, { method: 'POST', token: helper.token });
-  assert.equal(ok.status, 200, 'vetted account can accept');
+  assert.equal(ok.status, 200, 'vetted account can request the favor');
+  assert.ok(ok.json.offer && ok.json.pending, 'request lands as a pending list-price offer');
 });
 
 test('public /api/config returns maintenance + minVersion', async () => {

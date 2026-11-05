@@ -14,6 +14,7 @@ import * as Dash from '../screens/dashboard';
 import * as Req from '../screens/request';
 import * as Checkout from '../screens/checkout';
 import * as Providers from '../screens/providers';
+import { MemberProfile as MemberProfileScreen } from '../screens/memberprofile';
 import * as Track from '../screens/tracking';
 import * as Pal from '../screens/pal';
 import * as Payouts from '../screens/payouts';
@@ -230,6 +231,7 @@ export default function RootNavigator() {
           <Stack.Screen name="Searching" component={Checkout.Searching} />
           <Stack.Screen name="ProviderResults" component={Providers.ProviderResults} />
           <Stack.Screen name="ProviderDetail" component={Providers.ProviderDetail} />
+          <Stack.Screen name="MemberProfile" component={MemberProfileScreen} />
           <Stack.Screen name="FavorTracking" component={Track.FavorTracking} />
           <Stack.Screen name="OrderComplete" component={Track.OrderComplete} />
           {/* Pal flow */}

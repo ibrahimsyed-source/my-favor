@@ -502,12 +502,11 @@ export const PalFavorDetail = ({ navigation, route }: any) => {
     setAccepting(true);
     const res = await s.acceptFavor(id);
     setAccepting(false);
-    // Accept is FINAL server-side — straight to Favor Booked. (The old 2.6s
-    // "Waiting for confirmation" hold simulated a member confirm step that never
-    // existed in the API.)
-    if (res.ok) {
-      bookedRef.current = true; // a late offer-poll tick must not read this as "taken"
-      navigation.navigate('Navigation');
+    // Accept = REQUEST: the server records a list-price offer and the member
+    // must approve the person. The pending-offer banner + 5s poll below take
+    // over — the member's approval flips the offer to 'accepted' → booked.
+    if (res.ok && res.offer) {
+      setOffer(res.offer);
     } else if (res.code === 'unavailable') navigation.navigate('FavorUnavailable');
     else setAcceptError(res.reason || 'This favor is no longer available.');
   };
@@ -681,7 +680,19 @@ export const PalFavorDetail = ({ navigation, route }: any) => {
         <View style={{ flexDirection: 'row', marginTop: 16 }}>
           <Avatar uri={undefined} size={56} name={requester} />
           <View style={{ flex: 1, marginLeft: 14 }}>
-            <Text style={{ color: TEXT, fontSize: 16, fontFamily: P500 }}>{requester}</Text>
+            {/* Tap-through: judge the requester (profile + reviews) before committing. */}
+            <TouchableOpacity
+              onPress={() => { if (shownFavor?.memberId) navigation.navigate('MemberProfile', { userId: shownFavor.memberId }); }}
+              accessibilityRole="button"
+              accessibilityLabel={`View ${requester}'s profile and reviews`}
+              style={{ flexDirection: 'row', alignItems: 'center' }}
+            >
+              <Text style={{ color: TEXT, fontSize: 16, fontFamily: P500 }}>{requester}</Text>
+              {shownFavor?.memberRating && shownFavor.memberRating > 0 ? (
+                <Text style={{ color: SUBTLE, fontSize: 13, fontFamily: P400 }}>{`  ★ ${shownFavor.memberRating.toFixed(1)}`}</Text>
+              ) : null}
+              <Ionicons name="chevron-forward" size={14} color={SUBTLE} style={{ marginLeft: 4 }} />
+            </TouchableOpacity>
             <Text style={{ color: SUBTLE, fontSize: 14, lineHeight: 20, marginTop: 4, fontFamily: P400 }} numberOfLines={expanded ? undefined : 2}>
               {shownFavor?.description || 'No details provided yet.'}
             </Text>
@@ -714,20 +725,23 @@ export const PalFavorDetail = ({ navigation, route }: any) => {
           </View>
         )}
 
-        {/* Negotiation state — our pending offer / the member's counter. */}
+        {/* Negotiation / approval state — our pending request or the member's counter. */}
         {offer && offer.status === 'pending' ? (
           <View style={st.waitBanner}>
             {offer.lastBy === 'pal' ? <ActivityIndicator color={TEXT} /> : null}
             <Text style={st.waitText}>
               {offer.lastBy === 'pal'
-                ? `You offered $${offer.price.toFixed(2)} — waiting for ${requester}`
+                ? offer.price === (favor?.price ?? offer.price)
+                  ? `Waiting for ${requester} to approve you — $${offer.price.toFixed(2)}`
+                  : `You offered $${offer.price.toFixed(2)} — waiting for ${requester}`
                 : `${requester} countered $${offer.price.toFixed(2)}`}
             </Text>
           </View>
         ) : null}
 
         {memberCountered && offer ? (
-          // Accept the member's counter price → booked at that price.
+          // Accept the member's counter price → booked at that price (the member
+          // engaged this pal by countering, so their counter is the approval).
           <TouchableOpacity
             style={[st.whiteBtn, offerBusy && { opacity: 0.6 }]}
             disabled={offerBusy}
@@ -737,8 +751,13 @@ export const PalFavorDetail = ({ navigation, route }: any) => {
           >
             <Text style={st.whiteBtnTxt}>{offerBusy ? 'ACCEPTING…' : `ACCEPT $${offer.price.toFixed(2)}`}</Text>
           </TouchableOpacity>
+        ) : offerPending && offer?.lastBy === 'pal' ? (
+          // Our request/offer is on the member's screen — nothing to tap here.
+          <View style={[st.whiteBtn, { opacity: 0.55 }]} accessibilityLabel="Waiting for the member's approval">
+            <Text style={st.whiteBtnTxt}>WAITING FOR APPROVAL</Text>
+          </View>
         ) : (
-          // Accept at the listed price (always available while the favor is open).
+          // Request at the listed price (while the favor is open).
           <TouchableOpacity
             style={[st.whiteBtn, accepting && { opacity: 0.6 }]}
             disabled={accepting}
@@ -746,7 +765,7 @@ export const PalFavorDetail = ({ navigation, route }: any) => {
             accessibilityLabel="Accept this favor"
             onPress={() => { if (favor) void onAccept(favor.id); }}
           >
-            <Text style={st.whiteBtnTxt}>{accepting ? 'ACCEPTING…' : 'ACCEPT'}</Text>
+            <Text style={st.whiteBtnTxt}>{accepting ? 'SENDING…' : 'ACCEPT'}</Text>
           </TouchableOpacity>
         )}
 
@@ -951,14 +970,19 @@ export const Navigation = ({ navigation }: any) => {
         <Handle />
         <Text style={{ color: TEXT, fontSize: 18, fontFamily: P600, textAlign: 'center', marginVertical: 12 }}>Favor Booked</Text>
         <View style={st.divider} />
-        <View style={{ flexDirection: 'row', alignItems: 'center', marginTop: 16 }}>
+        <TouchableOpacity
+          style={{ flexDirection: 'row', alignItems: 'center', marginTop: 16 }}
+          onPress={() => { if (fav?.memberId) navigation.navigate('MemberProfile', { userId: fav.memberId }); }}
+          accessibilityRole="button"
+          accessibilityLabel={`View ${memberName}'s profile and reviews`}
+        >
           <Avatar uri={undefined} size={56} name={memberName} />
           <View style={{ marginLeft: 14 }}>
             <Text style={{ color: TEXT, fontSize: 17, fontFamily: P500 }}>{memberName}</Text>
             <Text style={{ color: SUBTLE, fontSize: 14, marginTop: 2, fontFamily: P400 }}>{tierName}</Text>
             {distance ? <Text style={{ color: SUBTLE, fontSize: 13, marginTop: 2, fontFamily: P400 }}>{distance} away</Text> : null}
           </View>
-        </View>
+        </TouchableOpacity>
         <Text style={{ color: TEXT, fontSize: 28, fontFamily: P500, textAlign: 'center', marginTop: 18 }}>{window}</Text>
         <View style={st.windowPill}><Text style={{ color: SUBTLE, fontSize: 13, fontFamily: P400 }}>Arrival Window</Text></View>
 
@@ -1165,7 +1189,7 @@ export const PalFavorSuccess = ({ navigation, route }: any) => {
           style={st.whiteBtn}
           accessibilityRole="button"
           accessibilityLabel="Add feedback"
-          onPress={() => navigation.navigate('PalFavorComplete')}
+          onPress={() => navigation.navigate('PalFavorComplete', { favorId })}
         >
           <Text style={st.whiteBtnTxt}>ADD FEEDBACK</Text>
         </TouchableOpacity>
@@ -1188,19 +1212,27 @@ export const PalFavorSuccess = ({ navigation, route }: any) => {
 // celebration illustration + Rating stars + navy feedback field + white
 // SUBMIT FEEDBACK, on the dark page bg.
 // ===========================================================================
-export const PalFavorComplete = ({ navigation }: any) => {
+export const PalFavorComplete = ({ navigation, route }: any) => {
   const s = useStore();
   const [rating, setRating] = useState(0);
   const [feedback, setFeedback] = useState('');
   // "Feedback Submitted" confirmation (v.2 181:11267) — a green-check success
   // state shown after rating, before returning home, instead of exiting silently.
   const [submitted, setSubmitted] = useState(false);
+  const [submitBusy, setSubmitBusy] = useState(false);
+  const [submitError, setSubmitError] = useState('');
   const fontsLoaded = usePoppins();
   // The favor itself was completed at MARK AS DONE; here the pal rates the
-  // MEMBER (the reverse review), persisted via rateMember().
-  const onSubmit = () => {
-    if (rating) s.rateMember(rating, feedback);
-    setSubmitted(true);
+  // MEMBER (the reverse review). The favor id travels via navigation params so
+  // the review still lands after an app restart; success is only claimed when
+  // the server actually persisted it.
+  const onSubmit = async () => {
+    if (!rating || submitBusy) return;
+    setSubmitBusy(true);
+    const ok = await s.rateMember(route?.params?.favorId ?? null, rating, feedback);
+    setSubmitBusy(false);
+    if (ok) setSubmitted(true);
+    else setSubmitError('Could not submit your feedback. Check your connection and try again.');
   };
   // Rating the member is optional — let the pal leave without being forced to rate.
   const skip = () => navigation.reset({ index: 0, routes: [{ name: 'Tabs' }] });
@@ -1269,14 +1301,14 @@ export const PalFavorComplete = ({ navigation }: any) => {
         </View>
         <View style={{ flex: 1 }} />
         <TouchableOpacity
-          style={[st.whiteBtn, { marginTop: 28, opacity: rating ? 1 : 0.5 }]}
-          disabled={!rating}
+          style={[st.whiteBtn, { marginTop: 28, opacity: rating && !submitBusy ? 1 : 0.5 }]}
+          disabled={!rating || submitBusy}
           accessibilityRole="button"
           accessibilityLabel="Submit feedback"
-          accessibilityState={{ disabled: !rating }}
+          accessibilityState={{ disabled: !rating || submitBusy }}
           onPress={onSubmit}
         >
-          <Text style={st.whiteBtnTxt}>SUBMIT FEEDBACK</Text>
+          <Text style={st.whiteBtnTxt}>{submitBusy ? 'SUBMITTING…' : 'SUBMIT FEEDBACK'}</Text>
         </TouchableOpacity>
         <TouchableOpacity
           onPress={skip}
@@ -1287,6 +1319,13 @@ export const PalFavorComplete = ({ navigation }: any) => {
           <Text style={{ color: SUBTLE, fontSize: 14, fontFamily: P500 }}>Maybe later</Text>
         </TouchableOpacity>
       </ScrollView>
+      <NavyModal
+        visible={!!submitError}
+        title="Feedback not sent"
+        message={submitError}
+        primaryLabel="OK"
+        onPrimary={() => setSubmitError('')}
+      />
     </SafeAreaView>
   );
 };

@@ -273,7 +273,11 @@ function ProfileBody({ navigation, onBack, showSetStatus }: { navigation: any; o
             <Txt style={dark ? { ...st.statLabel, color: D.sub } : st.statLabel}>Total Favors</Txt>
           </View>
           <View style={{ flex: 1, alignItems: 'center' }}>
-            <Txt style={dark ? { ...st.statValue, color: D.text } : st.statValue}>{user.rating.toFixed(1)}</Txt>
+            {/* Role-aware: pals show their pal rating (member->pal reviews);
+                members show their member rating (pal->member reviews). */}
+            <Txt style={dark ? { ...st.statValue, color: D.text } : st.statValue}>
+              {(isPal ? user.rating : user.memberRating ?? 0).toFixed(1)}
+            </Txt>
             <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4, marginTop: 4 }}>
               <Ionicons name="star" size={12} color={L.star} />
               <Txt style={dark ? { ...st.statLabel, marginTop: 0, color: D.sub } : { ...st.statLabel, marginTop: 0 }}>Rating</Txt>
@@ -664,9 +668,16 @@ export const SideDrawer = ({ navigation }: any) => {
               <Ionicons name="wallet-outline" size={21} color={ink} />
             </DrawerRow>
           ) : (
-            <DrawerRow label="Payment" color={ink} onPress={() => go('Payment')}>
-              <Ionicons name="card" size={20} color={ink} />
-            </DrawerRow>
+            <>
+              {/* Directory of vetted pals (profiles + reviews) — the member can
+                  book a specific pal for their open favor from here. */}
+              <DrawerRow label="Browse Favor Pals" color={ink} onPress={() => go('ProviderResults')}>
+                <Ionicons name="people-outline" size={21} color={ink} />
+              </DrawerRow>
+              <DrawerRow label="Payment" color={ink} onPress={() => go('Payment')}>
+                <Ionicons name="card" size={20} color={ink} />
+              </DrawerRow>
+            </>
           )}
 
           <View style={{ flex: 1 }} />

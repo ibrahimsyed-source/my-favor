@@ -66,6 +66,9 @@ model User {
 
   // Pal stats
   rating          Float @default(0)
+  // Aggregate of pal->member reviews (Favor.palRating) — the member-side
+  // counterpart of `rating`, shown to pals deciding whether to take a favor.
+  memberRating    Float @default(0)
   totalFavors     Int   @default(0)
   yearsActive     Int   @default(0)
   reliability     Int   @default(0)
