@@ -446,7 +446,12 @@ export const SelectPayment = ({ navigation }: any) => {
 // ===========================================================================
 export const Searching = ({ navigation }: any) => {
   const fontsReady = usePoppins();
-  const { activeFavor, activePal, acceptOffer } = useStore();
+  const {
+    activeMemberFavor: activeFavor, activePal, acceptOffer,
+    cancelFavor, palCanceled, clearPalCanceled,
+  } = useStore();
+  // Cancel-while-waiting: an open (unmatched) favor cancels fee-free.
+  const [cancelAsk, setCancelAsk] = useState(false);
 
   // A favor booked for a future time stays "Scheduled" until its window.
   const isScheduled = activeFavor?.scheduledFor != null && activeFavor.scheduledFor > Date.now();
@@ -563,6 +568,14 @@ export const Searching = ({ navigation }: any) => {
               <Text style={styles.alertBody}>Please wait while we search for a favor pal near you!</Text>
               {/* app addition — no v2 frame shows an exit, but the member needs one */}
               <BlackButton title="BACK TO HOME" onPress={() => navigation.popToTop()} style={{ marginTop: 20 }} />
+              <TouchableOpacity
+                onPress={() => setCancelAsk(true)}
+                style={{ marginTop: 14, alignSelf: 'center', paddingVertical: 4 }}
+                accessibilityRole="button"
+                accessibilityLabel="Cancel this favor request"
+              >
+                <Text style={[styles.tooLong, { color: RED }]}>Cancel favor request</Text>
+              </TouchableOpacity>
             </>
           ) : isMatched ? (
             <>
@@ -581,6 +594,11 @@ export const Searching = ({ navigation }: any) => {
           ) : (
             <>
               <Text style={styles.alertTitle}>Finding your Favor Pal…</Text>
+              {palCanceled ? (
+                <Text style={[styles.alertBody, { color: RED }]}>
+                  Your previous Favor Pal canceled — your favor is back out to nearby pals.
+                </Text>
+              ) : null}
               <Text style={styles.alertBody}>
                 Your favor is out to nearby Favor Pals. Offers and the match will show up right here.
               </Text>
@@ -656,10 +674,48 @@ export const Searching = ({ navigation }: any) => {
               >
                 <Text style={styles.tooLong}>Back to home</Text>
               </TouchableOpacity>
+              <TouchableOpacity
+                onPress={() => setCancelAsk(true)}
+                style={{ marginTop: 8, alignSelf: 'center', paddingVertical: 4 }}
+                accessibilityRole="button"
+                accessibilityLabel="Cancel this favor request"
+              >
+                <Text style={[styles.tooLong, { color: RED }]}>Cancel favor request</Text>
+              </TouchableOpacity>
             </>
           )}
         </View>
       </View>
+
+      {/* Cancel-while-waiting confirm — an unmatched favor cancels fee-free. */}
+      <Modal visible={cancelAsk} transparent animationType="fade" onRequestClose={() => setCancelAsk(false)}>
+        <View style={styles.scrimCenter}>
+          <View style={styles.alertCard}>
+            <Text style={styles.alertTitle}>Cancel this favor request?</Text>
+            <Text style={styles.alertBody}>
+              No Favor Pal has committed yet, so you won't be charged.
+            </Text>
+            <BlackButton
+              title="CANCEL REQUEST"
+              onPress={() => {
+                setCancelAsk(false);
+                clearPalCanceled();
+                cancelFavor();
+                navigation.reset({ index: 0, routes: [{ name: 'Tabs' }] });
+              }}
+              style={{ marginTop: 20 }}
+            />
+            <TouchableOpacity
+              onPress={() => setCancelAsk(false)}
+              style={{ marginTop: 14, alignSelf: 'center', paddingVertical: 4 }}
+              accessibilityRole="button"
+              accessibilityLabel="Keep waiting for a pal"
+            >
+              <Text style={styles.tooLong}>Keep waiting</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      </Modal>
 
       {/* Counter-offer input */}
       <Modal visible={counterFor != null} transparent animationType="fade" onRequestClose={() => setCounterFor(null)}>

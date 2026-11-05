@@ -82,7 +82,7 @@ const MapChip: React.FC<{ label: string; top: string; left: string }> = ({ label
 export const FavorTracking = ({ navigation }: any) => {
   const s = useStore();
   const insets = useSafeAreaInsets();
-  const fav = s.activeFavor;
+  const fav = s.activeMemberFavor;
   const pal = s.activePal;
 
   const [expanded, setExpanded] = useState(false);
@@ -513,6 +513,33 @@ export const FavorTracking = ({ navigation }: any) => {
             : undefined
         }
         buttons={[{ label: 'REQUEST ANOTHER FAVOR', onPress: requestAnother }]}
+      />
+
+      {/* Pal stepped back — the favor reopened (status back to 'requested').
+          The store's poll raised palCanceled; acknowledge and hand the waiting
+          state back to the Searching screen (it owns offers + re-matching). */}
+      <V2Modal
+        visible={s.palCanceled && status === 'requested' && cancelled == null}
+        title={'Your Favor Pal canceled.'}
+        body={'Your favor is open again and nearby Favor Pals can accept it.'}
+        buttons={[
+          {
+            label: 'FIND ANOTHER PAL',
+            onPress: () => {
+              s.clearPalCanceled();
+              navigation.popToTop();
+              navigation.navigate('Searching');
+            },
+          },
+          {
+            label: 'CANCEL MY FAVOR',
+            gray: true,
+            onPress: () => {
+              s.clearPalCanceled();
+              setCancelVisible(true);
+            },
+          },
+        ]}
       />
 
       {/* Repost Favor Modal (#125:10601) — the Pal cancelled on us */}

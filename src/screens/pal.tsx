@@ -623,9 +623,9 @@ export const PalFavorDetail = ({ navigation, route }: any) => {
   // live negotiation of ours still deciding its fate.
   const gone = taken || (!!route?.params?.favorId && !favor && !offerPending);
   // Display source: acceptFavor()/acceptOffer() move the favor out of
-  // incomingFavors into activeFavor — fall back to it so the sheet keeps the
+  // incomingFavors into the pal slot — fall back to it so the sheet keeps the
   // REAL title/name/fees during the transition instead of placeholders.
-  const shownFavor = favor ?? s.activeFavor;
+  const shownFavor = favor ?? s.activePalFavor;
   const base = shownFavor?.price ?? 20;
   // v.2 quick view shows the requester's (first) name above the description.
   const requester = shownFavor?.memberName ?? 'Favor Member';
@@ -853,10 +853,43 @@ function QuickRow({ label, value }: any) {
 // banner + navy sheet: title, requester row, big arrival window + chip,
 // Call / red Message rows, white I AM HERE, dark CANCEL THIS FAVOR.
 // ===========================================================================
+// Shown when the pal's in-flight favor vanished out from under them — the
+// member canceled (store raised memberCanceled) or the favor otherwise ended.
+// Without this, the booked/in-progress screens keep ghost "I AM HERE"/"CANCEL"
+// buttons wired to a favor that no longer exists.
+function PalFavorEndedState({ navigation }: any) {
+  const s = useStore();
+  const canceled = s.memberCanceled;
+  return (
+    <View style={{ flex: 1, backgroundColor: PAGE_BG, alignItems: 'center', justifyContent: 'center', padding: 32 }}>
+      <Ionicons name="close-circle" size={64} color={RED} />
+      <Text style={{ color: TEXT, fontSize: 20, fontFamily: P600, textAlign: 'center', marginTop: 16 }}>
+        {canceled ? 'This favor was canceled' : 'No active favor'}
+      </Text>
+      <Text style={{ color: SUBTLE, fontSize: 14, fontFamily: P400, textAlign: 'center', marginTop: 8, lineHeight: 21 }}>
+        {canceled
+          ? 'The Favor Member canceled this favor. You will not be charged or penalized — you are free to pick up another one.'
+          : 'This favor is no longer active.'}
+      </Text>
+      <TouchableOpacity
+        style={[st.whiteBtn, { marginTop: 24, alignSelf: 'stretch' }]}
+        accessibilityRole="button"
+        accessibilityLabel="Find another favor"
+        onPress={() => {
+          s.clearMemberCanceled();
+          navigation.reset({ index: 0, routes: [{ name: 'Tabs' }] });
+        }}
+      >
+        <Text style={st.whiteBtnTxt}>FIND ANOTHER FAVOR</Text>
+      </TouchableOpacity>
+    </View>
+  );
+}
+
 export const Navigation = ({ navigation }: any) => {
   const s = useStore();
   const origin = usePalOrigin();
-  const fav = s.activeFavor;
+  const fav = s.activePalFavor;
   const [callOpen, setCallOpen] = useState(false);
   const [arriveOpen, setArriveOpen] = useState(false);
   const [cancelOpen, setCancelOpen] = useState(false);
@@ -877,6 +910,9 @@ export const Navigation = ({ navigation }: any) => {
   };
 
   if (!fontsLoaded) return <View style={{ flex: 1, backgroundColor: PAGE_BG }} />;
+  // The favor ended under us (member canceled). Guard — but never while OUR own
+  // cancel confirmation modal is up (abandonFavor also clears the slot).
+  if (!fav && !cancelledOpen) return <PalFavorEndedState navigation={navigation} />;
 
   return (
     <View style={{ flex: 1, backgroundColor: PAGE_BG }}>
@@ -984,7 +1020,7 @@ export const PalFavorInProgress = ({ navigation }: any) => {
   const insets = useSafeAreaInsets();
   const origin = usePalOrigin();
   const fontsLoaded = usePoppins();
-  const fav = s.activeFavor;
+  const fav = s.activePalFavor;
   const base = fav?.price ?? 20;
   // Pal-side breakdown — what the pal takes home, NOT the member's invoice.
   const { payout, commission } = computePayout(base);
@@ -1001,6 +1037,9 @@ export const PalFavorInProgress = ({ navigation }: any) => {
     : (fav?.location?.address ? `Head to ${fav.location.address}` : 'Head to the favor location.');
 
   if (!fontsLoaded) return <View style={{ flex: 1, backgroundColor: PAGE_BG }} />;
+  // The favor ended under us (member canceled) — our own finish resets straight
+  // to the success screen, so a null favor here is always the other side's doing.
+  if (!fav) return <PalFavorEndedState navigation={navigation} />;
 
   return (
     <View style={{ flex: 1, backgroundColor: PAGE_BG }}>
@@ -1037,8 +1076,8 @@ export const PalFavorInProgress = ({ navigation }: any) => {
           accessibilityState={{ disabled: !fav }}
           onPress={() => {
             // Guard: never let a null favor produce a phantom payout.
-            if (!s.activeFavor) return;
-            const finishedId = s.activeFavor.id;
+            if (!s.activePalFavor) return;
+            const finishedId = s.activePalFavor.id;
             const earned = s.finishFavorAsPal();
             // Terminal transition: reset so backing out lands on Tabs (not this
             // now-stale in-progress screen) and can't refire "You got paid".

@@ -89,7 +89,11 @@ export type CreateFavorInput = {
 export const createFavorApi = (input: CreateFavorInput) =>
   apiRequest<{ favor: Favor }>('/api/favors', { method: 'POST', auth: true, body: input });
 export const getFavorsApi = () => apiRequest<{ favors: Favor[] }>('/api/favors', { auth: true });
-export const getActiveFavorApi = () => apiRequest<{ favor: Favor | null }>('/api/favors/active', { auth: true });
+// Active favors are split by role: `memberFavor` = the caller's own open/in-flight
+// request; `palFavor` = a favor the caller is fulfilling. `favor` is the legacy
+// single-slot field kept for older builds; new code reads the split fields.
+export const getActiveFavorApi = () =>
+  apiRequest<{ favor: Favor | null; memberFavor?: Favor | null; palFavor?: Favor | null }>('/api/favors/active', { auth: true });
 export const getIncomingApi = () => apiRequest<{ favors: Favor[] }>('/api/favors/incoming', { auth: true });
 export const getFavorApi = (id: string) => apiRequest<{ favor: Favor }>(`/api/favors/${id}`, { auth: true });
 export const acceptFavorApi = (id: string) => apiRequest<{ favor: Favor }>(`/api/favors/${id}/accept`, { method: 'POST', auth: true });

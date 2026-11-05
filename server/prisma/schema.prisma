@@ -90,6 +90,7 @@ model User {
   threadsAsB     Thread[]       @relation("ThreadUserB")
   favorEvents    FavorEvent[]
   palOffers      FavorOffer[]   @relation("PalOffers")
+  favorDeclines  FavorDecline[] @relation("PalDeclines")
 }
 
 // ---------------------------------------------------------------------------
@@ -146,14 +147,31 @@ model Favor {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  member User         @relation("MemberFavors", fields: [memberId], references: [id], onDelete: Cascade)
-  pal    User?        @relation("PalFavors", fields: [palId], references: [id], onDelete: SetNull)
-  events FavorEvent[]
-  offers FavorOffer[]
+  member   User           @relation("MemberFavors", fields: [memberId], references: [id], onDelete: Cascade)
+  pal      User?          @relation("PalFavors", fields: [palId], references: [id], onDelete: SetNull)
+  events   FavorEvent[]
+  offers   FavorOffer[]
+  declines FavorDecline[]
 
   @@index([memberId])
   @@index([palId])
   @@index([status])
+}
+
+// A pal declined (dismissed) an open favor: it stays off THEIR feed permanently
+// but remains visible to every other pal. One row per (favor, pal); re-declining
+// is an idempotent upsert. Rows die with the favor (Cascade).
+model FavorDecline {
+  id        String   @id @default(uuid())
+  favorId   String
+  palId     String
+  createdAt DateTime @default(now())
+
+  favor Favor @relation(fields: [favorId], references: [id], onDelete: Cascade)
+  pal   User  @relation("PalDeclines", fields: [palId], references: [id], onDelete: Cascade)
+
+  @@unique([favorId, palId])
+  @@index([palId])
 }
 
 // Price negotiation on an open favor: a pal proposes a price, the member accepts

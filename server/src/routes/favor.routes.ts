@@ -237,17 +237,33 @@ favorRouter.get(
   }),
 );
 
-// GET /api/favors/active — the caller's current in-flight favor, if any.
+// GET /api/favors/active — the caller's current in-flight favors, split by role.
+// A user can simultaneously have an open request (as member) AND be fulfilling
+// someone else's favor (as pal) — the two slots are independent. `favor` is kept
+// for older clients (≤ build 11) that expect a single favor; it prefers the
+// pal-side favor (the physical job in flight).
 favorRouter.get(
   '/active',
   asyncHandler(async (req, res) => {
     const me = req.user!.id;
-    const favor = await prisma.favor.findFirst({
-      where: { OR: [{ memberId: me }, { palId: me }], status: { in: ACTIVE_STATUSES } },
-      orderBy: { createdAt: 'desc' },
-      include: participantInclude,
+    const [memberFavor, palFavor] = await Promise.all([
+      prisma.favor.findFirst({
+        where: { memberId: me, status: { in: ACTIVE_STATUSES } },
+        orderBy: { createdAt: 'desc' },
+        include: participantInclude,
+      }),
+      prisma.favor.findFirst({
+        where: { palId: me, status: { in: ACTIVE_STATUSES } },
+        orderBy: { createdAt: 'desc' },
+        include: participantInclude,
+      }),
+    ]);
+    const legacy = palFavor ?? memberFavor;
+    res.json({
+      favor: legacy ? publicFavor(legacy) : null,
+      memberFavor: memberFavor ? publicFavor(memberFavor) : null,
+      palFavor: palFavor ? publicFavor(palFavor) : null,
     });
-    res.json({ favor: favor ? publicFavor(favor) : null });
   }),
 );
 
@@ -266,7 +282,13 @@ favorRouter.get(
       blockedMembers.add(b.blockerId === me ? b.blockedId : b.blockerId);
     }
     const favors = await prisma.favor.findMany({
-      where: { status: 'requested', palId: null, memberId: { notIn: [me, ...blockedMembers] } },
+      where: {
+        status: 'requested',
+        palId: null,
+        memberId: { notIn: [me, ...blockedMembers] },
+        // A favor this pal declined stays off their feed (but not others').
+        declines: { none: { palId: me } },
+      },
       orderBy: { createdAt: 'desc' },
       take: 50,
     });
@@ -575,11 +597,24 @@ favorRouter.post(
   }),
 );
 
-// POST /api/favors/:id/decline — a pal skips a favor (informational only).
+// POST /api/favors/:id/decline — a pal dismisses an open favor from their feed.
+// Persisted so the favor doesn't reappear on the next poll; idempotent.
 favorRouter.post(
   '/:id/decline',
   validate({ params: idParam }),
   asyncHandler(async (req, res) => {
+    const me = req.user!.id;
+    const favor = await prisma.favor.findUnique({
+      where: { id: req.params.id },
+      select: { id: true, memberId: true },
+    });
+    if (!favor) throw notFound('Favor not found');
+    if (favor.memberId === me) throw forbidden('You cannot decline your own favor');
+    await prisma.favorDecline.upsert({
+      where: { favorId_palId: { favorId: favor.id, palId: me } },
+      create: { favorId: favor.id, palId: me },
+      update: {},
+    });
     res.json({ ok: true });
   }),
 );

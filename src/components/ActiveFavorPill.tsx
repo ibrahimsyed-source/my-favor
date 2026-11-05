@@ -52,9 +52,12 @@ export const ActiveFavorPill: React.FC = () => {
   }, [nav]);
 
   const user = s.user;
-  const fav = s.activeFavor;
+  // Two independent slots can be live at once (own request + a job being
+  // fulfilled). Prefer the pal-side job — it's the physical trip in flight; the
+  // member's own request takes the pill back once the job ends.
+  const fav = s.activePalFavor ?? s.activeMemberFavor;
   const status = fav?.status;
-  const iAmPal = !!user && !!fav && fav.palId === user.id;
+  const iAmPal = !!fav && fav === s.activePalFavor;
   const pal = s.activePal;
   const palFirst = pal?.firstName ?? 'Your Favor Pal';
 

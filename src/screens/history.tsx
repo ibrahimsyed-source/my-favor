@@ -337,7 +337,8 @@ export const FavorHistoryDetail = ({ navigation, route }: any) => {
   const favorId: string | undefined = route?.params?.favorId;
   const favor: Favor | undefined =
     s.history.find((f) => f.id === favorId) ??
-    (s.activeFavor?.id === favorId ? s.activeFavor : undefined) ??
+    (s.activeMemberFavor?.id === favorId ? s.activeMemberFavor : undefined) ??
+    (s.activePalFavor?.id === favorId ? s.activePalFavor : undefined) ??
     s.history[0];
   const pal = s.palById(favor?.palId);
   const card = s.cards[0];
@@ -379,7 +380,7 @@ export const FavorHistoryDetail = ({ navigation, route }: any) => {
     // Clamp a custom "Other" tip to the server's inclusive $1000 max — otherwise
     // an over-cap tip 400s the whole rating request (silently, showing a false success).
     const tipVal = tipChoice === 'other' ? Math.min(1000, Math.max(0, parseFloat(otherTip) || 0)) : tipChoice ?? 0;
-    if (s.activeFavor?.id === favor.id) {
+    if (s.activeMemberFavor?.id === favor.id) {
       // The store action owns the active favor (clears it + syncs history).
       s.rateFavor(rating, feedback.trim(), tipVal || undefined);
     } else {

@@ -70,9 +70,9 @@ const palArea = (p: { city?: string; state?: string }) =>
 // Web: the pre-composited blurred Figma export, exactly as the 414-wide frame.
 const MapBackdrop: React.FC = () => {
   const { width } = useWindowDimensions();
-  const { draftFavor, activeFavor } = useStore();
+  const { draftFavor, activeMemberFavor } = useStore();
   if (MAP_SCENE_SUPPORTED) {
-    const loc = activeFavor?.location ?? draftFavor?.location ?? GEOCODE_FALLBACK;
+    const loc = activeMemberFavor?.location ?? draftFavor?.location ?? GEOCODE_FALLBACK;
     return (
       <MapScene
         center={loc}
@@ -355,11 +355,12 @@ export const ProviderDetail = ({ navigation, route }: any) => {
   const s = width / FRAME_W;
   const quote = palRevs[0];
 
-  // Bind the chosen pal to the active favor (core of the tracking flow), then track.
-  const book = () => {
+  // Bind the chosen pal to the active favor (core of the tracking flow), then
+  // track. Server-confirmed: only navigate once the booking actually landed.
+  const book = async () => {
     setShowProfile(false);
-    assignPal(pal.id);
-    navigation.navigate('FavorTracking');
+    const ok = await assignPal(pal.id);
+    if (ok) navigation.navigate('FavorTracking');
   };
 
   return (

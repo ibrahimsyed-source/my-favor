@@ -444,14 +444,14 @@ export function Earnings({ navigation }: any) {
 //     to the Transaction + its Favor from the store.
 // ---------------------------------------------------------------------------
 export function EarningDetail({ navigation, route }: any) {
-  const { earnings, history, activeFavor } = useStore();
+  const { earnings, history, activePalFavor } = useStore();
   const fontsReady = usePoppinsRegular();
 
   const txId: string | undefined = route?.params?.txId;
   const tx: Transaction | undefined = earnings.find((t) => t.id === txId) ?? earnings[0];
   const favor: Favor | undefined =
     history.find((f) => f.id === tx?.favorId) ??
-    (activeFavor?.id === tx?.favorId ? activeFavor : undefined);
+    (activePalFavor?.id === tx?.favorId ? activePalFavor : undefined);
 
   const ts = tx?.date ?? favor?.scheduledFor ?? favor?.createdAt ?? Date.now();
   const amount = tx?.amount ?? favor?.total ?? 0;

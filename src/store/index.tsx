@@ -64,6 +64,21 @@ const asUser = (p: Partial<User>): User => ({
   positiveReviews: p.positiveReviews ?? 0,
 });
 
+// Normalize a GET /favors/active response into the two role slots. Falls back
+// to deriving them from the legacy single `favor` field if the server predates
+// the split (defensive — server and client ship together).
+const splitActive = (
+  res: { favor: Favor | null; memberFavor?: Favor | null; palFavor?: Favor | null },
+  uid: string,
+) => ({
+  member: res.memberFavor !== undefined
+    ? res.memberFavor
+    : res.favor && res.favor.memberId === uid ? res.favor : null,
+  pal: res.palFavor !== undefined
+    ? res.palFavor
+    : res.favor && res.favor.palId === uid ? res.favor : null,
+});
+
 interface StoreValue {
   // auth
   user: User | null;
@@ -90,8 +105,20 @@ interface StoreValue {
   draftFavor: Partial<Favor> | null;
   setDraft: (patch: Partial<Favor>) => void;
   clearDraft: () => void;
-  activeFavor: Favor | null;
-  activePal: User | null;
+  // Active favors are split by role: one account can have an open request (as
+  // member) AND be fulfilling someone else's favor (as pal) at the same time —
+  // the two slots are independent and never block each other.
+  activeMemberFavor: Favor | null; // the caller's own open/in-flight request
+  activePalFavor: Favor | null; // the favor the caller is fulfilling as a pal
+  activePal: User | null; // the pal assigned to activeMemberFavor
+  // Cross-user cancellation signals, raised by the poll when the OTHER side
+  // ends the favor: palCanceled = my pal stepped back (my request reopened);
+  // memberCanceled = the member cancelled the favor I was fulfilling. Screens
+  // surface a notice, then clear the flag.
+  palCanceled: boolean;
+  clearPalCanceled: () => void;
+  memberCanceled: boolean;
+  clearMemberCanceled: () => void;
   palById: (id?: string) => User | undefined;
   history: Favor[];
   requestFavor: () => Promise<Favor>;
@@ -111,7 +138,7 @@ interface StoreValue {
   refreshActive: () => Promise<Favor | null>;
   declineFavor: (favorId: string) => void;
   abandonFavor: () => Promise<boolean>;
-  assignPal: (palId: string) => void;
+  assignPal: (palId: string) => Promise<boolean>;
   finishFavorAsPal: () => number;
   rateMember: (rating: number, feedback: string) => void;
   // moderation
@@ -178,7 +205,10 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
   const [suspended, setSuspended] = useState(false);
   const [pendingDest, setPendingDest] = useState<string | null>(null);
   const [draftFavor, setDraftFavor] = useState<Partial<Favor> | null>(null);
-  const [activeFavor, setActiveFavor] = useState<Favor | null>(null);
+  const [memberFavor, setMemberFavor] = useState<Favor | null>(null);
+  const [palFavor, setPalFavor] = useState<Favor | null>(null);
+  const [palCanceled, setPalCanceled] = useState(false);
+  const [memberCanceled, setMemberCanceled] = useState(false);
   const [history, setHistory] = useState<Favor[]>([]);
   const [incomingFavors, setIncomingFavors] = useState<Favor[]>([]);
   const [cards, setCards] = useState<PaymentCard[]>([]);
@@ -194,6 +224,17 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
   // Keep a ref of pals so the poll loop can dedupe without re-subscribing.
   const palsRef = useRef<User[]>([]);
   palsRef.current = pals;
+  // Slot refs so async poll callbacks read fresh values without re-subscribing.
+  const memberFavorRef = useRef<Favor | null>(null);
+  memberFavorRef.current = memberFavor;
+  const palFavorRef = useRef<Favor | null>(null);
+  palFavorRef.current = palFavor;
+  // Timestamp of the last server-CONFIRMED local favor write. A poll response
+  // whose request STARTED before this moment is a stale snapshot of the world
+  // (e.g. captured mid-accept) and is skipped wholesale — without this, a stale
+  // 'requested' echo right after accepting an offer would read as "my pal
+  // canceled" and rewind the match.
+  const lastFavorWriteRef = useRef(0);
   // Remember the favor a pal just finished, so the post-completion screen can
   // submit the pal's rating of the member for the right favor.
   const lastFinishedRef = useRef<string | null>(null);
@@ -206,7 +247,6 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
   const loadAll = useCallback(async (u: User) => {
     // Every account can both request and fulfill favors, so the open-favors
     // board is loaded for everyone (the API excludes the caller's own favors).
-    void u;
     const [favors, active, cardList, txns, earn, thr, notes, palList, blocked, incoming, payCfg] =
       await Promise.allSettled([
         getFavorsApi(), getActiveFavorApi(), getCardsApi(), getTransactionsApi(), getEarningsApi(),
@@ -216,7 +256,11 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       ]);
 
     if (favors.status === 'fulfilled') setHistory(favors.value.favors);
-    if (active.status === 'fulfilled') setActiveFavor(active.value.favor);
+    if (active.status === 'fulfilled') {
+      const { member, pal } = splitActive(active.value, u.id);
+      setMemberFavor(member);
+      setPalFavor(pal);
+    }
     if (cardList.status === 'fulfilled') setCards(cardList.value.cards);
     if (txns.status === 'fulfilled') setTransactions(txns.value.transactions);
     if (earn.status === 'fulfilled') setEarnings(earn.value.earnings);
@@ -234,7 +278,8 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
   }, []);
 
   const resetState = useCallback(() => {
-    setUser(null); setPendingDest(null); setDraftFavor(null); setActiveFavor(null);
+    setUser(null); setPendingDest(null); setDraftFavor(null);
+    setMemberFavor(null); setPalFavor(null); setPalCanceled(false); setMemberCanceled(false);
     setHistory([]); setIncomingFavors([]); setCards([]); setTransactions([]); setEarnings([]);
     setThreads([]); setMessages([]); setNotifications([]); setBlockedUsers([]); setPals([]);
     setSuspended(false); // clear the gate so another account can sign in
@@ -299,55 +344,83 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     })();
   }, [loadAll]);
 
-  // ---- live updates: poll the active favor so the member sees the pal's
-  // progress (matched -> en route -> arrived -> ...) without a manual refresh. ----
+  // ---- live updates: poll the active favors (both role slots in one GET) so
+  // each side sees the other's progress — and the other's CANCELLATION — without
+  // a manual refresh. ----
   useEffect(() => {
-    if (!user || !activeFavor || !ACTIVE.includes(activeFavor.status)) return;
-    const activeId = activeFavor.id;
-    const role = user.role;
+    const memberActive = !!memberFavor && ACTIVE.includes(memberFavor.status);
+    const palActive = !!palFavor && ACTIVE.includes(palFavor.status);
+    if (!user || (!memberActive && !palActive)) return;
+    const uid = user.id;
     const id = setInterval(async () => {
       try {
-        const { favor } = await getActiveFavorApi();
-        if (favor) {
-          setActiveFavor((cur) => {
-            // A poll response can be captured BEFORE an optimistic local advance
-            // (arrived, in_progress, ...) persists — applying it would rewind the
-            // status for a tick (arrived -> matched flicker). Keep the local
-            // favor when the server echoes the same favor at an earlier stage;
-            // terminal states (completed/cancelled/no_pal) always win.
-            if (
-              cur && cur.id === favor.id &&
-              !['completed', 'cancelled', 'no_pal'].includes(favor.status) &&
-              STATUS_RANK[favor.status] < STATUS_RANK[cur.status]
-            ) {
-              return cur;
-            }
-            return favor;
-          });
-          if (favor.palId && !palsRef.current.find((p) => p.id === favor.palId)) {
+        const startedAt = Date.now();
+        const res = await getActiveFavorApi();
+        // A response whose request started before the last confirmed local write
+        // is a stale snapshot of the world — skip it; the next tick is fresh.
+        if (startedAt <= lastFavorWriteRef.current) return;
+        const { member: mf, pal: pf } = splitActive(res, uid);
+
+        // -- member slot (my own request) --
+        const curM = memberFavorRef.current;
+        if (!mf) {
+          if (curM) {
+            // Left the active set: the pal completed it (surface the final record
+            // so tracking can prompt a rating) or it ended some other way.
             try {
-              const { pal } = await getPalApi(favor.palId);
+              const { favor: final } = await getFavorApi(curM.id);
+              setMemberFavor(final && final.status === 'completed' ? final : null);
+            } catch { setMemberFavor(null); }
+          }
+        } else if (
+          curM && curM.id === mf.id &&
+          !['completed', 'cancelled', 'no_pal'].includes(mf.status) &&
+          STATUS_RANK[mf.status] < STATUS_RANK[curM.status]
+        ) {
+          // A status DOWNGRADE. Exactly one downgrade is real: the assigned pal
+          // stepped back and the favor reopened (matched -> requested with palId
+          // cleared). Apply it and raise the "your pal canceled" notice so the
+          // member returns to searching. Any other downgrade is a stale echo of
+          // an optimistic local update — keep the local favor.
+          if (mf.status === 'requested' && !mf.palId && curM.palId) {
+            setMemberFavor(mf);
+            setPalCanceled(true);
+          }
+        } else {
+          setMemberFavor(mf);
+          if (mf.status !== 'requested') setPalCanceled(false); // matched again — notice is moot
+          if (mf.palId && !palsRef.current.find((p) => p.id === mf.palId)) {
+            try {
+              const { pal } = await getPalApi(mf.palId);
               mergePal(asUser(pal));
             } catch { /* ignore */ }
           }
-        } else {
-          // The favor left the active set (counterparty completed or cancelled).
-          // For the member, surface the final completed record so the tracking
-          // screen can flip to "completed" and prompt a rating; otherwise clear
-          // it. Either way activeFavor is no longer ACTIVE, so this poll stops.
-          if (role === 'member') {
-            try {
-              const { favor: final } = await getFavorApi(activeId);
-              setActiveFavor(final && final.status === 'completed' ? final : null);
-            } catch { setActiveFavor(null); }
-          } else {
-            setActiveFavor(null);
+        }
+
+        // -- pal slot (the favor I'm fulfilling) --
+        const curP = palFavorRef.current;
+        if (!pf) {
+          // The favor left my pal slot without MY doing (my own finish/abandon
+          // clears it locally first): the member cancelled. Clear the slot and
+          // raise the notice so the in-progress screens show a canceled state
+          // instead of ghost "I'M HERE"/"CANCEL" buttons.
+          if (curP) {
+            setPalFavor(null);
+            setMemberCanceled(true);
           }
+        } else if (
+          curP && curP.id === pf.id &&
+          !['completed', 'cancelled', 'no_pal'].includes(pf.status) &&
+          STATUS_RANK[pf.status] < STATUS_RANK[curP.status]
+        ) {
+          // Stale echo of an optimistic advance (e.g. arrived) — keep local.
+        } else {
+          setPalFavor(pf);
         }
       } catch { /* ignore transient errors */ }
     }, 4000);
     return () => clearInterval(id);
-  }, [user, activeFavor, mergePal]);
+  }, [user, memberFavor, palFavor, mergePal]);
 
   // ---- live updates: when THIS user is the assigned pal of an in-flight favor,
   // stream their device GPS to the server so the member can watch them approach.
@@ -357,11 +430,8 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
   // obligates streaming — flipping the UI toggle back to member mid-favor must
   // not blind the member's live map.
   const palBroadcastFavorId =
-    user &&
-    activeFavor &&
-    activeFavor.palId === user.id &&
-    PAL_BROADCAST_STATUSES.includes(activeFavor.status)
-      ? activeFavor.id
+    user && palFavor && PAL_BROADCAST_STATUSES.includes(palFavor.status)
+      ? palFavor.id
       : null;
   useEffect(() => {
     if (!palBroadcastFavorId) return;
@@ -541,48 +611,55 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       ...(d.scheduledFor != null ? { scheduledFor: d.scheduledFor } : {}),
       ...(d.hours != null ? { hours: d.hours } : {}),
     });
-    setActiveFavor(favor);
+    setMemberFavor(favor);
+    lastFavorWriteRef.current = Date.now();
     setDraftFavor(null); // clear the draft so the next favor starts fresh
     void getFavorsApi().then(({ favors }) => setHistory(favors)).catch(() => undefined);
     return favor;
   }, [draftFavor]);
 
   const advanceFavor = useCallback((status: FavorStatus) => {
-    setActiveFavor((f) => (f ? { ...f, status } : f)); // optimistic
-    const id = activeFavor?.id;
-    if (id && ['enroute', 'arrived', 'in_progress'].includes(status)) {
+    const id = palFavor?.id;
+    if (!id) return; // no favor to advance (e.g. the member just cancelled it)
+    setPalFavor((f) => (f ? { ...f, status } : f)); // optimistic
+    if (['enroute', 'arrived', 'in_progress'].includes(status)) {
       void advanceFavorApi(id, status)
-        .then(({ favor }) => setActiveFavor(favor))
+        .then(({ favor }) => { setPalFavor(favor); lastFavorWriteRef.current = Date.now(); })
         .catch(() => undefined);
     }
-  }, [activeFavor]);
+  }, [palFavor]);
 
   const cancelFavor = useCallback(() => {
-    const id = activeFavor?.id;
-    setActiveFavor((f) => {
+    const id = memberFavor?.id;
+    const uid = user?.id ?? '';
+    setMemberFavor((f) => {
       if (f) setHistory((h) => [{ ...f, status: 'cancelled' }, ...h]);
       return null;
     });
+    setPalCanceled(false);
+    lastFavorWriteRef.current = Date.now();
     if (id) {
       void cancelFavorApi(id)
-        .then(() => Promise.all([getFavorsApi(), getTransactionsApi()]))
+        .then(() => { lastFavorWriteRef.current = Date.now(); return Promise.all([getFavorsApi(), getTransactionsApi()]); })
         .then(([f, t]) => { setHistory(f.favors); setTransactions(t.transactions); })
         .catch(() => {
           // Cancel failed server-side: the favor is still live (a pal may be en
           // route). Restore server truth so member and pal don't desync.
           void Promise.all([getActiveFavorApi(), getFavorsApi()])
-            .then(([a, f]) => { setActiveFavor(a.favor); setHistory(f.favors); })
+            .then(([a, f]) => { setMemberFavor(splitActive(a, uid).member); setHistory(f.favors); })
             .catch(() => undefined);
         });
     }
-  }, [activeFavor]);
+  }, [memberFavor, user]);
 
   const rateFavor = useCallback((rating: number, feedback: string, tip?: number) => {
-    const id = activeFavor?.id;
-    setActiveFavor((f) => {
+    const id = memberFavor?.id;
+    const uid = user?.id ?? '';
+    setMemberFavor((f) => {
       if (f) setHistory((h) => [{ ...f, status: 'completed', rating, feedback, tip }, ...h]);
       return null;
     });
+    lastFavorWriteRef.current = Date.now();
     if (id) {
       void rateFavorApi(id, { rating, feedback: feedback ?? '', ...(tip ? { tip } : {}) })
         .then(() => getFavorsApi())
@@ -591,11 +668,11 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
           // Rating/tip failed server-side: restore server truth so the favor
           // isn't silently stranded as "completed" with an uncharged tip.
           void Promise.all([getActiveFavorApi(), getFavorsApi()])
-            .then(([a, f]) => { setActiveFavor(a.favor); setHistory(f.favors); })
+            .then(([a, f]) => { setMemberFavor(splitActive(a, uid).member); setHistory(f.favors); })
             .catch(() => undefined);
         });
     }
-  }, [activeFavor]);
+  }, [memberFavor, user]);
 
   // Re-fetch the open-favors feed (pull-to-refresh / focus on the browse list).
   const refreshIncoming = useCallback(async () => {
@@ -617,52 +694,71 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
   }, [user, refreshIncoming]);
 
   const acceptFavor = useCallback(async (favorId: string): Promise<{ ok: boolean; reason?: string; code?: 'unavailable' | 'error' }> => {
-    // One favor at a time: since a single account can both request and fulfill,
-    // guard the single active-favor slot so a user mid-favor can't accept another
-    // (which would silently overwrite their in-progress favor).
-    if (activeFavor) {
+    // One JOB at a time: only an in-flight favor the user is FULFILLING blocks
+    // accepting another. Their own open request (member slot) never does —
+    // requesting and fulfilling are independent roles.
+    if (palFavor) {
       return { ok: false, reason: 'You already have an active favor. Finish it before accepting another.' };
     }
+    const uid = user?.id ?? '';
     try {
       const { favor } = await acceptFavorApi(favorId);
       setIncomingFavors((list) => list.filter((x) => x.id !== favorId));
-      setActiveFavor(favor);
+      setPalFavor(favor);
+      setMemberCanceled(false);
+      lastFavorWriteRef.current = Date.now();
       return { ok: true };
     } catch (e: any) {
       // lost the race / already taken — refresh the feed + active state
       void getIncomingApi().then(({ favors }) => setIncomingFavors(favors)).catch(() => undefined);
-      void getActiveFavorApi().then(({ favor }) => setActiveFavor(favor)).catch(() => undefined);
+      void getActiveFavorApi().then((a) => {
+        const { member, pal } = splitActive(a, uid);
+        setMemberFavor(member);
+        setPalFavor(pal);
+      }).catch(() => undefined);
       // 409 (already matched) / 404 (deleted) => the favor is truly gone.
       const gone = e?.status === 409 || e?.status === 404;
       return { ok: false, reason: e?.message || 'This favor is no longer available.', code: gone ? 'unavailable' : 'error' };
     }
-  }, [activeFavor]);
+  }, [palFavor, user]);
 
   const acceptOffer = useCallback(async (favorId: string, offerId: string, price: number): Promise<{ ok: boolean; reason?: string }> => {
-    // One favor at a time — same guard as acceptFavor, except the member
-    // accepting an offer ON their own active favor is of course allowed.
-    if (activeFavor && activeFavor.id !== favorId) {
+    // A member accepting an offer ON their own favor is always allowed; a pal
+    // accepting the member's counter needs a free pal slot (one job at a time).
+    const memberSide = memberFavor?.id === favorId;
+    if (!memberSide && palFavor) {
       return { ok: false, reason: 'You already have an active favor. Finish it before accepting another.' };
     }
     try {
       const { favor } = await acceptOfferApi(favorId, offerId, price);
       setIncomingFavors((list) => list.filter((x) => x.id !== favorId));
-      setActiveFavor(favor);
+      if (favor.memberId === user?.id) {
+        setMemberFavor(favor);
+        setPalCanceled(false);
+      } else {
+        setPalFavor(favor);
+        setMemberCanceled(false);
+      }
+      lastFavorWriteRef.current = Date.now();
       return { ok: true };
     } catch (e: any) {
       return { ok: false, reason: e?.message || 'This offer is no longer available.' };
     }
-  }, [activeFavor]);
+  }, [memberFavor, palFavor, user]);
 
   const refreshActive = useCallback(async (): Promise<Favor | null> => {
     try {
-      const { favor } = await getActiveFavorApi();
-      setActiveFavor(favor);
-      return favor;
+      const res = await getActiveFavorApi();
+      const { member, pal } = splitActive(res, user?.id ?? '');
+      setMemberFavor(member);
+      setPalFavor(pal);
+      // Callers use this to learn about a remotely-started job (e.g. an offer
+      // the member accepted) — the pal-side favor is the interesting one.
+      return pal ?? member;
     } catch {
       return null;
     }
-  }, []);
+  }, [user]);
 
   const declineFavor = useCallback((favorId: string) => {
     setIncomingFavors((list) => list.filter((x) => x.id !== favorId));
@@ -672,30 +768,38 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
   // A pal steps back from an accepted favor: it returns to the open board and
   // the member's request lives on (never stranded). Clears the pal's active slot.
   const abandonFavor = useCallback(async (): Promise<boolean> => {
-    const id = activeFavor?.id;
+    const id = palFavor?.id;
     if (!id) return false;
     try {
       await abandonFavorApi(id);
-      setActiveFavor(null);
+      setPalFavor(null);
+      lastFavorWriteRef.current = Date.now();
       void refreshIncoming();
       return true;
     } catch {
       return false;
     }
-  }, [activeFavor, refreshIncoming]);
+  }, [palFavor, refreshIncoming]);
 
-  const assignPal = useCallback((palId: string) => {
-    const id = activeFavor?.id;
-    setActiveFavor((f) => (f ? { ...f, palId, status: 'matched' } : f)); // optimistic
-    if (id) {
-      void assignPalApi(id, palId)
-        .then(({ favor }) => setActiveFavor(favor))
-        .catch(() => undefined);
+  // Member books a specific pal. Server-confirmed (NOT optimistic): a failed
+  // assign must never leave the client showing a match the server never made.
+  const assignPal = useCallback(async (palId: string): Promise<boolean> => {
+    const id = memberFavor?.id;
+    if (!id) return false;
+    try {
+      const { favor } = await assignPalApi(id, palId);
+      setMemberFavor(favor);
+      setPalCanceled(false);
+      lastFavorWriteRef.current = Date.now();
+      return true;
+    } catch {
+      return false;
     }
-  }, [activeFavor]);
+  }, [memberFavor]);
 
   const finishFavorAsPal = useCallback(() => {
-    const f = activeFavor;
+    const f = palFavor;
+    const uid = user?.id ?? '';
     const { payout } = computePayout(f?.price ?? 20, f?.tip ?? 0);
     if (f) {
       const optimistic: Transaction = {
@@ -707,20 +811,21 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       setHistory((h) => [{ ...f, palId: user?.id, status: 'completed' }, ...h]);
       lastFinishedRef.current = f.id;
       void finishFavorApi(f.id)
-        .then(() => Promise.all([getEarningsApi(), getFavorsApi()]))
+        .then(() => { lastFavorWriteRef.current = Date.now(); return Promise.all([getEarningsApi(), getFavorsApi()]); })
         .then(([e, hist]) => { setEarnings(e.earnings); setHistory(hist.favors); })
         .catch(() => {
           // The favor is still in_progress server-side; reconcile to server truth
           // so the phantom earning/history clear and the favor can be re-finished.
           lastFinishedRef.current = null;
           void Promise.all([getActiveFavorApi(), getEarningsApi(), getFavorsApi()])
-            .then(([a, e, hist]) => { setActiveFavor(a.favor); setEarnings(e.earnings); setHistory(hist.favors); })
+            .then(([a, e, hist]) => { setPalFavor(splitActive(a, uid).pal); setEarnings(e.earnings); setHistory(hist.favors); })
             .catch(() => undefined);
         });
     }
-    setActiveFavor(null);
+    setPalFavor(null);
+    lastFavorWriteRef.current = Date.now();
     return payout;
-  }, [activeFavor, user]);
+  }, [palFavor, user]);
 
   // Pal rates the member they just helped (persists to the finished favor).
   const rateMember = useCallback((rating: number, feedback: string) => {
@@ -899,19 +1004,21 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
   // REMOTELY-started active favor when none is held locally — e.g. a pal whose
   // price offer the member accepted while they were on another screen has no
   // active-favor poll running; without this they'd never learn they're booked.
-  // Ref (not dep) so the interval isn't torn down on every activeFavor change;
-  // refreshActive(null → null) is a no-op setState, so idle ticks cost nothing.
-  const activeFavorIdRef = useRef<string | null>(null);
-  activeFavorIdRef.current = activeFavor?.id ?? null;
+  // Refs (not deps) so the interval isn't torn down on every favor change. While
+  // EITHER slot is active the 4s poll already refreshes both, so this only fills
+  // the both-empty gap.
   useEffect(() => {
     if (!user) return;
     const id = setInterval(() => {
       void refreshNotifications();
       void refreshThreads();
-      if (!activeFavorIdRef.current) void refreshActive();
+      if (!memberFavorRef.current && !palFavorRef.current) void refreshActive();
     }, 20000);
     return () => clearInterval(id);
   }, [user, refreshNotifications, refreshThreads, refreshActive]);
+
+  const clearPalCanceled = useCallback(() => setPalCanceled(false), []);
+  const clearMemberCanceled = useCallback(() => setMemberCanceled(false), []);
 
   const value = useMemo<StoreValue>(
     () => ({
@@ -919,7 +1026,9 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       signup, verifyOtp, submitVetting, login, logout, deleteAccount, updateProfile, changePassword,
       setRole, setStatus,
       pals, draftFavor, setDraft, clearDraft,
-      activeFavor, activePal: palById(activeFavor?.palId) ?? null, palById, history,
+      activeMemberFavor: memberFavor, activePalFavor: palFavor,
+      activePal: palById(memberFavor?.palId) ?? null, palById, history,
+      palCanceled, clearPalCanceled, memberCanceled, clearMemberCanceled,
       requestFavor, advanceFavor, cancelFavor, rateFavor, incomingFavors, refreshIncoming, acceptFavor,
       acceptOffer, refreshActive,
       declineFavor, abandonFavor, assignPal, finishFavorAsPal, rateMember,
@@ -930,7 +1039,7 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       notifications, markNotificationRead, markAllNotificationsRead, refreshNotifications,
     }),
     [user, restoring, maintenance, updateRequired, suspended, recheckConfig, signup, verifyOtp, submitVetting, login, logout, deleteAccount, updateProfile, changePassword, setRole, setStatus,
-      pals, draftFavor, setDraft, clearDraft, activeFavor, palById, history, requestFavor, advanceFavor, cancelFavor,
+      pals, draftFavor, setDraft, clearDraft, memberFavor, palFavor, palCanceled, clearPalCanceled, memberCanceled, clearMemberCanceled, palById, history, requestFavor, advanceFavor, cancelFavor,
       rateFavor, incomingFavors, refreshIncoming, acceptFavor, acceptOffer, refreshActive, declineFavor, abandonFavor, assignPal, finishFavorAsPal, rateMember, blockedUsers, reportUser,
       blockUser, cards, addCard, removeCard, transactions, earnings, cashOut,
       paymentsLive, startAddCard, syncCards, connectOnboard, connectStatus,

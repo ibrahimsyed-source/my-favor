@@ -403,6 +403,62 @@ test('assigned pal sees the member name on the active favor', async () => {
   assert.ok(active.json.favor?.memberName, 'memberName present for the assigned pal');
 });
 
+test('role slots are independent: an open request does not block pal work', async () => {
+  const a = await makeUser('member');
+  const b = await makeUser('member');
+  // A opens their own request…
+  const mine = await api('/api/favors', {
+    method: 'POST',
+    token: a.token,
+    body: { tier: 'tiny', description: 'My own errand', location: { lat: 30.26, lng: -97.74, address: '1 Main St' } },
+  });
+  assert.equal(mine.status, 201);
+  // …then clears vetting and accepts B's favor as a pal.
+  const vet = await api('/api/profile/verify-pal', {
+    method: 'POST',
+    token: a.token,
+    body: { legalFirstName: 'Test', legalLastName: 'Pal', dateOfBirth: '1990-01-01', consent: true },
+  });
+  assert.equal(vet.status, 200);
+  const theirs = await api('/api/favors', {
+    method: 'POST',
+    token: b.token,
+    body: { tier: 'small', description: 'Walk my dog', location: { lat: 30.26, lng: -97.74, address: '2 Main St' } },
+  });
+  assert.equal(theirs.status, 201);
+  const accept = await api(`/api/favors/${theirs.json.favor.id}/accept`, { method: 'POST', token: a.token });
+  assert.equal(accept.status, 200, 'own open request must not block accepting as a pal');
+  // GET /active returns both slots, split by role.
+  const active = await api('/api/favors/active', { token: a.token });
+  assert.equal(active.status, 200);
+  assert.equal(active.json.memberFavor?.id, mine.json.favor.id, 'member slot holds my own request');
+  assert.equal(active.json.palFavor?.id, theirs.json.favor.id, 'pal slot holds the job');
+  assert.equal(active.json.favor?.id, theirs.json.favor.id, 'legacy field prefers the pal-side job');
+});
+
+test('decline persists: a declined favor leaves only that pal’s feed', async () => {
+  const member = await makeUser('member');
+  const pal1 = await makeUser('pal');
+  const pal2 = await makeUser('pal');
+  const create = await api('/api/favors', {
+    method: 'POST',
+    token: member.token,
+    body: { tier: 'tiny', description: 'Pick up mail', location: { lat: 30.26, lng: -97.74, address: '3 Main St' } },
+  });
+  assert.equal(create.status, 201);
+  const favorId = create.json.favor.id;
+  const dec = await api(`/api/favors/${favorId}/decline`, { method: 'POST', token: pal1.token });
+  assert.equal(dec.status, 200);
+  const dec2 = await api(`/api/favors/${favorId}/decline`, { method: 'POST', token: pal1.token });
+  assert.equal(dec2.status, 200, 'declining twice is idempotent');
+  const feed1 = await api('/api/favors/incoming', { token: pal1.token });
+  assert.ok(!feed1.json.favors.some((f: any) => f.id === favorId), 'declined favor gone from this pal’s feed');
+  const feed2 = await api('/api/favors/incoming', { token: pal2.token });
+  assert.ok(feed2.json.favors.some((f: any) => f.id === favorId), 'other pals still see it');
+  const own = await api(`/api/favors/${favorId}/decline`, { method: 'POST', token: member.token });
+  assert.equal(own.status, 403, 'cannot decline your own favor');
+});
+
 test('cashout pays the available balance exactly once', async () => {
   const { pal, favorId } = await activeFavor({ advanceTo: 'in_progress' });
   await api(`/api/favors/${favorId}/finish`, { method: 'POST', token: pal.token });
