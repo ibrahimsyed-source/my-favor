@@ -872,6 +872,17 @@ test('geo proxy degrades to empty results without a server key and validates inp
   // Validation: too-short queries are a 400, not a Google call.
   const short = await api('/api/geo/suggest?q=ab', { token: u.token });
   assert.equal(short.status, 400, 'q under 3 chars is rejected');
+
+  // Directions (Routes API proxy): same auth / validation / soft-null rules.
+  const dirAnon = await api('/api/geo/directions?olat=25.79&olng=-80.13&dlat=25.76&dlng=-80.19');
+  assert.equal(dirAnon.status, 401, 'directions requires auth');
+
+  const dirBad = await api('/api/geo/directions?olat=999&olng=-80.13&dlat=25.76&dlng=-80.19', { token: u.token });
+  assert.equal(dirBad.status, 400, 'out-of-range origin lat is rejected');
+
+  const dir = await api('/api/geo/directions?olat=25.79&olng=-80.13&dlat=25.76&dlng=-80.19', { token: u.token });
+  assert.equal(dir.status, 200);
+  assert.equal(dir.json.route, null, 'no key → null route, never a 5xx');
 });
 
 test('price negotiation: pal offers → member counters → pal accepts at the agreed price', async () => {

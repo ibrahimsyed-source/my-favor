@@ -6,6 +6,10 @@ export interface LiveMapMarker {
   lat: number;
   lng: number;
   label?: string;
+  // ms epoch of the GPS fix (favor.palLocation.at) — the native map's
+  // directions effect treats a missing/<=2min-old fix as FRESH (same rule as
+  // the tracking screen's palLocFresh) and only routes from a fresh origin.
+  at?: number;
 }
 
 export interface LiveMapProps {
@@ -17,6 +21,17 @@ export interface LiveMapProps {
   height?: number;
   zoom?: number;
   label?: string;
+  // Member initials (1–2 chars) rendered on the destination pin (native only);
+  // omitted → the default red pin. Ignored on web (StaticMap draws its own pins).
+  initials?: string;
+  // Latest driving-route numbers from the native map's directions fetch — null
+  // when the server had no route (maps disabled / Google error) or the fetch
+  // failed, so hosts can fall back to their straight-line heuristics. Never
+  // invoked on web (no directions fetch happens here).
+  onRouteInfo?: (info: { durationSec: number; distanceMeters: number } | null) => void;
+  // Hosts turn routing OFF for phases whose UI ignores the result (arrived /
+  // finished) so the map stops spending Routes API quota. Default true.
+  routingEnabled?: boolean;
   children?: React.ReactNode;
 }
 

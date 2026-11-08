@@ -1,6 +1,6 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { StyleSheet, Text, View } from 'react-native';
-import MapView, { Circle, Marker } from 'react-native-maps';
+import MapView, { Circle, Marker, Polyline } from 'react-native-maps';
 import { Ionicons } from '@expo/vector-icons';
 import { Avatar } from './index';
 import { PalMarkerBadge } from './PalMarker';
@@ -98,6 +98,7 @@ export const MapScene: React.FC<MapSceneProps> = ({
   scrim,
   markers,
   fit,
+  polyline,
 }) => {
   const mapRef = useRef<MapView>(null);
   const last = useRef(center);
@@ -159,6 +160,17 @@ export const MapScene: React.FC<MapSceneProps> = ({
             fillColor={dark ? 'rgba(255,255,255,0.10)' : 'rgba(13,10,10,0.08)'}
             strokeColor={dark ? 'rgba(255,255,255,0.18)' : 'rgba(13,10,10,0.15)'}
             strokeWidth={1}
+          />
+        ) : null}
+        {/* Route line — visual only (drawn before the markers and kept at
+            zIndex 0 so pins/bubbles stay on top). It never changes the fit:
+            callers' `fit` behavior is exactly as without a polyline. */}
+        {polyline && polyline.length > 1 ? (
+          <Polyline
+            coordinates={polyline.map((p) => ({ latitude: p.lat, longitude: p.lng }))}
+            strokeWidth={4}
+            strokeColor={RED}
+            zIndex={0}
           />
         ) : null}
         {(markers ?? []).map((m, i) => (

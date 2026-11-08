@@ -119,6 +119,12 @@ export const FavorTracking = ({ navigation }: any) => {
   const palAvatar = pal?.avatar; // undefined → Avatar renders initials from name
   const palRating = pal?.rating && pal.rating > 0 ? pal.rating.toFixed(1) : 'New';
 
+  // The MEMBER's initials ride the destination pin on the native map ("that's
+  // my spot"). Empty-name edge → undefined, so LiveMap keeps its default pin.
+  const myInitials = s.user
+    ? `${s.user.firstName.trim().charAt(0)}${s.user.lastName.trim().charAt(0)}`.toUpperCase() || undefined
+    : undefined;
+
   const status = fav?.status ?? 'matched';
   const arrived = status === 'arrived' || status === 'in_progress';
   const pendingRelease = status === 'pending_release';
@@ -142,22 +148,36 @@ export const FavorTracking = ({ navigation }: any) => {
       ? haversineMiles(palLoc.lat, palLoc.lng, fav.location.lat, fav.location.lng)
       : null;
   const hasLive = liveMiles != null && !arrived && !completed;
+
+  // REAL route numbers from the native map's directions fetch (LiveMap's
+  // onRouteInfo). Null on web, before the first fetch lands, or when the server
+  // soft-degrades (maps disabled / Google error) — every label below falls back
+  // to the straight-line haversine/heuristic then. Only consulted while the fix
+  // is fresh (liveMiles != null), so the stale rule ("Locating your Pal…") and
+  // all other state rules are unchanged.
+  const [routeInfo, setRouteInfo] = useState<{ durationSec: number; distanceMeters: number } | null>(null);
+  const routeMiles = routeInfo ? routeInfo.distanceMeters / 1609.344 : null;
+
   const distanceLabel =
     arrived || completed || pendingRelease // finished work = pal at the favor spot, like completed
       ? '0 miles away'
       : liveMiles != null
-        ? `${fmtMiles(liveMiles)} away`
+        ? `${fmtMiles(routeMiles ?? liveMiles)} away` // road distance when routed, crow-flies otherwise
         : 'Locating your Pal…';
 
-  // Arrival window: production favors carry no server etaWindow, so compute one
-  // from the live distance (~20 mph urban average, 10-minute window, min 3 min).
+  // Arrival window: production favors carry no server etaWindow, so derive one
+  // from the real drive time when the map has a route (now + durationSec, same
+  // 10-minute from–to window) — else the distance heuristic (~20 mph urban
+  // average, min 3 min).
   const fmtClock = (ms: number) => new Date(ms).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
   const etaWindow = (() => {
     if (fav?.etaWindow) return fav.etaWindow;
     if (liveMiles != null && !arrived && !completed) {
-      const mins = Math.max(3, Math.round(liveMiles * 3));
-      const from = fmtClock(Date.now() + mins * 60000).replace(/\s?[AP]M$/i, '');
-      const to = fmtClock(Date.now() + (mins + 10) * 60000).replace(/\s/g, '');
+      const fromMs = routeInfo
+        ? Date.now() + routeInfo.durationSec * 1000
+        : Date.now() + Math.max(3, Math.round(liveMiles * 3)) * 60000;
+      const from = fmtClock(fromMs).replace(/\s?[AP]M$/i, '');
+      const to = fmtClock(fromMs + 10 * 60000).replace(/\s/g, '');
       return `${from} - ${to}`;
     }
     if (fav?.scheduledFor) return fmtClock(fav.scheduledFor);
@@ -310,12 +330,18 @@ export const FavorTracking = ({ navigation }: any) => {
           lng={fav?.location?.lng}
           markers={
             palLoc && palLocFresh && (Platform.OS === 'web' ? hasLive : !completed)
-              ? [{ lat: palLoc.lat, lng: palLoc.lng, label: 'Your Pal' }]
+              ? [{ lat: palLoc.lat, lng: palLoc.lng, at: palLoc.at, label: 'Your Pal' }]
               : undefined
           }
           height={WIN_H + 32}
           zoom={15}
           label=""
+          initials={myInitials}
+          onRouteInfo={setRouteInfo}
+          // The ETA/route is only meaningful while the pal is EN ROUTE —
+          // arrived/finished phases hardcode '0 miles away', so routing there
+          // would spend Routes quota on results nothing renders.
+          routingEnabled={!arrived && !pendingRelease && !completed}
         >
           {Platform.OS === 'web' ? (
           <View style={StyleSheet.absoluteFill} pointerEvents="none">

@@ -6,7 +6,8 @@ import { asyncHandler } from '../lib/errors';
 import { authenticate } from '../middleware/authenticate';
 import { geoLimiter } from '../middleware/rateLimit';
 
-// Google Maps Platform proxy (Places Autocomplete + Geocoding). The server key
+// Google Maps Platform proxy (Places Autocomplete + Geocoding + Routes). The
+// server key
 // (config.maps.serverKey) never ships in the app bundle — the client's
 // EXPO_PUBLIC key stays restricted to the Static Maps image API. All routes are
 // authenticated and rate-limited so the key can't be farmed through us, and
@@ -168,5 +169,135 @@ geoRouter.get(
     const data = await googleJson('geocode', url);
     const rows = (data?.results as unknown[]) ?? [];
     return res.json({ location: data?.status === 'OK' && rows.length ? pickLocation(rows[0]) : null });
+  }),
+);
+
+// ---------------------------------------------------------------------------
+// GET /api/geo/directions?olat&olng&dlat&dlng — driving route between the pal
+// and the favor destination for the live maps (member tracking + pal
+// navigation backdrop). Proxies the Routes API v2; like every other geo route,
+// any Google failure degrades to a soft null so the maps fall back to plain
+// markers. Returns { route: { polyline, durationSec, distanceMeters } | null }.
+// ---------------------------------------------------------------------------
+
+type DirectionsRoute = { polyline: string; durationSec: number; distanceMeters: number };
+
+// 30s micro-cache keyed by the endpoints rounded to 4 decimals (~11m buckets):
+// the member's tracking map refetches as the pal moves, so identical segments
+// requested within the window must not double-spend Routes API quota. Bounded
+// at 500 entries with simple oldest-first eviction (Map preserves insertion
+// order); only successful routes are cached — failures stay retryable.
+const DIRECTIONS_CACHE_TTL_MS = 30_000;
+const DIRECTIONS_CACHE_MAX = 500;
+const directionsCache = new Map<string, { at: number; route: DirectionsRoute }>();
+
+function directionsCacheGet(key: string): DirectionsRoute | null {
+  const hit = directionsCache.get(key);
+  if (!hit) return null;
+  if (Date.now() - hit.at > DIRECTIONS_CACHE_TTL_MS) {
+    directionsCache.delete(key);
+    return null;
+  }
+  return hit.route;
+}
+
+function directionsCacheSet(key: string, route: DirectionsRoute) {
+  if (!directionsCache.has(key) && directionsCache.size >= DIRECTIONS_CACHE_MAX) {
+    const oldest = directionsCache.keys().next().value;
+    if (oldest !== undefined) directionsCache.delete(oldest);
+  }
+  directionsCache.set(key, { at: Date.now(), route });
+}
+
+// Routes API v2 returns durations as a protobuf-style string ('123s').
+function parseDurationSec(raw: unknown): number | null {
+  if (typeof raw !== 'string') return null;
+  const m = /^(\d+(?:\.\d+)?)s$/.exec(raw.trim());
+  return m ? Math.round(Number(m[1])) : null;
+}
+
+// Coalesce concurrent identical lookups: the member's tracking map and the
+// pal's backdrop key on the same coordinate pair whenever both screens are
+// open — the second caller must await the first flight, not double-spend a
+// computeRoutes charge.
+const directionsInFlight = new Map<string, Promise<DirectionsRoute | null>>();
+
+// Empty query strings coerce to 0 under z.coerce.number() (Number('') === 0),
+// which would send a billed (0,0) request to Null Island — reject them first.
+const requiredCoord = (min: number, max: number) =>
+  z.preprocess((v) => (v === '' ? undefined : v), z.coerce.number().min(min).max(max));
+
+async function fetchRoute(olat: number, olng: number, dlat: number, dlng: number): Promise<DirectionsRoute | null> {
+  // The field mask header is mandatory (computeRoutes 400s without one) and
+  // keeps the response to exactly what the app renders.
+  const data = await googleJson('directions', 'https://routes.googleapis.com/directions/v2:computeRoutes', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'X-Goog-Api-Key': config.maps.serverKey,
+      'X-Goog-FieldMask': 'routes.polyline.encodedPolyline,routes.duration,routes.distanceMeters',
+    },
+    body: JSON.stringify({
+      origin: { location: { latLng: { latitude: olat, longitude: olng } } },
+      destination: { location: { latLng: { latitude: dlat, longitude: dlng } } },
+      travelMode: 'DRIVE',
+    }),
+  });
+
+  const first = (
+    data?.routes as Array<{
+      polyline?: { encodedPolyline?: string };
+      duration?: string;
+      distanceMeters?: number;
+    }> | undefined
+  )?.[0];
+  if (!first) {
+    // googleJson already logged HTTP/timeout failures (data === null); a 200
+    // with an empty routes array is logged here so a half-enabled Routes API
+    // shows up in the Render logs.
+    if (data) logGeoFailure('directions', 'no usable route in response');
+    return null;
+  }
+  // Proto3 JSON omits default-valued scalars: a zero-length leg (pal at the
+  // destination — the normal END of every tracked favor) can arrive as
+  // duration '0s' with distanceMeters and even the polyline omitted. That is a
+  // valid answer, not an operator failure — default the zeros instead of
+  // degrading to null and crying wolf in the logs.
+  const route: DirectionsRoute = {
+    polyline: first.polyline?.encodedPolyline ?? '',
+    durationSec: parseDurationSec(first.duration) ?? 0,
+    distanceMeters: typeof first.distanceMeters === 'number' ? first.distanceMeters : 0,
+  };
+  return route;
+}
+
+geoRouter.get(
+  '/directions',
+  validate({
+    query: z.object({
+      olat: requiredCoord(-90, 90),
+      olng: requiredCoord(-180, 180),
+      dlat: requiredCoord(-90, 90),
+      dlng: requiredCoord(-180, 180),
+    }),
+  }),
+  asyncHandler(async (req, res) => {
+    if (!config.maps.enabled) return res.json({ route: null });
+    const { olat, olng, dlat, dlng } = validatedQuery<{
+      olat: number; olng: number; dlat: number; dlng: number;
+    }>(req);
+
+    const cacheKey = `${olat.toFixed(4)},${olng.toFixed(4)}>${dlat.toFixed(4)},${dlng.toFixed(4)}`;
+    const cached = directionsCacheGet(cacheKey);
+    if (cached) return res.json({ route: cached });
+
+    let flight = directionsInFlight.get(cacheKey);
+    if (!flight) {
+      flight = fetchRoute(olat, olng, dlat, dlng).finally(() => directionsInFlight.delete(cacheKey));
+      directionsInFlight.set(cacheKey, flight);
+    }
+    const route = await flight;
+    if (route) directionsCacheSet(cacheKey, route);
+    return res.json({ route });
   }),
 );

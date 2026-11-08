@@ -41,6 +41,12 @@ export interface MapSceneProps {
   markers?: MapSceneMarker[];
   /** Fit these points in view on load (e.g. pal position + destination). */
   fit?: { lat: number; lng: number }[];
+  /**
+   * Decoded route points (lib/geo decodePolyline) drawn as a brand-red line
+   * under the markers. Visual only — it never changes the `fit` behavior.
+   * Ignored on web (this stub renders nothing).
+   */
+  polyline?: { lat: number; lng: number }[];
 }
 
 export const MapScene: React.FC<MapSceneProps> = () => null;

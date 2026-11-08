@@ -12,8 +12,11 @@ import type { MapSceneMarker } from '../components/MapScene';
 import { useStore } from '../store';
 import {
   getIncomingApi, makeOfferApi, getFavorOffersApi, counterOfferApi, declineOfferApi, rateMemberApi,
-  getFavorApi, getEarningsApi,
+  getFavorApi, getEarningsApi, getDirectionsApi,
 } from '../api/endpoints';
+import { decodePolyline } from '../lib/geo';
+import { GEOCODE_FALLBACK } from '../lib/geocode';
+import { openTurnByTurn } from '../lib/navigation-links';
 import { computePayout, computeFees, FAVOR_TIERS, Favor, FavorOffer, Transaction } from '../types';
 
 // Favor Pal (provider) active-favor flow — "Provider App v.2" DARK design.
@@ -56,8 +59,51 @@ const CELEBRATION = require('../../assets/img/tracking/celebration.png');
 // Native: a REAL dark MapView (MapScene) centered on the favor destination (red
 // pin) with the pal's live position as the car marker on en-route screens. Web
 // keeps the drawn v.2 navy backdrop (react-native-maps has no web support).
+// Route refetch threshold: a new directions fetch only once the origin has
+// moved >150m from where the last one ran (usePalOriginFix is a one-shot fix,
+// so in practice the fetch fires once per mount).
+const ROUTE_REFETCH_M = 150;
+const METERS_PER_MILE = 1609.344;
+// A route drawn FROM a fallback anchor would be fiction — never fetch unless
+// the origin is a real GPS fix that isn't one of the known fallback coords.
+const isFallbackOrigin = (o: Origin) =>
+  (o.lat === PAL_ORIGIN_FALLBACK.lat && o.lng === PAL_ORIGIN_FALLBACK.lng) ||
+  (o.lat === GEOCODE_FALLBACK.lat && o.lng === GEOCODE_FALLBACK.lng);
+
 function MapBackdrop({ route, dest }: { route?: boolean; dest?: { lat: number; lng: number } | null }) {
   const { origin, hasFix } = usePalOriginFix();
+
+  // Real driving route pal → destination (Google Routes via the server geo
+  // proxy) drawn as the red polyline on the native map. Soft-silent: a null
+  // route / proxy error / web simply means no line — exactly how the other
+  // geo endpoints degrade.
+  const [routePts, setRoutePts] = useState<{ lat: number; lng: number }[] | null>(null);
+  // Keyed by BOTH endpoints: a destination change (new favor on the same
+  // mounted backdrop) must refetch even when the origin hasn't moved — an
+  // origin-only key would pin the old favor's route to the new destination.
+  const lastRoute = useRef<{ olat: number; olng: number; dlat: number; dlng: number } | null>(null);
+  const wantRoute = MAP_SCENE_SUPPORTED && !!route && !!dest && hasFix && !isFallbackOrigin(origin);
+  const destLat = dest?.lat;
+  const destLng = dest?.lng;
+  useEffect(() => {
+    if (!wantRoute || destLat == null || destLng == null) {
+      setRoutePts(null);
+      lastRoute.current = null;
+      return;
+    }
+    const last = lastRoute.current;
+    const originMovedM = last ? haversineMiles(last.olat, last.olng, origin.lat, origin.lng) * METERS_PER_MILE : Infinity;
+    const destMovedM = last ? haversineMiles(last.dlat, last.dlng, destLat, destLng) * METERS_PER_MILE : Infinity;
+    if (last && originMovedM <= ROUTE_REFETCH_M && destMovedM <= 50) return;
+    lastRoute.current = { olat: origin.lat, olng: origin.lng, dlat: destLat, dlng: destLng };
+    let cancelled = false;
+    void getDirectionsApi(origin.lat, origin.lng, destLat, destLng)
+      .then(({ route: r }) => { if (!cancelled) setRoutePts(r ? decodePolyline(r.polyline) : null); })
+      .catch(() => undefined); // transient / maps unconfigured — no line, no noise
+    return () => { cancelled = true; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [wantRoute, origin.lat, origin.lng, destLat, destLng]);
+
   if (MAP_SCENE_SUPPORTED) {
     const markers: MapSceneMarker[] = [];
     if (dest) markers.push({ lat: dest.lat, lng: dest.lng, kind: 'pin' });
@@ -75,6 +121,7 @@ function MapBackdrop({ route, dest }: { route?: boolean; dest?: { lat: number; l
           center={dest ?? origin}
           zoom={14}
           markers={markers}
+          polyline={routePts ?? undefined}
           fit={route && dest && hasFix ? [dest, origin] : undefined}
           scrim="rgba(13,10,10,0.18)"
         />
@@ -132,7 +179,7 @@ function LocationDeniedBanner({ visible }: { visible: boolean }) {
   );
 }
 
-function MapTopBar({ navigation, banner, onBack }: any) {
+function MapTopBar({ navigation, banner, onBack, onBannerPress }: any) {
   const insets = useSafeAreaInsets();
   // Always expose the menu (→ SideDrawer → Home) even in banner mode: Navigation
   // and PalFavorInProgress are root-stack screens with no tab bar, so without it
@@ -149,10 +196,26 @@ function MapTopBar({ navigation, banner, onBack }: any) {
           <View style={{ width: 40 }} />
         )}
         {banner ? (
-          <View style={[st.navBanner, { flex: 1, marginHorizontal: 10 }]}>
-            <Ionicons name="arrow-up" size={20} color={TEXT} />
-            <Text style={{ color: TEXT, fontSize: 16, marginLeft: 10, fontFamily: P500, flex: 1 }} numberOfLines={1}>{banner}</Text>
-          </View>
+          onBannerPress ? (
+            // Tappable directions banner — hands the pal off to the device's
+            // maps app for real turn-by-turn (navigate glyph signals the tap).
+            <TouchableOpacity
+              style={[st.navBanner, { flex: 1, marginHorizontal: 10 }]}
+              onPress={onBannerPress}
+              activeOpacity={0.8}
+              accessibilityRole="button"
+              accessibilityLabel={`${banner} Get directions — opens your maps app`}
+            >
+              <Ionicons name="arrow-up" size={20} color={TEXT} />
+              <Text style={{ color: TEXT, fontSize: 16, marginLeft: 10, fontFamily: P500, flex: 1 }} numberOfLines={1}>{banner}</Text>
+              <Ionicons name="navigate" size={16} color={SUBTLE} style={{ marginLeft: 8 }} />
+            </TouchableOpacity>
+          ) : (
+            <View style={[st.navBanner, { flex: 1, marginHorizontal: 10 }]}>
+              <Ionicons name="arrow-up" size={20} color={TEXT} />
+              <Text style={{ color: TEXT, fontSize: 16, marginLeft: 10, fontFamily: P500, flex: 1 }} numberOfLines={1}>{banner}</Text>
+            </View>
+          )
         ) : (
           <View style={{ flex: 1 }} />
         )}
@@ -1053,10 +1116,19 @@ export const Navigation = ({ navigation }: any) => {
   const [cancelBusy, setCancelBusy] = useState(false);
   const [cancelError, setCancelError] = useState('');
   const [cancelledOpen, setCancelledOpen] = useState(false);
+  const [mapsError, setMapsError] = useState(false);
   const fontsLoaded = usePoppins();
   const memberName = fav?.memberName ?? 'Favor Member';
   const tierName = fav ? tierLabel(fav) : 'Favor';
   const distance = fav ? fmtMiles(favorDistance(fav, origin)) : '';
+
+  // Real turn-by-turn handoff to the device's maps app (banner + action row).
+  // openTurnByTurn returns false only when every deep-link rung threw.
+  const getDirections = async () => {
+    if (!fav?.location) return;
+    const ok = await openTurnByTurn(fav.location);
+    if (!ok) setMapsError(true);
+  };
   const window = fav?.etaWindow
     ?? (fav?.scheduledFor ? new Date(fav.scheduledFor).toLocaleString([], { hour: 'numeric', minute: '2-digit' }) : 'As soon as possible');
   // v.2 banner reads "↑ Head west on 2nd St." — steer to the favor's address.
@@ -1099,7 +1171,7 @@ export const Navigation = ({ navigation }: any) => {
   return (
     <View style={{ flex: 1, backgroundColor: PAGE_BG }}>
       <MapBackdrop route dest={fav?.location} />
-      <MapTopBar navigation={navigation} banner={banner} />
+      <MapTopBar navigation={navigation} banner={banner} onBannerPress={fav?.location ? getDirections : undefined} />
       <LocationDeniedBanner visible={s.locationDenied} />
       <View style={st.sheet}>
         <Handle />
@@ -1123,6 +1195,7 @@ export const Navigation = ({ navigation }: any) => {
         <Text style={{ color: TEXT, fontSize: 28, fontFamily: P500, textAlign: 'center', marginTop: 18 }}>{window}</Text>
         <View style={st.windowPill}><Text style={{ color: SUBTLE, fontSize: 13, fontFamily: P400 }}>Arrival Window</Text></View>
 
+        <ActionRow icon="navigate" label="Get directions (opens Maps)" onPress={getDirections} />
         <ActionRow icon="call" label="Call About This Favor" onPress={callMember} />
         <ActionRow icon="mail" label={msgBusy ? 'Opening chat…' : 'Message Favor Member'} red disabled={msgBusy} onPress={openMessage} />
 
@@ -1217,6 +1290,14 @@ export const Navigation = ({ navigation }: any) => {
         primaryLabel="OK"
         onPrimary={() => setCallOpen(false)}
       />
+      {/* Every maps deep link failed (openTurnByTurn exhausted its ladder). */}
+      <NavyModal
+        visible={mapsError}
+        title="Couldn't open Maps"
+        message="We couldn't hand off to a maps app on this device. Head to the address shown at the top of the screen."
+        primaryLabel="OK"
+        onPrimary={() => setMapsError(false)}
+      />
       {/* Chat open failed (openThreadWith swallows the error). */}
       <NavyModal
         visible={msgError}
@@ -1259,6 +1340,7 @@ export const PalFavorInProgress = ({ navigation }: any) => {
   const fontsLoaded = usePoppins();
   const [finishBusy, setFinishBusy] = useState(false);
   const [finishError, setFinishError] = useState('');
+  const [mapsError, setMapsError] = useState(false);
   const fav = s.activePalFavor;
   // Finished-but-unreleased work belongs to the awaiting-release screen — a
   // cold reopen (or a poll tick landing 'pending_release' mid-view) hands over
@@ -1284,6 +1366,15 @@ export const PalFavorInProgress = ({ navigation }: any) => {
     ? 'You have arrived.'
     : (fav?.location?.address ? `Head to ${fav.location.address}` : 'Head to the favor location.');
 
+  // Real turn-by-turn handoff to the device's maps app (banner + mini-card
+  // action row, both only while still en route — directions after arrival are
+  // noise). openTurnByTurn returns false only when every deep-link rung threw.
+  const getDirections = async () => {
+    if (!fav?.location) return;
+    const ok = await openTurnByTurn(fav.location);
+    if (!ok) setMapsError(true);
+  };
+
   if (!fontsLoaded) return <View style={{ flex: 1, backgroundColor: PAGE_BG }} />;
   // Blank frame while the awaiting-release replace above lands — the
   // in-progress UI below would be a lie for finished work.
@@ -1295,7 +1386,7 @@ export const PalFavorInProgress = ({ navigation }: any) => {
   return (
     <View style={{ flex: 1, backgroundColor: PAGE_BG }}>
       <MapBackdrop route dest={fav?.location} />
-      <MapTopBar navigation={navigation} banner={banner} />
+      <MapTopBar navigation={navigation} banner={banner} onBannerPress={!arrived && fav?.location ? getDirections : undefined} />
       <LocationDeniedBanner visible={s.locationDenied} />
       <View style={[st.miniCard, { bottom: insets.bottom + 16 }]}>
         <View style={{ flexDirection: 'row', alignItems: 'center' }}>
@@ -1315,6 +1406,11 @@ export const PalFavorInProgress = ({ navigation }: any) => {
           <Ionicons name="location" size={15} color={SUBTLE} />
           <Text style={{ color: SUBTLE, fontSize: 13, marginLeft: 6, flex: 1, fontFamily: P400 }} numberOfLines={1}>{address}</Text>
         </View>
+        {/* Maps handoff — only while still heading there; once arrived the row
+            would only invite a pointless re-route to where the pal is standing. */}
+        {!arrived ? (
+          <ActionRow icon="navigate" label="Get directions (opens Maps)" onPress={getDirections} />
+        ) : null}
         <View style={{ marginTop: 8 }}>
           <CostRow label={tierName} value={`$${base.toFixed(2)}`} bold />
           <CostRow label="Platform commission (20%)" value={`-$${commission.toFixed(2)}`} />
@@ -1362,6 +1458,14 @@ export const PalFavorInProgress = ({ navigation }: any) => {
         message={finishError}
         primaryLabel="OK"
         onPrimary={() => setFinishError('')}
+      />
+      {/* Every maps deep link failed (openTurnByTurn exhausted its ladder). */}
+      <NavyModal
+        visible={mapsError}
+        title="Couldn't open Maps"
+        message="We couldn't hand off to a maps app on this device. Head to the address shown at the top of the screen."
+        primaryLabel="OK"
+        onPrimary={() => setMapsError(false)}
       />
     </View>
   );

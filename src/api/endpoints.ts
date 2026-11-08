@@ -91,6 +91,16 @@ export const geocodeServerApi = (q: string) =>
 // Reverse-geocode a map-pan position into a display address.
 export const reverseGeocodeApi = (lat: number, lng: number) =>
   apiRequest<{ location: GeoLocation | null }>(`/api/geo/reverse?lat=${lat}&lng=${lng}`, { auth: true });
+// Driving route origin -> destination via the server's Routes API proxy.
+// `polyline` is a Google encoded polyline (decode with lib/geo decodePolyline).
+// route is null whenever the server can't produce one (maps disabled, Google
+// error/empty, timeout) — callers fall back to straight-line estimates.
+export type DirectionsRoute = { polyline: string; durationSec: number; distanceMeters: number };
+export const getDirectionsApi = (olat: number, olng: number, dlat: number, dlng: number) =>
+  apiRequest<{ route: DirectionsRoute | null }>(
+    `/api/geo/directions?olat=${olat}&olng=${olng}&dlat=${dlat}&dlng=${dlng}`,
+    { auth: true },
+  );
 
 // --- uploads (server-side Supabase Storage proxy; see server uploads.routes.ts) ---
 export type UploadContentType = 'image/jpeg' | 'image/png' | 'image/webp';

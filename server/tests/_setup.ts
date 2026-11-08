@@ -16,3 +16,7 @@ process.env.OTP_DEV_RETURN = 'true';
 // soft-degrade (503) and must never PUT real bytes into Supabase Storage.
 process.env.SUPABASE_URL = '';
 process.env.SUPABASE_SERVICE_ROLE_KEY = '';
+// Maps proxy stays unconfigured under test: the suite asserts the /api/geo
+// soft-degrade shapes and must never spend real Google quota — this pin keeps
+// that true even once a real key lands in server/.env.
+process.env.GOOGLE_MAPS_SERVER_KEY = '';

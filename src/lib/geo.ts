@@ -18,3 +18,35 @@ export function fmtMiles(miles: number): string {
   const rounded = miles < 10 ? Math.round(miles * 10) / 10 : Math.round(miles);
   return `${rounded} ${rounded === 1 ? 'mile' : 'miles'}`;
 }
+
+// Decode a Google encoded polyline (precision 5) into lat/lng points — the
+// shape the Routes API proxy (/api/geo/directions) returns for route lines.
+// Standard algorithm, no dependency: each coordinate is a varint of 5-bit
+// chunks (ASCII - 63), zigzag-signed, as a delta from the previous point.
+export function decodePolyline(encoded: string): { lat: number; lng: number }[] {
+  const points: { lat: number; lng: number }[] = [];
+  let index = 0;
+  let lat = 0;
+  let lng = 0;
+  while (index < encoded.length) {
+    let byte = 0;
+    let shift = 0;
+    let result = 0;
+    do {
+      byte = encoded.charCodeAt(index++) - 63;
+      result |= (byte & 0x1f) << shift;
+      shift += 5;
+    } while (byte >= 0x20);
+    lat += result & 1 ? ~(result >> 1) : result >> 1;
+    shift = 0;
+    result = 0;
+    do {
+      byte = encoded.charCodeAt(index++) - 63;
+      result |= (byte & 0x1f) << shift;
+      shift += 5;
+    } while (byte >= 0x20);
+    lng += result & 1 ? ~(result >> 1) : result >> 1;
+    points.push({ lat: lat / 1e5, lng: lng / 1e5 });
+  }
+  return points;
+}
