@@ -40,13 +40,19 @@ export async function getKnownLocation(): Promise<{ lat: number; lng: number } |
 // never crashes and the member simply doesn't see a live position.
 export async function startLocationBroadcast(
   onUpdate: (lat: number, lng: number) => void,
+  // Called when the user explicitly DENIED location permission — the one
+  // failure the pal can act on (web/module-absent stays a silent no-op).
+  onDenied?: () => void,
 ): Promise<StopBroadcast> {
   try {
     // Dynamic import so a build lacking the native module can't break the JS
     // bundle at load; if it's missing this rejects and we return a no-op.
     const Location = await import('expo-location');
     const { status } = await Location.requestForegroundPermissionsAsync();
-    if (status !== 'granted') return () => {};
+    if (status !== 'granted') {
+      onDenied?.();
+      return () => {};
+    }
     const sub = await Location.watchPositionAsync(
       {
         accuracy: Location.Accuracy.Balanced,

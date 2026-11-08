@@ -1,4 +1,4 @@
-// One-off, ADDITIVE ONLY: enrich the shared demo DB with realistic content for
+﻿// One-off, ADDITIVE ONLY: enrich the shared demo DB with realistic content for
 // the store screenshots (and App Review). Creates rows and fills missing
 // settlement watermarks; deletes nothing. Companion cleanup (test-residue
 // removal) lives in curate-demo.ts and is run separately with user approval.
@@ -29,11 +29,11 @@ async function main() {
     prisma.user.findUniqueOrThrow({ where: { email: 'jordan@example.com' } }),
   ]);
 
-  // 2. Two more completed favors alex→jordan so History + Earning History have texture.
+  // 2. Two more completed favors alexâ†’jordan so History + Earning History have texture.
   const completed = [
     {
-      tier: 'big', price: 90, tip: 10, rating: 5, feedback: 'Jordan was fantastic — fast, careful, and friendly!',
-      description: 'Assemble a dresser and nightstand — tools provided',
+      tier: 'big', price: 90, tip: 10, rating: 5, feedback: 'Jordan was fantastic â€” fast, careful, and friendly!',
+      description: 'Assemble a dresser and nightstand â€” tools provided',
       address: '1200 Barton Springs Rd, Austin, TX', lat: 30.2622, lng: -97.7561, when: 5,
     },
     {
@@ -49,7 +49,7 @@ async function main() {
     const created = daysAgo(c.when, 3);
     const favor = await prisma.favor.create({
       data: {
-        memberId: alex.id, palId: jordan.id, tier: c.tier, price: c.price, description: c.description, images: '[]',
+        memberId: alex.id, palId: jordan.id, tier: c.tier, price: c.price, listPrice: c.price, description: c.description, images: '[]',
         locationLat: c.lat, locationLng: c.lng, locationAddress: c.address,
         status: 'completed', serviceFee: f.serviceFee, transactionFee: f.transactionFee, total: f.total,
         tip: c.tip, rating: c.rating, feedback: c.feedback, settledAt: daysAgo(c.when, 1),
@@ -76,14 +76,14 @@ async function main() {
   }
 
   // 3. A LIVE en-route favor for alex (pal jordan, live GPS fix set) so the
-  //    member live-tracking screen can be captured. Distinctive description —
+  //    member live-tracking screen can be captured. Distinctive description â€”
   //    remove after the shoot with scripts/curate-demo-remove-staged.ts.
-  const STAGED = 'Pick up groceries from Trader Joes — buzz 4B';
+  const STAGED = 'Pick up groceries from Trader Joes â€” buzz 4B';
   if (!(await prisma.favor.findFirst({ where: { description: STAGED } }))) {
     const f = fees(35);
     await prisma.favor.create({
       data: {
-        memberId: alex.id, palId: jordan.id, tier: 'small', price: 35, description: STAGED, images: '[]',
+        memberId: alex.id, palId: jordan.id, tier: 'small', price: 35, listPrice: 35, description: STAGED, images: '[]',
         locationLat: 30.2672, locationLng: -97.7431, locationAddress: '500 Congress Ave, Austin, TX',
         palLat: 30.2495, palLng: -97.7495, palLocationAt: minAgo(0.2),
         status: 'enroute', serviceFee: f.serviceFee, transactionFee: f.transactionFee, total: f.total,
@@ -99,20 +99,20 @@ async function main() {
     });
     console.log('  staged live en-route favor for the tracking screenshot');
   } else {
-    console.log('  staged en-route favor already exists — skipped');
+    console.log('  staged en-route favor already exists â€” skipped');
   }
 
-  // 4. A message thread alex ↔ jordan so the Messages screens aren't empty.
+  // 4. A message thread alex â†” jordan so the Messages screens aren't empty.
   const existingThread = await prisma.thread.findFirst({
     where: { OR: [{ userAId: alex.id, userBId: jordan.id }, { userAId: jordan.id, userBId: alex.id }] },
   });
   if (!existingThread) {
     const texts: Array<[string, string, number]> = [
-      [jordan.id, 'Hey Alex! I accepted your favor — heading to the store now.', 95],
+      [jordan.id, 'Hey Alex! I accepted your favor â€” heading to the store now.', 95],
       [alex.id, 'Awesome, thank you! Could you grab the 2% milk instead of whole?', 92],
       [jordan.id, "Of course, 2% it is. Anything else while I'm here?", 88],
       [alex.id, "That's everything. Buzz apartment 4B when you arrive.", 85],
-      [jordan.id, 'Just checked out — be there in about 10 minutes!', 40],
+      [jordan.id, 'Just checked out â€” be there in about 10 minutes!', 40],
       [alex.id, 'Perfect, see you soon!', 38],
     ];
     const thread = await prisma.thread.create({
@@ -127,9 +127,9 @@ async function main() {
         data: { threadId: thread.id, senderId, text, read: true, createdAt: minAgo(m) },
       });
     }
-    console.log(`  added thread alex↔jordan with ${texts.length} messages`);
+    console.log(`  added thread alexâ†”jordan with ${texts.length} messages`);
   } else {
-    console.log('  thread alex↔jordan already exists — skipped');
+    console.log('  thread alexâ†”jordan already exists â€” skipped');
   }
 
   const [users, favors, txns, threads] = await Promise.all([

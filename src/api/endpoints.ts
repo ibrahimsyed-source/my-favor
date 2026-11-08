@@ -31,8 +31,10 @@ export const loginApi = (email: string, password: string) =>
 export const logoutApi = (refreshToken: string) =>
   apiRequest<{ ok: boolean }>('/api/auth/logout', { method: 'POST', body: { refreshToken } });
 
+// The server revokes every session on a password change and returns a fresh
+// token pair for THIS device — the caller must persist it via setSession.
 export const changePasswordApi = (currentPassword: string, newPassword: string) =>
-  apiRequest<{ ok: boolean }>('/api/auth/change-password', { method: 'POST', auth: true, body: { currentPassword, newPassword } });
+  apiRequest<{ ok: boolean; accessToken: string; refreshToken: string }>('/api/auth/change-password', { method: 'POST', auth: true, body: { currentPassword, newPassword } });
 
 export const forgotPasswordApi = (email: string) =>
   apiRequest<{ otpSent: boolean; devCode?: string }>('/api/auth/forgot-password', { method: 'POST', body: { email } });
@@ -114,7 +116,10 @@ export const abandonFavorApi = (id: string) => apiRequest<{ ok: boolean }>(`/api
 export const assignPalApi = (id: string, palId: string) => apiRequest<{ favor: Favor }>(`/api/favors/${id}/assign`, { method: 'POST', auth: true, body: { palId } });
 export const advanceFavorApi = (id: string, status: string) => apiRequest<{ favor: Favor }>(`/api/favors/${id}/advance`, { method: 'POST', auth: true, body: { status } });
 export const updateFavorLocationApi = (id: string, lat: number, lng: number) => apiRequest<{ ok: boolean }>(`/api/favors/${id}/location`, { method: 'POST', auth: true, body: { lat, lng } });
-export const finishFavorApi = (id: string) => apiRequest<{ favor: Favor; payout: number }>(`/api/favors/${id}/finish`, { method: 'POST', auth: true });
+// `ledgerStatus` is the settle() result: 'completed' = the member's money was
+// collected and the earning is cashable; 'incomplete' = recorded uncollected.
+export const finishFavorApi = (id: string) =>
+  apiRequest<{ favor: Favor; payout: number; ledgerStatus?: 'completed' | 'incomplete' }>(`/api/favors/${id}/finish`, { method: 'POST', auth: true });
 export const cancelFavorApi = (id: string) => apiRequest<{ favor: Favor; cancellation: { fee: number; refund: number } }>(`/api/favors/${id}/cancel`, { method: 'POST', auth: true });
 export const rateFavorApi = (id: string, body: { rating: number; feedback: string; tip?: number }) =>
   apiRequest<{ favor: Favor }>(`/api/favors/${id}/rate`, { method: 'POST', auth: true, body });
@@ -157,7 +162,13 @@ export const connectStatusApi = () =>
 
 // --- messaging ---
 export const getThreadsApi = () => apiRequest<{ threads: Thread[] }>('/api/messages/threads', { auth: true });
-export const getMessagesApi = (threadId: string) => apiRequest<{ messages: Message[] }>(`/api/messages/threads/${threadId}/messages`, { auth: true });
+// Returns the NEWEST page (oldest->newest for display). Pass `before` (a message
+// id cursor) to page further back through older history.
+export const getMessagesApi = (threadId: string, before?: string) =>
+  apiRequest<{ messages: Message[] }>(
+    `/api/messages/threads/${threadId}/messages${before ? `?before=${encodeURIComponent(before)}` : ''}`,
+    { auth: true },
+  );
 export const sendMessageApi = (threadId: string, text: string) =>
   apiRequest<{ message: Message }>(`/api/messages/threads/${threadId}/messages`, { method: 'POST', auth: true, body: { text } });
 export const createThreadApi = (withUserId: string) =>
@@ -173,4 +184,6 @@ export const reportUserApi = (userId: string, reason?: string) =>
   apiRequest<{ ok: boolean }>('/api/moderation/report', { method: 'POST', auth: true, body: { userId, reason } });
 export const blockUserApi = (userId: string) =>
   apiRequest<{ ok: boolean }>('/api/moderation/block', { method: 'POST', auth: true, body: { userId } });
+export const unblockUserApi = (userId: string) =>
+  apiRequest<{ ok: boolean }>(`/api/moderation/block/${userId}`, { method: 'DELETE', auth: true });
 export const getBlockedApi = () => apiRequest<{ blocked: string[] }>('/api/moderation/blocked', { auth: true });

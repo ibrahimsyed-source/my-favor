@@ -2,7 +2,7 @@ import React, { useCallback, useMemo, useState, useEffect } from 'react';
 import {
   View, Text, TextInput, TouchableOpacity, FlatList, StyleSheet,
   KeyboardAvoidingView, Platform, Modal, ListRenderItemInfo, RefreshControl,
-  StatusBar,
+  StatusBar, ActivityIndicator,
 } from 'react-native';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
@@ -246,10 +246,14 @@ export const MessageThread = ({ navigation, route }: any) => {
   const [menuOpen, setMenuOpen] = useState(false);
   const [confirmBlock, setConfirmBlock] = useState(false);
   const [reportDone, setReportDone] = useState(false);
+  const [reportFailed, setReportFailed] = useState(false);
   // First-load flag for this thread's messages: gates the loading vs empty kit
   // state so an empty thread shows a spinner, then "no messages yet" (never a
   // blank area). Reset whenever the open thread changes.
   const [msgsLoaded, setMsgsLoaded] = useState(false);
+  // "Load earlier messages" paging state — 'exhausted' once the cursor fetch
+  // comes back empty (no older history), reset per thread.
+  const [earlierState, setEarlierState] = useState<'idle' | 'loading' | 'exhausted'>('idle');
 
   // No stock-photo stand-in: absent avatar → the Avatar component renders
   // initials from the user's name.
@@ -258,10 +262,17 @@ export const MessageThread = ({ navigation, route }: any) => {
   const theirAvatar = thread?.withUser.avatar;
   const title = thread?.withUser.name ?? 'Chat';
   const otherUserId = thread?.withUser.id;
+  // Block state is enforced both ways: users I blocked are known locally
+  // (blockedUsers) → notice + disabled composer. "They blocked me" isn't
+  // exposed by the server (deliberate ambiguity), so those sends surface
+  // through the failed-bubble "Not delivered — tap to retry" path instead of
+  // silently vanishing.
+  const iBlocked = !!otherUserId && s.blockedUsers.includes(otherUserId);
 
   // Live-ish chat: poll this thread's messages on open, on focus, and every 5s.
   useEffect(() => {
     setMsgsLoaded(false); // new thread → show loading until its first fetch resolves
+    setEarlierState('idle'); // paging cursor state is per-thread
     // refreshMessages swallows errors and always resolves, so .then fires on
     // both success and failure — enough to leave the loading state.
     void s.refreshMessages(threadId).then(() => setMsgsLoaded(true));
@@ -291,25 +302,40 @@ export const MessageThread = ({ navigation, route }: any) => {
           gapAbove={gapAbove}
           avatarUri={item.fromMe ? myAvatar : theirAvatar}
           avatarName={item.fromMe ? myName : title}
+          onRetry={item.failed ? () => s.retrySendMessage(item.id) : undefined}
         />
       );
     },
-    [reversed, myAvatar, theirAvatar, myName, title]
+    [reversed, myAvatar, theirAvatar, myName, title, s.retrySendMessage]
   );
 
-  const canSend = text.trim().length > 0;
+  const canSend = text.trim().length > 0 && !iBlocked;
 
   const send = () => {
     const t = text.trim();
-    if (!t) return;
+    if (!t || iBlocked) return;
     s.sendMessage(threadId, t);
     setText('');
   };
 
-  const onReport = () => {
+  // Server page size is 50 (message.routes.ts PAGE_SIZE) — once a thread holds
+  // a full page there may be older history behind the cursor.
+  const PAGE_SIZE = 50;
+  const mayHaveEarlier = messages.length >= PAGE_SIZE && earlierState !== 'exhausted';
+  const loadEarlier = async () => {
+    if (earlierState === 'loading') return;
+    setEarlierState('loading');
+    const more = await s.loadEarlierMessages(threadId);
+    setEarlierState(more ? 'idle' : 'exhausted');
+  };
+
+  // Trust & Safety: only confirm a report the server actually received —
+  // a failed POST shows the retry modal instead of a false "Report received".
+  const onReport = async () => {
     setMenuOpen(false);
-    if (otherUserId) s.reportUser(otherUserId);
-    setReportDone(true);
+    const ok = otherUserId ? await s.reportUser(otherUserId) : false;
+    if (ok) setReportDone(true);
+    else setReportFailed(true);
   };
 
   const onConfirmBlock = () => {
@@ -380,6 +406,27 @@ export const MessageThread = ({ navigation, route }: any) => {
             style={{ flex: 1 }}
             contentContainerStyle={{ paddingVertical: 24, paddingHorizontal: 24 }}
             keyboardShouldPersistTaps="handled"
+            // Inverted list → the footer renders at the visual TOP (oldest end):
+            // the "load earlier" affordance appears once the thread holds a full
+            // server page, and hides when the cursor fetch comes back empty.
+            ListFooterComponent={
+              mayHaveEarlier ? (
+                <TouchableOpacity
+                  onPress={loadEarlier}
+                  disabled={earlierState === 'loading'}
+                  style={tstyles.loadEarlier}
+                  accessibilityRole="button"
+                  accessibilityLabel="Load earlier messages"
+                  accessibilityState={{ disabled: earlierState === 'loading', busy: earlierState === 'loading' }}
+                >
+                  {earlierState === 'loading' ? (
+                    <ActivityIndicator size="small" color={L.placeholder} />
+                  ) : (
+                    <Text style={tstyles.loadEarlierTxt}>LOAD EARLIER MESSAGES</Text>
+                  )}
+                </TouchableOpacity>
+              ) : null
+            }
           />
         )}
 
@@ -389,6 +436,7 @@ export const MessageThread = ({ navigation, route }: any) => {
           transparent
           animationType="fade"
           onRequestClose={() => setMenuOpen(false)}
+          accessibilityViewIsModal
         >
           <TouchableOpacity
             activeOpacity={1}
@@ -430,8 +478,8 @@ export const MessageThread = ({ navigation, route }: any) => {
           visible={confirmBlock}
           title={`Block ${title}?`}
           message={`You won't receive messages from ${title}, and this conversation will be hidden. You can unblock them later.`}
-          confirmLabel="Block"
-          cancelLabel="Keep conversation"
+          confirmLabel="BLOCK"
+          cancelLabel="KEEP CONVERSATION"
           destructive
           onConfirm={onConfirmBlock}
           onCancel={() => setConfirmBlock(false)}
@@ -441,38 +489,69 @@ export const MessageThread = ({ navigation, route }: any) => {
           visible={reportDone}
           title="Report received"
           message={`Thanks for letting us know. Our Trust & Safety team will review your report about ${title}.`}
-          buttonLabel="Done"
+          buttonLabel="DONE"
           onClose={() => setReportDone(false)}
         />
 
-        {/* Composer bar: white pill input + emoji glyph + black send plane */}
-        <View style={[tstyles.inputBar, { paddingBottom: insets.bottom + 16 }]}>
-          <View style={tstyles.inputPill}>
-            <TextInput
-              style={tstyles.input}
-              value={text}
-              onChangeText={setText}
-              placeholder="Type something…"
-              placeholderTextColor={L.placeholder}
-              multiline
-              onSubmitEditing={send}
-            />
-            <Ionicons name="happy-outline" size={18} color={L.text} />
-          </View>
-          <TouchableOpacity
-            onPress={send}
-            hitSlop={8}
-            style={tstyles.sendBtn}
-            disabled={!canSend}
-            accessibilityRole="button"
-            accessibilityLabel="Send message"
-            accessibilityState={{ disabled: !canSend }}
+        <InfoModal
+          visible={reportFailed}
+          title="Report not sent"
+          message="We couldn’t send your report. Check your connection and try again."
+          buttonLabel="OKAY"
+          onClose={() => setReportFailed(false)}
+        />
+
+        {/* Composer bar: white pill input + emoji glyph + black send plane.
+            A blocked conversation (my block) swaps the composer for a notice —
+            no input, no send. */}
+        {iBlocked ? (
+          <View
+            style={[tstyles.inputBar, { paddingBottom: insets.bottom + 16 }]}
+            accessibilityLiveRegion="polite"
           >
-            {/* Frame's plane vector is 16x13.95; Ionicons' send glyph fills
-                ~93% of its box, so size 17 renders it 15.9x13.8. */}
-            <Ionicons name="send" size={17} color={L.text} />
-          </TouchableOpacity>
-        </View>
+            <Text style={tstyles.blockedTxt}>
+              You’ve blocked {title}. Unblock them to continue this conversation.
+            </Text>
+          </View>
+        ) : (
+          <View style={[tstyles.inputBar, { paddingBottom: insets.bottom + 16 }]}>
+            <View style={tstyles.inputPill}>
+              <TextInput
+                style={tstyles.input}
+                value={text}
+                onChangeText={setText}
+                placeholder="Type something…"
+                placeholderTextColor={L.placeholder}
+                multiline
+                onSubmitEditing={send}
+              />
+              {/* Quick-emoji: the frame's glyph, wired (no system picker API on
+                  RN) — appends a smiley instead of sitting inert. */}
+              <TouchableOpacity
+                onPress={() => setText((t) => `${t}🙂`)}
+                hitSlop={8}
+                accessibilityRole="button"
+                accessibilityLabel="Add smiley emoji"
+              >
+                <Ionicons name="happy-outline" size={18} color={L.text} />
+              </TouchableOpacity>
+            </View>
+            <TouchableOpacity
+              onPress={send}
+              hitSlop={8}
+              style={tstyles.sendBtn}
+              disabled={!canSend}
+              accessibilityRole="button"
+              accessibilityLabel="Send message"
+              accessibilityState={{ disabled: !canSend }}
+            >
+              {/* Frame's plane vector is 16x13.95; Ionicons' send glyph fills
+                  ~93% of its box, so size 17 renders it 15.9x13.8. Gray plane
+                  while the composer is empty = visibly disabled. */}
+              <Ionicons name="send" size={17} color={canSend ? L.text : L.placeholder} />
+            </TouchableOpacity>
+          </View>
+        )}
       </View>
     </KeyboardAvoidingView>
   );
@@ -484,7 +563,8 @@ const Bubble = React.memo<{
   gapAbove: number;
   avatarUri?: string;
   avatarName?: string;
-}>(({ message, showAvatar, gapAbove, avatarUri, avatarName }) => {
+  onRetry?: () => void;
+}>(({ message, showAvatar, gapAbove, avatarUri, avatarName, onRetry }) => {
   const mine = message.fromMe;
   // 24px avatar slot on the outer side; kept (empty) on non-tail rows so every
   // bubble in a run lines up on the same column, exactly like the frame.
@@ -501,15 +581,28 @@ const Bubble = React.memo<{
       ]}
     >
       {!mine && <View style={{ marginRight: 8 }}>{avatarSlot}</View>}
-      <View
-        style={[
-          tstyles.bubble,
-          mine
-            ? { backgroundColor: L.bubbleOut, borderBottomRightRadius: 0 }
-            : { backgroundColor: L.bubbleIn, borderBottomLeftRadius: 0 },
-        ]}
-      >
-        <Text style={tstyles.bubbleTxt}>{message.text}</Text>
+      <View style={[tstyles.bubbleCol, { alignItems: mine ? 'flex-end' : 'flex-start' }]}>
+        <View
+          style={[
+            tstyles.bubble,
+            mine
+              ? { backgroundColor: L.bubbleOut, borderBottomRightRadius: 0 }
+              : { backgroundColor: L.bubbleIn, borderBottomLeftRadius: 0 },
+            message.failed && { opacity: 0.6 },
+          ]}
+        >
+          <Text style={tstyles.bubbleTxt}>{message.text}</Text>
+        </View>
+        {message.failed && (
+          <TouchableOpacity
+            onPress={onRetry}
+            hitSlop={8}
+            accessibilityRole="button"
+            accessibilityLabel="Message not delivered. Tap to retry sending."
+          >
+            <Text style={tstyles.failedTxt}>Not delivered — tap to retry</Text>
+          </TouchableOpacity>
+        )}
       </View>
       {mine && <View style={{ marginLeft: 8 }}>{avatarSlot}</View>}
     </View>
@@ -553,7 +646,9 @@ const lstyles = StyleSheet.create({
     justifyContent: 'center',
     marginLeft: 8,
   },
-  badgeTxt: { color: '#FFFFFF', fontSize: 12, fontWeight: '700' },
+  // Poppins Bold (registered app-wide), not a synthetic system fontWeight —
+  // keeps the badge on the Poppins-everywhere rule.
+  badgeTxt: { color: '#FFFFFF', fontSize: 12, lineHeight: 16, fontFamily: 'Poppins_700Bold' },
 });
 
 const tstyles = StyleSheet.create({
@@ -578,8 +673,14 @@ const tstyles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'flex-end',
   },
-  bubble: {
+  // Column wrapping a bubble + its (optional) "Not delivered" retry line, so
+  // the failure affordance hugs the bubble's outer edge.
+  bubbleCol: {
     maxWidth: '75%',
+    flexShrink: 1,
+  },
+  bubble: {
+    maxWidth: '100%',
     paddingHorizontal: 16,
     paddingVertical: 9.5,
     borderRadius: 8,
@@ -589,6 +690,35 @@ const tstyles = StyleSheet.create({
     fontFamily: P_REGULAR,
     fontSize: 14,
     lineHeight: 21,
+  },
+  failedTxt: {
+    color: L.brand,
+    fontFamily: P_REGULAR,
+    fontSize: 12,
+    lineHeight: 18,
+    marginTop: 4,
+  },
+  loadEarlier: {
+    alignSelf: 'center',
+    paddingVertical: 10,
+    paddingHorizontal: 16,
+    marginBottom: 8,
+  },
+  loadEarlierTxt: {
+    color: L.placeholder,
+    fontFamily: P_MEDIUM,
+    fontSize: 12,
+    lineHeight: 18,
+    letterSpacing: 0.4,
+  },
+  blockedTxt: {
+    flex: 1,
+    color: L.placeholder,
+    fontFamily: P_REGULAR,
+    fontSize: 14,
+    lineHeight: 21,
+    textAlign: 'center',
+    paddingVertical: 12,
   },
   inputBar: {
     flexDirection: 'row',

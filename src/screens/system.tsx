@@ -114,21 +114,6 @@ export function UpdateRequiredScreen({ route }: ScreenProps) {
 }
 
 // ---------------------------------------------------------------------------
-// Session expired — signed out (e.g. 401). Route back to Login.
-// ---------------------------------------------------------------------------
-export function SessionExpiredScreen({ navigation }: ScreenProps) {
-  return (
-    <FullScreenState
-      icon="lock-closed-outline"
-      title="Session expired"
-      message="For your security, you've been signed out. Please log in again to continue."
-      actionLabel="Back to login"
-      onAction={() => navigation.reset({ index: 0, routes: [{ name: 'Login' }] })}
-    />
-  );
-}
-
-// ---------------------------------------------------------------------------
 // Not found — unknown route or a deleted resource. Generic catch-all.
 // ---------------------------------------------------------------------------
 export function NotFoundScreen({ navigation }: ScreenProps) {

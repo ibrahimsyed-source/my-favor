@@ -3,10 +3,10 @@
 // Goes through the SERVER's /api/geo proxy (server-side Google key) rather than
 // calling Google from the device: the bundled EXPO_PUBLIC key is restricted to
 // the Static Maps image API, so direct Geocoding calls were silently denied in
-// production and every address fell back to the demo point. When the server has
-// no key (local dev) or the lookup fails, we still fall back to a Miami-area
-// point so pal-side distances stay realistic against the seeded/demo favors
-// rather than landing every request hundreds of miles away.
+// production. Resolution failure — no match, server error, or no key — returns
+// null: callers must surface the failure instead of pinning a favor to a
+// made-up coordinate (which would send the pal and the live map to the wrong
+// city under the member's real address text).
 
 import { geocodeServerApi } from '../api/endpoints';
 
@@ -15,18 +15,17 @@ export interface LatLng {
   lng: number;
 }
 
-// Dev/demo fallback — the demo city (matches where the seeded favors are), so
-// distance sorting stays meaningful when there's no key.
+// Default MAP CENTRE for screens with nothing better to centre on — the demo
+// city (matches the seeded favors). Display-only: never a favor's coordinates.
 export const GEOCODE_FALLBACK: LatLng = { lat: 25.79, lng: -80.131 };
 
-export async function geocodeAddress(address: string): Promise<LatLng> {
+export async function geocodeAddress(address: string): Promise<LatLng | null> {
   const query = address.trim();
-  if (!query) return { ...GEOCODE_FALLBACK };
+  if (!query) return null;
   try {
     const { location } = await geocodeServerApi(query);
-    if (location) return { lat: location.lat, lng: location.lng };
-    return { ...GEOCODE_FALLBACK };
+    return location ? { lat: location.lat, lng: location.lng } : null;
   } catch {
-    return { ...GEOCODE_FALLBACK };
+    return null;
   }
 }

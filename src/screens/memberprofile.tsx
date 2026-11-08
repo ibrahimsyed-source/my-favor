@@ -27,10 +27,14 @@ export const MemberProfile = ({ navigation, route }: any) => {
   const [reviews, setReviews] = useState<Review[]>([]);
   const [loading, setLoading] = useState(true);
   const [errored, setErrored] = useState(false);
+  // Bumped by TRY AGAIN — re-runs the fetch effect without re-navigating.
+  const [attempt, setAttempt] = useState(0);
 
   useEffect(() => {
     if (!userId) { setLoading(false); setErrored(true); return; }
     let cancelled = false;
+    setLoading(true);
+    setErrored(false);
     (async () => {
       try {
         const [m, r] = await Promise.all([getMemberApi(userId), getMemberReviewsApi(userId)]);
@@ -44,7 +48,7 @@ export const MemberProfile = ({ navigation, route }: any) => {
       }
     })();
     return () => { cancelled = true; };
-  }, [userId]);
+  }, [userId, attempt]);
 
   const name = member ? `${member.firstName} ${member.lastName}`.trim() : 'Favor Member';
   const sinceYear = member ? new Date(member.memberSince).getFullYear() : undefined;
@@ -74,13 +78,26 @@ export const MemberProfile = ({ navigation, route }: any) => {
           <Ionicons name="person-circle-outline" size={56} color={SUBTLE} />
           <Text style={st.emptyTitle}>Profile unavailable</Text>
           <Text style={st.emptySub}>We couldn't load this member's profile. Please try again.</Text>
+          {/* Dead-end fix: the fetch only re-ran on a userId change, so "try
+              again" used to require backing out and re-opening the screen. */}
+          {userId ? (
+            <TouchableOpacity
+              onPress={() => setAttempt((a) => a + 1)}
+              style={st.retryBtn}
+              activeOpacity={0.85}
+              accessibilityRole="button"
+              accessibilityLabel="Try again"
+            >
+              <Text style={st.retryText}>TRY AGAIN</Text>
+            </TouchableOpacity>
+          ) : null}
         </View>
       ) : (
         <ScrollView contentContainerStyle={{ paddingHorizontal: 24, paddingBottom: 32 }}>
           <View style={{ alignItems: 'center', marginTop: 18 }}>
             <Avatar uri={member.avatar} size={88} name={name} />
-            <Text style={st.name}>{name}</Text>
-            {locality ? <Text style={st.locality}>{locality}</Text> : null}
+            <Text style={st.name} numberOfLines={1}>{name}</Text>
+            {locality ? <Text style={st.locality} numberOfLines={1}>{locality}</Text> : null}
           </View>
 
           <View style={st.statsRow}>
@@ -147,6 +164,12 @@ const st = StyleSheet.create({
   center: { flex: 1, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 32 },
   emptyTitle: { color: TEXT, fontSize: 17, fontFamily: P600, marginTop: 14 },
   emptySub: { color: SUBTLE, fontSize: 14, lineHeight: 20, fontFamily: P400, textAlign: 'center', marginTop: 6 },
+  // Provider v.2 primary CTA — white pill, black label.
+  retryBtn: {
+    marginTop: 20, height: 44, borderRadius: 8, paddingHorizontal: 36,
+    backgroundColor: '#FFFFFF', alignItems: 'center', justifyContent: 'center',
+  },
+  retryText: { color: '#000000', fontSize: 14, fontFamily: P500, letterSpacing: 1 },
   name: { color: TEXT, fontSize: 22, fontFamily: P600, marginTop: 12 },
   locality: { color: SUBTLE, fontSize: 14, fontFamily: P400, marginTop: 2 },
   statsRow: {

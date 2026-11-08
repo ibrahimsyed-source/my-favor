@@ -47,7 +47,7 @@ async function api(path: string, opts: { method?: string; token?: string; body?:
   return { status: res.status, json };
 }
 
-async function makeUser(role: 'member' | 'pal') {
+async function makeUser(role: 'member' | 'pal', opts: { vetted?: boolean } = {}) {
   const email = `test_${role}_${uniq}_${crypto.randomBytes(3).toString('hex')}@example.com`;
   const phone = `+1555${crypto.randomInt(1000000, 9999999)}`;
   const signup = await api('/api/auth/signup', {
@@ -66,8 +66,9 @@ async function makeUser(role: 'member' | 'pal') {
   const token = verify.json.accessToken as string;
 
   // Pals must clear vetting before they can accept favors — auto-approve the
-  // mocked application so lifecycle tests can proceed.
-  if (role === 'pal') {
+  // mocked application so lifecycle tests can proceed. Pass { vetted: false }
+  // to get a pal-role account that has NOT cleared vetting (gate tests).
+  if (role === 'pal' && opts.vetted !== false) {
     const vet = await api('/api/profile/verify-pal', {
       method: 'POST',
       token,
@@ -160,10 +161,12 @@ test('full favor lifecycle: request → accept → advance → finish → rate',
     assert.equal(adv.json.favor.status, status);
   }
 
-  // Pal finishes; payout = 50 - 20% = 40.
+  // Pal finishes; payout = 50 - 20% = 40. The settle result rides the response
+  // so the client can be honest about whether the earning is cashable yet.
   const finish = await api(`/api/favors/${favorId}/finish`, { method: 'POST', token: pal.token });
   assert.equal(finish.status, 200);
   assert.equal(finish.json.payout, 40, 'payout is base minus 20% commission');
+  assert.equal(finish.json.ledgerStatus, 'completed', 'mock-mode settle reports a cashable ledger');
 
   // Member rates with a tip.
   const rate = await api(`/api/favors/${favorId}/rate`, { method: 'POST', token: member.token, body: { rating: 5, feedback: 'Great', tip: 10 } });
@@ -174,6 +177,37 @@ test('full favor lifecycle: request → accept → advance → finish → rate',
   assert.ok(txns.json.transactions.length >= 1, 'member has a payment');
   const earnings = await api('/api/payments/earnings', { token: pal.token });
   assert.ok(earnings.json.earnings.length >= 1, 'pal has an earning');
+});
+
+test('one active request per member: a second create 409s until the first ends', async () => {
+  const member = await makeUser('member');
+  const loc = { lat: 30.26, lng: -97.74, address: '1 Main St' };
+  const first = await api('/api/favors', {
+    method: 'POST',
+    token: member.token,
+    body: { tier: 'tiny', description: 'First errand', location: loc },
+  });
+  assert.equal(first.status, 201);
+
+  // The client UI has exactly one member-favor slot, so a second concurrent
+  // request is refused while ANY member favor is in an active status.
+  const second = await api('/api/favors', {
+    method: 'POST',
+    token: member.token,
+    body: { tier: 'small', description: 'Second errand', location: loc },
+  });
+  assert.equal(second.status, 409, 'second create is refused while one is active');
+  assert.match(second.json.error.message, /finish or cancel your current favor/i);
+
+  // Cancelling the open request frees the slot — the next create succeeds.
+  const cancel = await api(`/api/favors/${first.json.favor.id}/cancel`, { method: 'POST', token: member.token });
+  assert.equal(cancel.status, 200);
+  const third = await api('/api/favors', {
+    method: 'POST',
+    token: member.token,
+    body: { tier: 'small', description: 'Third errand', location: loc },
+  });
+  assert.equal(third.status, 201, 'slot reopens after cancel');
 });
 
 test('authorization: non-participant cannot read a favor', async () => {
@@ -798,4 +832,218 @@ test('price negotiation: member accepts a pal offer; rival pending offers are de
   // Late offers on a matched favor are refused.
   const late = await api(`/api/favors/${favorId}/offers`, { method: 'POST', token: palB.token, body: { price: 12 } });
   assert.equal(late.status, 409);
+});
+
+test('assign: unvetted and busy pals cannot be booked; a free pal can', async () => {
+  const member = await makeUser('member');
+  const create = await api('/api/favors', {
+    method: 'POST',
+    token: member.token,
+    body: { tier: 'tiny', description: 'Assign gate test', location: { lat: 30.26, lng: -97.74, address: '4 Main St' } },
+  });
+  assert.equal(create.status, 201);
+  const favorId = create.json.favor.id;
+
+  // A pal-role account that never cleared vetting can't be booked.
+  const unvetted = await makeUser('pal', { vetted: false });
+  const noVet = await api(`/api/favors/${favorId}/assign`, {
+    method: 'POST', token: member.token, body: { palId: unvetted.id },
+  });
+  assert.equal(noVet.status, 403, 'unvetted pal is refused');
+
+  // A pal mid-favor elsewhere can't be hijacked onto a second job.
+  const { pal: busyPal } = await activeFavor({ advanceTo: 'matched' });
+  const busy = await api(`/api/favors/${favorId}/assign`, {
+    method: 'POST', token: member.token, body: { palId: busyPal.id },
+  });
+  assert.equal(busy.status, 409, 'busy pal is refused');
+  assert.match(busy.json.error.message, /busy with another favor/i);
+
+  // A free, vetted pal books fine — and the response carries the participant
+  // shape (memberName), same as every other match response.
+  const freePal = await makeUser('pal');
+  const ok = await api(`/api/favors/${favorId}/assign`, {
+    method: 'POST', token: member.token, body: { palId: freePal.id },
+  });
+  assert.equal(ok.status, 200);
+  assert.equal(ok.json.favor.status, 'matched');
+  assert.equal(ok.json.favor.palId, freePal.id);
+  assert.ok(ok.json.favor.memberName, 'assign response uses the participant shape');
+});
+
+test('abandon scrubs the pal GPS and reopens negotiated favors at the listed price', async () => {
+  const member = await makeUser('member');
+  const pal = await makeUser('pal');
+  const create = await api('/api/favors', {
+    method: 'POST',
+    token: member.token,
+    body: { tier: 'negotiate', price: 30, description: 'Negotiated abandon test', location: { lat: 30.26, lng: -97.74, address: '5 Main St' } },
+  });
+  assert.equal(create.status, 201);
+  const favorId = create.json.favor.id;
+  assert.equal(create.json.favor.price, 30, 'listed price honored at create');
+
+  // Pal negotiates up to $42; member accepts → matched at the negotiated price.
+  const offer = await api(`/api/favors/${favorId}/offers`, { method: 'POST', token: pal.token, body: { price: 42 } });
+  assert.equal(offer.status, 201);
+  const approve = await api(`/api/favors/${favorId}/offers/${offer.json.offer.id}/accept`, {
+    method: 'POST', token: member.token, body: { price: 42 },
+  });
+  assert.equal(approve.status, 200);
+  assert.equal(approve.json.favor.price, 42);
+
+  // Pal shares a live fix, then steps back.
+  const fix = await api(`/api/favors/${favorId}/location`, { method: 'POST', token: pal.token, body: { lat: 30.31, lng: -97.76 } });
+  assert.equal(fix.status, 200);
+  const abandon = await api(`/api/favors/${favorId}/abandon`, { method: 'POST', token: pal.token });
+  assert.equal(abandon.status, 200);
+
+  // Reopened at the member's LIST price with recomputed fees — the number the
+  // departed pal negotiated must not follow the favor back onto the board.
+  const view = await api(`/api/favors/${favorId}`, { token: member.token });
+  assert.equal(view.json.favor.status, 'requested');
+  assert.equal(view.json.favor.price, 30, 'negotiated price does not survive the reopen');
+  assert.equal(view.json.favor.total, computeFees(30).total, 'fees recomputed from the list price');
+  assert.equal(view.json.favor.palLocation, undefined, 'participant read carries no stale GPS');
+
+  // The open feed never carries the departed pal's last fix either.
+  const pal2 = await makeUser('pal');
+  const feed = await api('/api/favors/incoming', { token: pal2.token });
+  const row = feed.json.favors.find((f: any) => f.id === favorId);
+  assert.ok(row, 'reopened favor is back on the board');
+  assert.equal(row.palLocation, undefined, 'open feed has no palLocation');
+
+  // A second pal matches at the list price — the old pal's cleared fix must not
+  // masquerade as the new pal's live position.
+  await requestAndApprove(favorId, member.token, pal2.token);
+  const active = await api('/api/favors/active', { token: member.token });
+  assert.equal(active.json.memberFavor.palId, pal2.id);
+  assert.equal(active.json.memberFavor.palLocation, undefined, 'stale GPS does not ride the new match');
+});
+
+test('a pal mid-favor cannot open new negotiations or requests', async () => {
+  const { pal } = await activeFavor({ advanceTo: 'matched' });
+  const member = await makeUser('member');
+  const create = await api('/api/favors', {
+    method: 'POST',
+    token: member.token,
+    body: { tier: 'small', description: 'Busy pal gate test', location: { lat: 30.26, lng: -97.74, address: '6 Main St' } },
+  });
+  assert.equal(create.status, 201);
+  const favorId = create.json.favor.id;
+
+  const offer = await api(`/api/favors/${favorId}/offers`, { method: 'POST', token: pal.token, body: { price: 25 } });
+  assert.equal(offer.status, 409, 'busy pal cannot open a negotiation');
+  assert.match(offer.json.error.message, /active favor/i);
+
+  const accept = await api(`/api/favors/${favorId}/accept`, { method: 'POST', token: pal.token });
+  assert.equal(accept.status, 409, 'busy pal cannot request either');
+});
+
+test('a pal quietly withdrawing their own request does not notify the member', async () => {
+  const member = await makeUser('member');
+  const pal = await makeUser('pal');
+  const create = await api('/api/favors', {
+    method: 'POST',
+    token: member.token,
+    body: { tier: 'tiny', description: 'Withdraw test', location: { lat: 30.26, lng: -97.74, address: '7 Main St' } },
+  });
+  assert.equal(create.status, 201);
+  const favorId = create.json.favor.id;
+
+  const req = await api(`/api/favors/${favorId}/accept`, { method: 'POST', token: pal.token });
+  assert.equal(req.status, 200);
+
+  const before = await api('/api/notifications', { token: member.token });
+  const withdraw = await api(`/api/favors/${favorId}/offers/${req.json.offer.id}/decline`, {
+    method: 'POST', token: pal.token,
+  });
+  assert.equal(withdraw.status, 200);
+  const after = await api('/api/notifications', { token: member.token });
+  assert.equal(
+    after.json.notifications.length,
+    before.json.notifications.length,
+    'a withdrawal the member never acted on adds no notification row',
+  );
+  assert.ok(
+    !after.json.notifications.some((n: any) => /declined/i.test(n.title)),
+    'no "declined" notification for a quiet withdrawal',
+  );
+
+  // The withdrawn row is deleted outright, so re-requesting at the list price
+  // is not blocked by the declined-at-this-price guard (that guard is for
+  // MEMBER "no"s).
+  const again = await api(`/api/favors/${favorId}/accept`, { method: 'POST', token: pal.token });
+  assert.equal(again.status, 200, 'pal can re-request after withdrawing');
+});
+
+test('history rows name the member for pal-side receipts', async () => {
+  const { pal, favorId } = await activeFavor({ advanceTo: 'in_progress' });
+  await api(`/api/favors/${favorId}/finish`, { method: 'POST', token: pal.token });
+  const hist = await api('/api/favors', { token: pal.token });
+  assert.equal(hist.status, 200);
+  const row = hist.json.favors.find((f: any) => f.id === favorId);
+  assert.ok(row, 'completed favor is in the pal history');
+  assert.equal(row.memberName, 'Test', 'history rows carry the member first name');
+});
+
+test('adding the same card twice returns the existing row, not a dupe', async () => {
+  const member = await makeUser('member');
+  const card = { brand: 'Visa', last4: '4242', expMonth: 12, expYear: 2030 };
+  const first = await api('/api/payments/cards', { method: 'POST', token: member.token, body: card });
+  assert.equal(first.status, 201);
+  const second = await api('/api/payments/cards', { method: 'POST', token: member.token, body: card });
+  assert.equal(second.status, 200, 'duplicate add is a 200, not a new row');
+  assert.equal(second.json.card.id, first.json.card.id, 'the existing card is returned');
+  const list = await api('/api/payments/cards', { token: member.token });
+  assert.equal(
+    list.json.cards.filter((c: any) => c.brand === 'Visa' && c.last4 === '4242').length,
+    1,
+    'no server-side dupe',
+  );
+});
+
+test('unverified login 403 carries a fresh devCode in dev', async () => {
+  const email = `test_unverified_${uniq}_${crypto.randomBytes(3).toString('hex')}@example.com`;
+  const phone = `+1555${crypto.randomInt(1000000, 9999999)}`;
+  const signup = await api('/api/auth/signup', {
+    method: 'POST',
+    body: { firstName: 'Test', lastName: 'Unverified', email, phone, password: 'Password123', role: 'member', ageAffirmed: true, acceptedTerms: true },
+  });
+  assert.equal(signup.status, 201);
+
+  // Logging in before verifying re-issues a code; in dev it rides the 403 so
+  // the tester can finish signup without a real email.
+  const login = await api('/api/auth/login', { method: 'POST', body: { email, password: 'Password123' } });
+  assert.equal(login.status, 403);
+  assert.match(login.json.error.message, /not verified/i);
+  assert.match(String(login.json.error.details?.devCode ?? ''), /^\d{4}$/, 'fresh devCode rides the 403 in dev');
+
+  // The re-issued code actually verifies the account.
+  const verify = await api('/api/auth/verify-otp', {
+    method: 'POST',
+    body: { destination: email, code: login.json.error.details.devCode },
+  });
+  assert.equal(verify.status, 200, 're-issued code completes verification');
+});
+
+test('unblock restores messaging', async () => {
+  const a = await makeUser('member');
+  const b = await makeUser('pal');
+  await api('/api/moderation/block', { method: 'POST', token: a.token, body: { userId: b.id } });
+
+  const blockedList = await api('/api/moderation/blocked', { token: a.token });
+  assert.ok(blockedList.json.blocked.includes(b.id), 'block is listed');
+  const refused = await api('/api/messages/threads', { method: 'POST', token: a.token, body: { withUserId: b.id } });
+  assert.equal(refused.status, 403, 'blocked pair cannot open a thread');
+
+  const unblock = await api(`/api/moderation/block/${b.id}`, { method: 'DELETE', token: a.token });
+  assert.equal(unblock.status, 200);
+  assert.equal(unblock.json.ok, true);
+
+  const listAfter = await api('/api/moderation/blocked', { token: a.token });
+  assert.ok(!listAfter.json.blocked.includes(b.id), 'block row removed');
+  const thread = await api('/api/messages/threads', { method: 'POST', token: a.token, body: { withUserId: b.id } });
+  assert.equal(thread.status, 200, 'thread opens after unblock');
+  assert.ok(thread.json.thread?.id, 'thread returned');
 });

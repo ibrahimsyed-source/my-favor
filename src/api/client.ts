@@ -102,11 +102,13 @@ async function raw(path: string, opts: ReqOpts): Promise<Response> {
   }
 }
 
-// Try to mint a new access token from the stored refresh token. Returns true on
+// Try to mint a new access token from the stored refresh token. Returns 'ok' on
 // success (rotation means we persist the new refresh token too). Crucially, the
 // session is only DESTROYED on a genuine auth failure (the refresh token itself
-// is rejected) — a network/timeout/5xx is transient, so we keep the session and
-// let the caller retry, instead of logging the user out on a flaky connection.
+// is rejected — 'rejected') — a network/timeout/5xx/429 is 'transient', so we
+// keep the session and let the caller retry, instead of logging the user out on
+// a flaky connection. The distinction is surfaced so apiRequest can avoid
+// re-throwing a 401 (which reads as "token rejected") for a transient failure.
 //
 // SINGLE-FLIGHT: the app runs several pollers (notifications, incoming, active
 // favor) whose access tokens expire at the same moment, so multiple requests
@@ -116,9 +118,10 @@ async function raw(path: string, opts: ReqOpts): Promise<Response> {
 // then present the now-revoked token, get 401, and clearSession() — wiping the
 // valid session the winner just minted and silently logging the user out. We
 // dedupe to ONE in-flight refresh so every waiter shares the winner's result.
-let refreshInFlight: Promise<boolean> | null = null;
+type RefreshResult = 'ok' | 'rejected' | 'transient';
+let refreshInFlight: Promise<RefreshResult> | null = null;
 
-function tryRefresh(): Promise<boolean> {
+function tryRefresh(): Promise<RefreshResult> {
   if (!refreshInFlight) {
     refreshInFlight = doRefresh().finally(() => {
       refreshInFlight = null;
@@ -127,24 +130,31 @@ function tryRefresh(): Promise<boolean> {
   return refreshInFlight;
 }
 
-async function doRefresh(): Promise<boolean> {
+async function doRefresh(): Promise<RefreshResult> {
   const refreshToken = await getStoredRefresh();
-  if (!refreshToken) return false;
+  if (!refreshToken) return 'rejected'; // no stored session — the 401 is genuine
   let res: Response;
   try {
     res = await raw('/api/auth/refresh', { method: 'POST', body: { refreshToken } });
   } catch {
-    return false; // network/timeout — keep the session, retry later
+    return 'transient'; // network/timeout — keep the session, retry later
   }
   if (res.status === 401 || res.status === 403) {
     await clearSession(); // the refresh token is invalid/expired — real logout
     onSessionExpired?.(); // notify the store so it resets user state -> Login
-    return false;
+    return 'rejected';
   }
-  if (!res.ok) return false; // 5xx / transient — keep the session
-  const data = await res.json();
+  if (!res.ok) return 'transient'; // 5xx / 429 — keep the session
+  let data: any;
+  try {
+    data = await res.json();
+  } catch {
+    // 2xx with a non-JSON body (captive portal / proxy page mid-wake): treat as
+    // transient so a raw SyntaxError never escapes the ApiError contract.
+    return 'transient';
+  }
   await setSession({ accessToken: data.accessToken, refreshToken: data.refreshToken });
-  return true;
+  return 'ok';
 }
 
 // Core request helper. Parses JSON, throws ApiError on failure, and transparently
@@ -158,9 +168,19 @@ export async function apiRequest<T = any>(path: string, opts: ReqOpts = {}): Pro
   }
 
   if (res.status === 401 && opts.auth && !opts._retried) {
-    if (await tryRefresh()) {
+    const refreshed = await tryRefresh();
+    if (refreshed === 'ok') {
       return apiRequest<T>(path, { ...opts, _retried: true });
     }
+    if (refreshed === 'transient') {
+      // The refresh ATTEMPT failed (network/timeout/5xx/429) but the stored
+      // refresh token may still be valid. Don't re-throw the original 401 —
+      // callers (especially the cold-start bootstrap) treat a 401-after-refresh
+      // as a rejected token and would wipe a still-valid session.
+      throw new ApiError(0, 'refresh_failed', 'Could not refresh the session. Please try again.');
+    }
+    // 'rejected': fall through and throw the original 401 — doRefresh already
+    // cleared the session and notified the store.
   }
 
   let data: any = null;

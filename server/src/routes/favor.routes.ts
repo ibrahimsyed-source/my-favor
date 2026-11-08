@@ -49,7 +49,14 @@ async function broadcastNewFavor(favor: { id: string; memberId: string; tier: st
     const excluded = new Set<string>([favor.memberId]);
     for (const b of blocks) excluded.add(b.blockerId === favor.memberId ? b.blockedId : b.blockerId);
     const pals = await prisma.user.findMany({
-      where: { palVerified: true, suspended: false, id: { notIn: [...excluded] } },
+      where: {
+        palVerified: true,
+        suspended: false,
+        // Set Status is a real do-not-disturb: invisible/offline pals get no
+        // notification row and no push (they can still browse on their own).
+        status: { notIn: ['invisible', 'offline'] },
+        id: { notIn: [...excluded] },
+      },
       select: { id: true },
       take: 100,
     });
@@ -182,13 +189,14 @@ favorRouter.post(
   asyncHandler(async (req, res) => {
     const input = req.body as z.infer<typeof createSchema>;
 
-    // Bound the notification amplifier: each open favor fans out to every
-    // verified pal, so cap how many requests one member can have open at once.
-    const openCount = await prisma.favor.count({
-      where: { memberId: req.user!.id, status: 'requested' },
+    // One active request per member: the client UI has exactly one member-favor
+    // slot, so a second concurrent request could never be tracked or cancelled.
+    // (Also bounds the notification fan-out per member.)
+    const activeCount = await prisma.favor.count({
+      where: { memberId: req.user!.id, status: { in: ACTIVE_STATUSES } },
     });
-    if (openCount >= 3) {
-      throw conflict('You already have 3 open favor requests. Cancel one before posting another.');
+    if (activeCount > 0) {
+      throw conflict('Finish or cancel your current favor before requesting another.');
     }
 
     // Server decides the base price: fixed tiers are authoritative; custom/
@@ -207,6 +215,9 @@ favorRouter.post(
         memberId: req.user!.id,
         tier: input.tier,
         price: base,
+        // The listed price survives negotiation (which overwrites `price` at
+        // match time) so abandon can restore what the member actually posted.
+        listPrice: base,
         description: input.description,
         images: JSON.stringify(input.images),
         locationLat: input.location.lat,
@@ -237,6 +248,9 @@ favorRouter.get(
       where: { OR: [{ memberId: me }, { palId: me }] },
       orderBy: { createdAt: 'desc' },
       take: 100,
+      // First name + member rating ride history rows so pal-side receipts can
+      // name who the favor was for (no phone — that's for in-flight favors).
+      include: { member: { select: { firstName: true, memberRating: true } } },
     });
     res.json({ favors: favors.map(publicFavor) });
   }),
@@ -307,6 +321,41 @@ favorRouter.get(
 
 const idParam = z.object({ id: z.string().uuid() });
 
+// Write a pal's pending offer/request atomically. The naive read-check-then-
+// upsert had a TOCTOU hole: the member's offer-accept transaction could commit
+// between the route's status check and the upsert, whose unconditional update
+// then flipped an already-accepted (or just-declined) row back to 'pending' on
+// a matched favor. Here a CONDITIONAL touch of the favor row (still 'requested',
+// no pal) shares one transaction with the upsert: the touch takes the row lock
+// the accept transaction's favor claim must queue behind, so by commit time the
+// favor was either still open (and a subsequent claim declines this pending row
+// like any other) or the touch matched nothing and the whole write rolls back
+// into a 409. A lock-order collision with a concurrent accept of THIS pal's own
+// offer can deadlock in a ms window — Postgres aborts one side (P2034), mapped
+// to the same 409 as losing the race outright.
+async function upsertPendingOffer(favorId: string, palId: string, price: number) {
+  try {
+    return await prisma.$transaction(async (tx) => {
+      const open = await tx.favor.updateMany({
+        where: { id: favorId, status: 'requested', palId: null },
+        data: { updatedAt: new Date() },
+      });
+      if (open.count === 0) throw conflict('This favor is no longer available');
+      return tx.favorOffer.upsert({
+        where: { favorId_palId: { favorId, palId } },
+        create: { favorId, palId, price, lastBy: 'pal' },
+        update: { price, lastBy: 'pal', status: 'pending' },
+        include: { pal: true },
+      });
+    });
+  } catch (err) {
+    if (err instanceof Prisma.PrismaClientKnownRequestError && err.code === 'P2034') {
+      throw conflict('This favor is no longer available');
+    }
+    throw err;
+  }
+}
+
 // GET /api/favors/:id
 favorRouter.get(
   '/:id',
@@ -364,13 +413,8 @@ favorRouter.post(
     }
     const changed =
       !existing || existing.price !== favor.price || existing.status !== 'pending' || existing.lastBy !== 'pal';
-    const offer = await prisma.favorOffer.upsert({
-      where: { favorId_palId: { favorId: favor.id, palId: me } },
-      // List price is server-authoritative — the client can't pick the number.
-      create: { favorId: favor.id, palId: me, price: favor.price, lastBy: 'pal' },
-      update: { price: favor.price, lastBy: 'pal', status: 'pending' },
-      include: { pal: true },
-    });
+    // List price is server-authoritative — the client can't pick the number.
+    const offer = await upsertPendingOffer(favor.id, me, favor.price);
     if (changed) {
       await notify(
         favor.memberId,
@@ -408,6 +452,12 @@ favorRouter.post(
     if (!meUser?.palVerified) {
       throw forbidden('Complete pal verification (Driver Information) before making offers.');
     }
+    // One favor at a time: a busy pal can't open new negotiations (mirrors
+    // /accept; also re-checked atomically inside the member's offer-accept).
+    const activeAsPal = await prisma.favor.count({
+      where: { palId: me, status: { in: ['matched', 'enroute', 'arrived', 'in_progress'] } },
+    });
+    if (activeAsPal > 0) throw conflict('Finish your active favor before making another offer');
     const blocked = await prisma.block.findFirst({
       where: { OR: [{ blockerId: me, blockedId: favor.memberId }, { blockerId: favor.memberId, blockedId: me }] },
     });
@@ -425,12 +475,7 @@ favorRouter.post(
     }
     const changed = !existing || existing.price !== price || existing.status !== 'pending';
 
-    const offer = await prisma.favorOffer.upsert({
-      where: { favorId_palId: { favorId: favor.id, palId: me } },
-      create: { favorId: favor.id, palId: me, price, lastBy: 'pal' },
-      update: { price, lastBy: 'pal', status: 'pending' },
-      include: { pal: true },
-    });
+    const offer = await upsertPendingOffer(favor.id, me, price);
     if (changed) {
       await notify(
         favor.memberId,
@@ -612,16 +657,17 @@ favorRouter.post(
         // The pal withdraws their own un-answered offer/request: delete the row
         // outright so a later re-request at the same (list) price isn't blocked
         // by the declined-at-this-price guard — that guard is for MEMBER "no"s.
+        // A quiet withdrawal the member never acted on — no notification.
         await prisma.favorOffer.delete({ where: { id: offer.id } });
       } else {
         await prisma.favorOffer.update({ where: { id: offer.id }, data: { status: 'declined' } });
+        await notify(
+          isMember ? offer.palId : offer.favor.memberId,
+          'offer',
+          'Offer declined',
+          'The price offer on the favor was declined.',
+        );
       }
-      await notify(
-        isMember ? offer.palId : offer.favor.memberId,
-        'offer',
-        'Offer declined',
-        'The price offer on the favor was declined.',
-      );
     }
     res.json({ ok: true });
   }),
@@ -660,20 +706,24 @@ favorRouter.post(
     const favor = await prisma.favor.findUnique({ where: { id: req.params.id } });
     if (!favor) throw notFound('Favor not found');
     if (favor.palId !== me) throw forbidden('Only the assigned pal can release this favor');
-    // Reopen at the LIST price: a negotiated price was agreed with THIS pal, so
-    // it must not follow the favor back onto the open board. Fixed tiers restore
-    // their catalog price; custom/negotiate favors keep their member-set price.
-    const listBase = favor.tier in FAVOR_TIERS ? FAVOR_TIERS[favor.tier] : favor.price;
-    const listFees = computeFees(listBase);
+    // Reopen at the LIST price (captured at create): a negotiated price was
+    // agreed with THIS pal, so it must not follow the favor back onto the open
+    // board — custom/negotiate favors also reopen at the member's listed price.
+    const listFees = computeFees(favor.listPrice);
     const released = await prisma.favor.updateMany({
       where: { id: req.params.id, palId: me, status: { in: ['matched', 'enroute', 'arrived', 'in_progress'] } },
       data: {
         status: 'requested',
         palId: null,
-        price: listBase,
+        price: favor.listPrice,
         serviceFee: listFees.serviceFee,
         transactionFee: listFees.transactionFee,
         total: listFees.total,
+        // The departing pal's last GPS fix must not ride the reopened favor onto
+        // the open feed, nor masquerade as the next pal's live position.
+        palLat: null,
+        palLng: null,
+        palLocationAt: null,
       },
     });
     if (released.count === 0) throw conflict('This favor can no longer be released');
@@ -700,8 +750,19 @@ favorRouter.post(
     if (favor.memberId !== me) throw forbidden('Not your favor');
     if (favor.status !== 'requested' || favor.palId) throw conflict('Favor already matched');
 
-    const pal = await prisma.user.findFirst({ where: { id: palId, role: 'pal' } });
+    const pal = await prisma.user.findFirst({
+      where: { id: palId, role: 'pal' },
+      select: { palVerified: true, suspended: true },
+    });
     if (!pal) throw badRequest('Invalid pal');
+    // Same trust & availability gates as both accept paths: an unvetted or
+    // suspended pal can't be booked, and a pal mid-favor can't be hijacked onto
+    // a second job (which would strand one of the two in the client's one slot).
+    if (!pal.palVerified || pal.suspended) throw forbidden('This pal is not available');
+    const activeAsPal = await prisma.favor.count({
+      where: { palId, status: { in: ['matched', 'enroute', 'arrived', 'in_progress'] } },
+    });
+    if (activeAsPal > 0) throw conflict('This pal is busy with another favor');
     const blocked = await prisma.block.findFirst({
       where: { OR: [{ blockerId: me, blockedId: palId }, { blockerId: palId, blockedId: me }] },
     });
@@ -722,7 +783,9 @@ favorRouter.post(
       data: { status: 'declined' },
     });
     await notify(palId, 'match', 'You were booked', 'A member booked you for a favor.');
-    const updated = await prisma.favor.findUniqueOrThrow({ where: { id: req.params.id } });
+    // participantInclude so the matched favor lands with memberName/phones —
+    // same shape every other match/advance response carries.
+    const updated = await prisma.favor.findUniqueOrThrow({ where: { id: req.params.id }, include: participantInclude });
     res.json({ favor: publicFavor(updated) });
   }),
 );
@@ -817,8 +880,10 @@ favorRouter.post(
     });
 
     // Charge the member (total) and credit the pal (payout) — together, so the
-    // pal's earning is only cashable when the member's money is collected.
-    await settle({
+    // pal's earning is only cashable when the member's money is collected. The
+    // settle result rides the response so the client can be honest about whether
+    // the earning is cashable yet ('completed') or still uncollected.
+    const ledgerStatus = await settle({
       favorId: favor.id,
       memberId: favor.memberId,
       palId: me,
@@ -832,7 +897,7 @@ favorRouter.post(
     });
 
     await notify(favor.memberId, 'general', 'Favor completed', 'Your favor was completed. Please leave a rating.');
-    res.json({ favor: publicFavor(updated), payout });
+    res.json({ favor: publicFavor(updated), payout, ledgerStatus });
   }),
 );
 
@@ -888,7 +953,9 @@ favorRouter.post(
         data: { status: 'cancelled' },
       });
       if (done.count === 0) throw conflict('Favor cannot be cancelled');
-      const f = await tx.favor.findUniqueOrThrow({ where: { id: favor.id } });
+      // participantInclude keeps this response the same shape as the other
+      // lifecycle writes (phones stay omitted — 'cancelled' is non-contact).
+      const f = await tx.favor.findUniqueOrThrow({ where: { id: favor.id }, include: participantInclude });
       await tx.favorEvent.create({ data: { favorId: favor.id, status: 'cancelled', actorId: me } });
       // A cancelled favor takes its open negotiations with it.
       await tx.favorOffer.updateMany({

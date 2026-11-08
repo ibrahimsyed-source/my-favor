@@ -17,7 +17,7 @@ import { haversineMiles, fmtMiles } from '../lib/geo';
 // User App v.2 — tracking module (light design over a light map).
 // Frames: Favor Booked Minimized/Expanded, Favor Arrived (+Message), Modal:
 // Favor Pal Arrived, Order Complete, Tip Other, Tip/Feedback Submitted,
-// Cancel Favor / Cancelled / Repost Favor modals.
+// Cancel Favor / Cancelled modals.
 // ---------------------------------------------------------------------------
 const BLACK = '#0D0A0A'; // v.2 ink, canvas-verified (matches INK on sibling screens)
 const WHITE = '#FFFFFF';
@@ -32,9 +32,17 @@ const POPPINS_SB = 'Poppins_600SemiBold';
 
 const WIN_H = Dimensions.get('window').height;
 
+// Arrival announcement — shown once PER FAVOR (module scope, keyed by favor id,
+// so leaving/reopening the tracking screen never re-pops the modal mid-favor).
+const arrivedSeenIds = new Set<string>();
+
+// A GPS fix older than this is a frozen position (pal's phone locked, stream
+// died) — degrade to "Locating your Pal…" instead of presenting it as live.
+const PAL_LOC_STALE_MS = 2 * 60 * 1000;
+
 // ---------------------------------------------------------------------------
 // v.2 modal — white rounded card centered over a 50% black scrim.
-// (Cancel favor / Cancelled / Pal arrived / Repost / Tip success all share it.)
+// (Cancel favor / Cancelled / Pal arrived / Tip success all share it.)
 // ---------------------------------------------------------------------------
 const V2Modal: React.FC<{
   visible: boolean;
@@ -45,7 +53,7 @@ const V2Modal: React.FC<{
   onDismiss?: () => void; // tap-scrim / hardware back; omit to force a choice
 }> = ({ visible, title, body, buttons, row, onDismiss }) => (
   <Modal visible={visible} transparent animationType="fade" onRequestClose={onDismiss ?? (() => {})}>
-    <TouchableOpacity activeOpacity={1} onPress={onDismiss} style={styles.scrim}>
+    <TouchableOpacity activeOpacity={1} onPress={onDismiss} style={styles.scrim} accessibilityViewIsModal>
       <TouchableOpacity activeOpacity={1} style={styles.modalCard}>
         <Text style={styles.modalTitle}>{title}</Text>
         {body ? <Text style={styles.modalBody}>{body}</Text> : null}
@@ -89,11 +97,12 @@ export const FavorTracking = ({ navigation }: any) => {
   const [callVisible, setCallVisible] = useState(false);
   const [feeAlertVisible, setFeeAlertVisible] = useState(false);
   const [cancelVisible, setCancelVisible] = useState(false);
-  // Set after WE cancel: { charged } drives "Cancelled." with/without the
-  // "Your account has been charged." line (w-o charge = reblast frame 149:10128).
-  const [cancelled, setCancelled] = useState<null | { charged: boolean; fee: number }>(null);
-  const [arrivedSeen, setArrivedSeen] = useState(false);
-  const [repostDismissed, setRepostDismissed] = useState(false);
+  const [cancelBusy, setCancelBusy] = useState(false);
+  const [cancelError, setCancelError] = useState<string | null>(null);
+  // Set after the server confirms OUR cancel: { fee } drives "Cancelled." with
+  // the charged line (fee > 0) or without it (no-charge = reblast frame 149:10128).
+  const [cancelled, setCancelled] = useState<null | { fee: number }>(null);
+  const [, bumpArrivedSeen] = useState(0); // re-render after marking arrivedSeenIds
 
   // Real pal identity only — the pal record arrives via the store's 4s poll
   // (getPalApi/mergePal). Until then: a neutral name and an initials avatar,
@@ -105,14 +114,24 @@ export const FavorTracking = ({ navigation }: any) => {
   const status = fav?.status ?? 'matched';
   const arrived = status === 'arrived' || status === 'in_progress';
   const completed = status === 'completed';
-  const cancelledByPal = status === 'cancelled'; // our own cancel nulls activeFavor
+
+  const arrivedSeen = fav ? arrivedSeenIds.has(fav.id) : true;
+  const markArrivedSeen = () => {
+    if (fav) arrivedSeenIds.add(fav.id);
+    bumpArrivedSeen((t) => t + 1);
+  };
 
   // Live distance: how far the pal actually is from the favor location, from the
   // pal's streamed GPS (via the active-favor poll). Falls back to a "locating"
-  // state until the first fix arrives (e.g. web/demo, or before permission).
+  // state until the first fix arrives (e.g. web/demo, or before permission) —
+  // and again when the last fix goes stale (re-checked on every 4s poll render).
   const palLoc = fav?.palLocation;
+  const palLocFresh =
+    palLoc != null && (palLoc.at == null || Date.now() - palLoc.at <= PAL_LOC_STALE_MS);
   const liveMiles =
-    palLoc && fav ? haversineMiles(palLoc.lat, palLoc.lng, fav.location.lat, fav.location.lng) : null;
+    palLoc && palLocFresh && fav
+      ? haversineMiles(palLoc.lat, palLoc.lng, fav.location.lat, fav.location.lng)
+      : null;
   const hasLive = liveMiles != null && !arrived && !completed;
   const distanceLabel =
     arrived || completed
@@ -177,12 +196,20 @@ export const FavorTracking = ({ navigation }: any) => {
   // copy quotes these instead of the Figma placeholder ("full amount"/"5 min").
   const cancelQuote = fav ? computeCancellation(fav) : null;
 
-  // Capture the fee BEFORE cancelFavor() nulls the favor.
-  const confirmCancel = () => {
-    const fee = cancelQuote?.fee ?? 0;
+  // Server-confirmed cancel: "Cancelled." (with the SERVER's fee — the local
+  // quote can be stale) only shows once the API succeeds. A failed cancel leaves
+  // the favor live (a pal may be en route) and says so instead of pretending.
+  const confirmCancel = async () => {
+    if (cancelBusy) return;
+    setCancelBusy(true);
+    const res = await s.cancelFavor();
+    setCancelBusy(false);
     setCancelVisible(false);
-    s.cancelFavor();
-    setCancelled({ charged: cancelQuote ? fee > 0 : true, fee });
+    if (res.ok) {
+      setCancelled({ fee: res.fee ?? 0 });
+    } else {
+      setCancelError(res.reason ?? 'Could not cancel this favor. Please try again.');
+    }
   };
 
   const requestAnother = () => {
@@ -191,26 +218,10 @@ export const FavorTracking = ({ navigation }: any) => {
     navigation.navigate('SelectFavor');
   };
 
-  // Pal cancelled → seed the draft from the dead favor so REPOST works.
-  const repostFavor = () => {
-    if (fav) {
-      s.setDraft({
-        tier: fav.tier,
-        price: fav.price,
-        description: fav.description,
-        images: fav.images,
-        location: fav.location,
-        ...(fav.scheduledFor != null ? { scheduledFor: fav.scheduledFor } : {}),
-      });
-    }
-    setRepostDismissed(true);
-    navigation.navigate('FavorSummary');
-  };
-
   // Sheet body -------------------------------------------------------------
   const profileCol = (
-    <View style={{ marginLeft: 14 }}>
-      <Text style={styles.palName}>{palName}</Text>
+    <View style={{ marginLeft: 14, flexShrink: 1 }}>
+      <Text style={styles.palName} numberOfLines={1}>{palName}</Text>
       <View style={styles.starRow}>
         <Ionicons name="star" size={13} color="#FFBD00" />
         <Text style={styles.ratingText}>{palRating}</Text>
@@ -275,7 +286,7 @@ export const FavorTracking = ({ navigation }: any) => {
           lat={fav?.location?.lat}
           lng={fav?.location?.lng}
           markers={
-            palLoc && (Platform.OS === 'web' ? hasLive : !completed)
+            palLoc && palLocFresh && (Platform.OS === 'web' ? hasLive : !completed)
               ? [{ lat: palLoc.lat, lng: palLoc.lng, label: 'Your Pal' }]
               : undefined
           }
@@ -447,11 +458,16 @@ export const FavorTracking = ({ navigation }: any) => {
           </View>
         ) : (
           // ------------------- Favor Booked - Minimized (#125:8826) -------------------
-          <TouchableOpacity activeOpacity={0.85} onPress={() => setExpanded(true)}>
+          <TouchableOpacity
+            activeOpacity={0.85}
+            onPress={() => setExpanded(true)}
+            accessibilityRole="button"
+            accessibilityLabel="Expand favor details"
+          >
             <View style={styles.minRow}>
               <Avatar uri={palAvatar} size={48} name={palName} />
               <View style={{ flex: 1, marginLeft: 12 }}>
-                <Text style={styles.palName}>{palName}</Text>
+                <Text style={styles.palName} numberOfLines={1}>{palName}</Text>
                 <View style={styles.starRow}>
                   <Ionicons name="star" size={13} color="#FFBD00" />
                   <Text style={styles.ratingText}>{palRating}</Text>
@@ -466,12 +482,12 @@ export const FavorTracking = ({ navigation }: any) => {
         )}
       </View>
 
-      {/* Modal: Favor Pal Arrived (#125:10406) */}
+      {/* Modal: Favor Pal Arrived (#125:10406) — once per favor, not per mount */}
       <V2Modal
         visible={arrived && !arrivedSeen}
         title={'Your Favor Pal\nhas arrived.'}
-        buttons={[{ label: 'OK', onPress: () => setArrivedSeen(true) }]}
-        onDismiss={() => setArrivedSeen(true)}
+        buttons={[{ label: 'OK', onPress: markArrivedSeen }]}
+        onDismiss={markArrivedSeen}
       />
 
       {/* Cancellation Alert (#125:9157) — fee-aware confirm, NO (gray) | YES (black) */}
@@ -479,9 +495,11 @@ export const FavorTracking = ({ navigation }: any) => {
         visible={feeAlertVisible}
         title="Cancel favor?"
         body={
+          // Mirrors computeCancellation exactly: refund = total − fee, which
+          // INCLUDES the service/transaction fees — so no "non-refundable" claim.
           cancelQuote && cancelQuote.fee > 0
-            ? `Cancelling now will charge a $${cancelQuote.fee.toFixed(2)} cancellation fee; $${cancelQuote.refund.toFixed(2)} will be refunded to your payment method.\n\nService and Transaction Fee are non-refundable.`
-            : 'Your Favor Pal has not committed yet, so cancelling now will not charge a cancellation fee.\n\nService and Transaction Fee are non-refundable.'
+            ? `Cancelling now will charge a $${cancelQuote.fee.toFixed(2)} cancellation fee; $${cancelQuote.refund.toFixed(2)} will be refunded to your payment method.`
+            : 'Your Favor Pal has not committed yet, so cancelling now will not charge a cancellation fee.'
         }
         row
         buttons={[
@@ -506,29 +524,44 @@ export const FavorTracking = ({ navigation }: any) => {
             ? `You will be charged a $${cancelQuote.fee.toFixed(2)} cancellation fee if you cancel this favor.`
             : 'You will not be charged a cancellation fee if you cancel this favor now.'
         }
-        buttons={[{ label: 'CANCEL FAVOR', onPress: confirmCancel }]}
-        onDismiss={() => setCancelVisible(false)}
+        buttons={[{ label: cancelBusy ? 'CANCELLING…' : 'CANCEL FAVOR', onPress: confirmCancel }]}
+        onDismiss={() => { if (!cancelBusy) setCancelVisible(false); }}
       />
 
-      {/* Cancelled Modal — with charge (#125:10210) / without charge (#149:10128) */}
+      {/* Cancelled Modal — with charge (#125:10210) / without charge (#149:10128).
+          Only reachable on a server-confirmed cancel; fee is the SERVER's number. */}
       <V2Modal
         visible={cancelled != null}
         title="Cancelled."
         body={
-          cancelled?.charged
-            ? cancelled.fee > 0
-              ? `Your account has been charged a $${cancelled.fee.toFixed(2)} cancellation fee.`
-              : 'Your account has been charged.'
+          cancelled && cancelled.fee > 0
+            ? `Your account has been charged a $${cancelled.fee.toFixed(2)} cancellation fee.`
             : undefined
         }
         buttons={[{ label: 'REQUEST ANOTHER FAVOR', onPress: requestAnother }]}
       />
 
+      {/* Cancel failed — the favor is still live (a pal may be en route); say so. */}
+      <V2Modal
+        visible={cancelError != null}
+        title="Couldn't cancel"
+        body={cancelError ?? undefined}
+        buttons={[{ label: 'OK', onPress: () => setCancelError(null) }]}
+        onDismiss={() => setCancelError(null)}
+      />
+
       {/* Pal stepped back — the favor reopened (status back to 'requested').
           The store's poll raised palCanceled; acknowledge and hand the waiting
-          state back to the Searching screen (it owns offers + re-matching). */}
+          state back to the Searching screen (it owns offers + re-matching).
+          The flag is NOT cleared when the member opens the cancel confirm: it
+          only hides behind that flow, so dismissing the confirm (or its error)
+          returns them here — never to a fake "Favor Booked" sheet. A confirmed
+          cancel clears the flag in the store. */}
       <V2Modal
-        visible={s.palCanceled && status === 'requested' && cancelled == null}
+        visible={
+          s.palCanceled && status === 'requested' && cancelled == null &&
+          !cancelVisible && cancelError == null
+        }
         title={'Your Favor Pal canceled.'}
         body={'Your favor is open again and nearby Favor Pals can accept it.'}
         buttons={[
@@ -543,27 +576,7 @@ export const FavorTracking = ({ navigation }: any) => {
           {
             label: 'CANCEL MY FAVOR',
             gray: true,
-            onPress: () => {
-              s.clearPalCanceled();
-              setCancelVisible(true);
-            },
-          },
-        ]}
-      />
-
-      {/* Repost Favor Modal (#125:10601) — the Pal cancelled on us */}
-      <V2Modal
-        visible={cancelledByPal && !repostDismissed && cancelled == null}
-        title={'Your Favor has been cancelled by\nyour favor pal.'}
-        buttons={[
-          { label: 'REPOST FAVOR', onPress: repostFavor },
-          {
-            label: 'CLOSE',
-            gray: true,
-            onPress: () => {
-              setRepostDismissed(true);
-              navigation.popToTop();
-            },
+            onPress: () => setCancelVisible(true),
           },
         ]}
       />
@@ -603,6 +616,8 @@ export const OrderComplete = ({ navigation }: any) => {
   const [customTip, setCustomTip] = useState('');
   const [tipSuccessVisible, setTipSuccessVisible] = useState(false);
   const [done, setDone] = useState(false);
+  const [submitBusy, setSubmitBusy] = useState(false);
+  const [submitError, setSubmitError] = useState(false);
 
   // "Other" needs a real numeric amount; presets carry their fixed value.
   const isOther = tipKey === 'other';
@@ -616,8 +631,17 @@ export const OrderComplete = ({ navigation }: any) => {
   const tip = isOther ? (customValid ? parsedCustom : undefined) : presetTip;
   const canSubmit = rating > 0 && (!isOther || customValid);
 
-  const onSubmit = () => {
-    s.rateFavor(rating, feedback, tip);
+  // Server-confirmed: celebrate only once the rating/tip actually persisted —
+  // a failed POST leaves the favor parked (store keeps it) so the user can retry.
+  const onSubmit = async () => {
+    if (submitBusy) return;
+    setSubmitBusy(true);
+    const ok = await s.rateFavor(rating, feedback, tip);
+    setSubmitBusy(false);
+    if (!ok) {
+      setSubmitError(true);
+      return;
+    }
     if (tip && tip > 0) setTipSuccessVisible(true);
     else setDone(true);
   };
@@ -633,7 +657,7 @@ export const OrderComplete = ({ navigation }: any) => {
           <View style={styles.successRing}>
             <Ionicons name="checkmark-sharp" size={58} color={GREEN} />
           </View>
-          <Text style={styles.successText}>You've succesfully submitted your feedback!</Text>
+          <Text style={styles.successText}>You've successfully submitted your feedback!</Text>
         </View>
         <TouchableOpacity
           style={[styles.blackBtn, { marginBottom: 8 }]}
@@ -688,6 +712,12 @@ export const OrderComplete = ({ navigation }: any) => {
                   key={t.key}
                   activeOpacity={0.8}
                   onPress={() => {
+                    // Tapping the selected chip deselects it — no-tip stays possible.
+                    if (active) {
+                      setTipKey(null);
+                      setCustomTip('');
+                      return;
+                    }
                     setTipKey(t.key);
                     if (t.key !== 'other') setCustomTip('');
                   }}
@@ -743,18 +773,18 @@ export const OrderComplete = ({ navigation }: any) => {
           <TouchableOpacity
             style={[styles.blackBtn, !canSubmit && { backgroundColor: '#C4C4C4' }]}
             activeOpacity={0.85}
-            disabled={!canSubmit}
+            disabled={!canSubmit || submitBusy}
             onPress={onSubmit}
             accessibilityRole="button"
-            accessibilityState={{ disabled: !canSubmit }}
+            accessibilityState={{ disabled: !canSubmit || submitBusy, busy: submitBusy }}
             accessibilityLabel="Submit feedback"
           >
-            <Text style={styles.blackBtnText}>SUBMIT FEEDBACK</Text>
+            <Text style={styles.blackBtnText}>{submitBusy ? 'SUBMITTING…' : 'SUBMIT FEEDBACK'}</Text>
           </TouchableOpacity>
         </ScrollView>
       </KeyboardAvoidingView>
 
-      {/* Tip Submitted Success (#125:9917) */}
+      {/* Tip Submitted Success (#125:9917) — only after the server confirmed */}
       <V2Modal
         visible={tipSuccessVisible}
         title="Success!"
@@ -768,6 +798,15 @@ export const OrderComplete = ({ navigation }: any) => {
             },
           },
         ]}
+      />
+
+      {/* Rating failed — nothing was saved or charged; the favor stays parked. */}
+      <V2Modal
+        visible={submitError}
+        title="Couldn't submit"
+        body="Your rating wasn't saved. Please check your connection and try again."
+        buttons={[{ label: 'OK', onPress: () => setSubmitError(false) }]}
+        onDismiss={() => setSubmitError(false)}
       />
     </SafeAreaView>
   );
@@ -876,6 +915,8 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     alignSelf: 'center',
+    maxWidth: '100%', // a long pal name shrinks instead of pushing past the sheet
+    paddingHorizontal: 24,
     paddingVertical: 18,
   },
   palName: { fontFamily: POPPINS_M, fontSize: 16, color: BLACK },

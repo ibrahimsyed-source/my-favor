@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import {
-  View, ScrollView, TouchableOpacity, StyleSheet, Image, FlatList, RefreshControl, TextInput, Text,
+  View, ScrollView, TouchableOpacity, StyleSheet, Image, FlatList, RefreshControl, TextInput, Text, Linking,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
@@ -10,7 +10,7 @@ import { Avatar, StarRating, InfoModal, TopBar } from '../components';
 import { EmptyState, ErrorState, LoadingState } from '../components/states';
 import { useStore } from '../store';
 import { getFavorsApi, rateFavorApi } from '../api/endpoints';
-import { FAVOR_TIERS, Favor } from '../types';
+import { FAVOR_TIERS, Favor, computePayout } from '../types';
 
 // ---------------------------------------------------------------------------
 // User App v.2 — "Payment History" module (light theme).
@@ -112,15 +112,29 @@ function txnId(id?: string): string {
 
 // A favor is "incomplete" (v.2 sense) when the pal finished it but the member
 // hasn't confirmed/rated yet — the detail screen then offers rating + tip +
-// MARK FAVOR COMPLETE (frame #880:18160).
+// MARK FAVOR COMPLETE (frame #880:18160). Member-only: GET /api/favors also
+// returns favors the user fulfilled as a PAL, which are read-only payout rows
+// (never flagged Incomplete, never rateable) — callers gate on `palSide`.
 const isIncomplete = (f?: Favor) => !!f && f.status === 'completed' && f.rating == null;
 
+const isCancelled = (f?: Favor) => !!f && (f.status === 'cancelled' || f.status === 'no_pal');
+
+// Row/receipt headline amount. Pal-side rows show the payout earned (price −
+// commission + tip), not what the member paid. Cancelled favors were charged at
+// most a cancellation fee we don't store per-favor, so no full-charge amount —
+// an em dash. Tipped member receipts include the tip (favor.total never does).
+function amountLabel(favor: Favor, palSide: boolean): string {
+  if (isCancelled(favor)) return '—';
+  if (palSide) return money(computePayout(favor.price, favor.tip ?? 0).payout);
+  return money(favor.total + (favor.tip ?? 0));
+}
+
 // Status chip meta for the v.2 list rows: Completed (green), In Progress
-// (amber), Cancelled (red), Incomplete (red + flag).
-function chipMeta(favor: Favor, theme: any): { label: string; bg: string; flag?: boolean } {
+// (amber), Cancelled (red), Incomplete (red + flag, member rows only).
+function chipMeta(favor: Favor, theme: any, palSide: boolean): { label: string; bg: string; flag?: boolean } {
   switch (favor.status) {
     case 'completed':
-      return isIncomplete(favor)
+      return !palSide && isIncomplete(favor)
         ? { label: 'Incomplete', bg: theme.primary, flag: true }
         : { label: 'Completed', bg: theme.success };
     case 'cancelled':
@@ -158,21 +172,24 @@ type ListItem =
 const HistoryRow = React.memo(function HistoryRow({
   favor,
   theme,
+  palSide,
   onPress,
 }: {
   favor: Favor;
   theme: any;
+  palSide: boolean;
   onPress: (favorId: string) => void;
 }) {
-  const chip = chipMeta(favor, theme);
+  const chip = chipMeta(favor, theme, palSide);
   const date = rowDate(when(favor));
+  const amount = amountLabel(favor, palSide);
   return (
     <TouchableOpacity
       activeOpacity={0.7}
       onPress={() => onPress(favor.id)}
       style={[styles.listRow, { borderBottomColor: theme.divider }]}
       accessibilityRole="button"
-      accessibilityLabel={`${date}, ${money(favor.total)}, ${chip.label}. View payment details`}
+      accessibilityLabel={`${date}, ${amount}, ${chip.label}. View payment details`}
     >
       <PayBadge />
       <View style={{ flex: 1, marginLeft: tokens.spacing.md }}>
@@ -187,7 +204,7 @@ const HistoryRow = React.memo(function HistoryRow({
         </View>
       </View>
       <View style={styles.inline}>
-        <Text style={[styles.rowAmount, { color: theme.text }]}>{money(favor.total)}</Text>
+        <Text style={[styles.rowAmount, { color: theme.text }]}>{amount}</Text>
         <Ionicons name="chevron-forward" size={18} color={theme.text} style={{ marginLeft: 10 }} />
       </View>
     </TouchableOpacity>
@@ -274,6 +291,7 @@ export const History = ({ navigation }: any) => {
     (favorId: string) => navigation.navigate('FavorHistoryDetail', { favorId }),
     [navigation],
   );
+  const userId = s.user?.id;
   const renderItem = useCallback(
     ({ item }: { item: ListItem }) =>
       item.kind === 'month' ? (
@@ -281,9 +299,14 @@ export const History = ({ navigation }: any) => {
           <Text style={[styles.monthTxt, { color: theme.text }]}>{item.label}</Text>
         </View>
       ) : (
-        <HistoryRow favor={item.favor} theme={theme} onPress={openDetail} />
+        <HistoryRow
+          favor={item.favor}
+          theme={theme}
+          palSide={!!userId && item.favor.memberId !== userId}
+          onPress={openDetail}
+        />
       ),
-    [theme, openDetail],
+    [theme, openDetail, userId],
   );
 
   const empty = items.length === 0;
@@ -335,32 +358,46 @@ export const FavorHistoryDetail = ({ navigation, route }: any) => {
   const fontsReady = usePoppinsRegular();
 
   const favorId: string | undefined = route?.params?.favorId;
-  const favor: Favor | undefined =
+  const storeFavor: Favor | undefined =
     s.history.find((f) => f.id === favorId) ??
-    (s.activeMemberFavor?.id === favorId ? s.activeMemberFavor : undefined) ??
-    (s.activePalFavor?.id === favorId ? s.activePalFavor : undefined) ??
-    s.history[0];
+    (s.activeMemberFavor && s.activeMemberFavor.id === favorId ? s.activeMemberFavor : undefined) ??
+    (s.activePalFavor && s.activePalFavor.id === favorId ? s.activePalFavor : undefined);
+  // The History list re-pulls /api/favors locally, so it can show rows the
+  // store's history doesn't carry yet. When the store lookup misses, try one
+  // fetch by id — NEVER fall back to history[0], which would render (and let
+  // the user rate/tip) a completely different favor. undefined = fetching,
+  // null = genuinely not found.
+  const [fetched, setFetched] = useState<Favor | null | undefined>(undefined);
+  useEffect(() => {
+    if (storeFavor || !favorId) return;
+    let alive = true;
+    getFavorsApi()
+      .then(({ favors }) => { if (alive) setFetched(favors.find((f) => f.id === favorId) ?? null); })
+      .catch(() => { if (alive) setFetched(null); });
+    return () => { alive = false; };
+  }, [storeFavor, favorId]);
+  const favor: Favor | undefined = storeFavor ?? fetched ?? undefined;
+
+  // Pal-side rows (favors the user fulfilled) are read-only payout receipts:
+  // the rate/tip/mark-complete UI is the MEMBER's (the server 403s otherwise).
+  const palSide = !!favor && !!s.user && favor.memberId !== s.user.id;
   const pal = s.palById(favor?.palId);
   const card = s.cards[0];
   const ts = when(favor) || Date.now();
   const tierLabel = FAVOR_TIERS[favor?.tier as keyof typeof FAVOR_TIERS]?.label ?? 'Custom Favor';
   const palName = pal ? `${pal.firstName} ${pal.lastName}` : 'Favor Pal';
+  const memberName = favor?.memberName ?? 'Favor Member';
   const feeTotal = (favor?.serviceFee ?? 0) + (favor?.transactionFee ?? 0);
-  const incomplete = isIncomplete(favor);
+  const payout = computePayout(favor?.price ?? 0, favor?.tip ?? 0);
+  const cancelled = isCancelled(favor);
+  const incomplete = !palSide && isIncomplete(favor);
   const tierArt = favor ? TIER_ART[favor.tier] : undefined;
 
-  // ---- support message, both variants (existing thread + send logic) ----
-  const [message, setMessage] = useState('');
-  const [sent, setSent] = useState(false);
-  const sendMessage = async () => {
-    const text = message.trim();
-    if (!text) return;
-    if (pal?.id) {
-      const threadId = await s.openThreadWith(pal.id);
-      if (threadId) s.sendMessage(threadId, text);
-    }
-    setMessage('');
-    setSent(true);
+  // ---- support: open the real inbox (same mailto pattern as scenarios.tsx) ----
+  const contactSupport = () => {
+    const subject = encodeURIComponent(`Help with favor ${favor?.id ?? ''}`);
+    const body = encodeURIComponent(`Favor ID: ${favor?.id ?? 'unknown'}`);
+    void Linking.openURL(`mailto:support@myfavorr.com?subject=${subject}&body=${body}`).catch(() => {});
   };
 
   // ---- incomplete variant: rating + tip + feedback + mark complete ----
@@ -370,27 +407,43 @@ export const FavorHistoryDetail = ({ navigation, route }: any) => {
   const [feedback, setFeedback] = useState('');
   const [needRating, setNeedRating] = useState(false);
   const [completed, setCompleted] = useState(false);
+  const [submitting, setSubmitting] = useState(false);
+  const [submitError, setSubmitError] = useState<string | null>(null);
 
-  const markComplete = () => {
-    if (!favor) return;
+  // Server-confirmed: the success modal only shows once the rating/tip actually
+  // persisted — a failed request surfaces its error so nothing is silently lost.
+  const markComplete = async () => {
+    if (!favor || submitting) return;
     if (rating < 1) {
       setNeedRating(true);
       return;
     }
     // Clamp a custom "Other" tip to the server's inclusive $1000 max — otherwise
-    // an over-cap tip 400s the whole rating request (silently, showing a false success).
+    // an over-cap tip 400s the whole rating request.
     const tipVal = tipChoice === 'other' ? Math.min(1000, Math.max(0, parseFloat(otherTip) || 0)) : tipChoice ?? 0;
-    if (s.activeMemberFavor?.id === favor.id) {
-      // The store action owns the active favor (clears it + syncs history).
-      s.rateFavor(rating, feedback.trim(), tipVal || undefined);
-    } else {
-      void rateFavorApi(favor.id, {
-        rating,
-        feedback: feedback.trim(),
-        ...(tipVal ? { tip: tipVal } : {}),
-      }).catch(() => undefined);
+    setSubmitting(true);
+    setSubmitError(null);
+    try {
+      if (s.activeMemberFavor?.id === favor.id) {
+        // The store action owns the active favor (clears it + syncs history).
+        const ok = await s.rateFavor(rating, feedback.trim(), tipVal || undefined);
+        if (!ok) {
+          setSubmitError('Could not submit your rating. Check your connection and try again.');
+          return;
+        }
+      } else {
+        await rateFavorApi(favor.id, {
+          rating,
+          feedback: feedback.trim(),
+          ...(tipVal ? { tip: tipVal } : {}),
+        });
+      }
+      setCompleted(true);
+    } catch (e: any) {
+      setSubmitError(e?.message || 'Could not submit your rating. Check your connection and try again.');
+    } finally {
+      setSubmitting(false);
     }
-    setCompleted(true);
   };
 
   const Divider = () => <View style={[styles.divider, { backgroundColor: theme.divider }]} />;
@@ -401,7 +454,15 @@ export const FavorHistoryDetail = ({ navigation, route }: any) => {
     return (
       <SafeAreaView style={{ flex: 1, backgroundColor: theme.background }} edges={['top']}>
         <TopBar title="Payment History Detail" onBack={() => navigation.goBack()} />
-        <Text style={[styles.emptyTxt, { color: theme.text }]}>No record of payment history.</Text>
+        {favorId && fetched === undefined ? (
+          <LoadingState label="Loading favor details..." />
+        ) : (
+          <EmptyState
+            icon="receipt-outline"
+            title="Favor Not Found"
+            message="We couldn't find this favor. It may have been removed — go back and refresh your payment history."
+          />
+        )}
       </SafeAreaView>
     );
   }
@@ -456,49 +517,78 @@ export const FavorHistoryDetail = ({ navigation, route }: any) => {
 
         <Divider />
 
-        {/* ---- Favor Pal ---- */}
-        <Text style={[styles.heading, { color: theme.text, marginBottom: tokens.spacing.base }]}>
-          Favor Pal
-        </Text>
-        <View style={[styles.inline, { alignItems: 'flex-start' }]}>
-          <Avatar uri={pal?.avatar} size={56} name={palName} />
-          <View style={{ flex: 1, marginLeft: tokens.spacing.base }}>
-            <View style={styles.rowBetween}>
-              <Text style={[styles.titleMd, { color: theme.text }]}>{palName}</Text>
-              {pal && (
-                <View style={styles.inline}>
-                  <Ionicons name="star" size={16} color={theme.star} />
-                  <Text style={[styles.titleMd, { color: theme.text, marginLeft: 8 }]}>
-                    {pal.rating?.toFixed(1)}
-                  </Text>
+        {/* ---- Favor Pal (member rows) / Favor Member (pal rows) ---- */}
+        {palSide ? (
+          <>
+            <Text style={[styles.heading, { color: theme.text, marginBottom: tokens.spacing.base }]}>
+              Favor Member
+            </Text>
+            <View style={[styles.inline, { alignItems: 'flex-start' }]}>
+              <Avatar size={56} name={memberName} />
+              <View style={{ flex: 1, marginLeft: tokens.spacing.base }}>
+                <View style={styles.rowBetween}>
+                  <Text style={[styles.titleMd, { color: theme.text }]}>{memberName}</Text>
+                  {favor.memberRating != null && (
+                    <View style={styles.inline}>
+                      <Ionicons name="star" size={16} color={theme.star} />
+                      <Text style={[styles.titleMd, { color: theme.text, marginLeft: 8 }]}>
+                        {favor.memberRating.toFixed(1)}
+                      </Text>
+                    </View>
+                  )}
                 </View>
-              )}
-            </View>
-            {pal ? (
-              <>
                 <Text style={[styles.caption, { color: theme.textSecondary, marginTop: 2 }]}>
-                  3 Miles away
+                  You fulfilled this favor.
                 </Text>
-                <View style={[styles.inline, { marginTop: 10 }]}>
-                  <Ionicons name="thumbs-up" size={14} color={theme.textSecondary} />
-                  <Text style={[styles.caption, { color: theme.textSecondary, marginLeft: 8 }]}>
-                    {pal.reliability}% Reliable
-                  </Text>
+              </View>
+            </View>
+          </>
+        ) : (
+          <>
+            <Text style={[styles.heading, { color: theme.text, marginBottom: tokens.spacing.base }]}>
+              Favor Pal
+            </Text>
+            <View style={[styles.inline, { alignItems: 'flex-start' }]}>
+              <Avatar uri={pal?.avatar} size={56} name={palName} />
+              <View style={{ flex: 1, marginLeft: tokens.spacing.base }}>
+                <View style={styles.rowBetween}>
+                  <Text style={[styles.titleMd, { color: theme.text }]}>{palName}</Text>
+                  {pal && (
+                    <View style={styles.inline}>
+                      <Ionicons name="star" size={16} color={theme.star} />
+                      <Text style={[styles.titleMd, { color: theme.text, marginLeft: 8 }]}>
+                        {pal.rating?.toFixed(1)}
+                      </Text>
+                    </View>
+                  )}
                 </View>
-                <View style={[styles.inline, { marginTop: 6 }]}>
-                  <Ionicons name="star" size={14} color={theme.textSecondary} />
-                  <Text style={[styles.caption, { color: theme.textSecondary, marginLeft: 8 }]}>
-                    {pal.positiveReviews}% Positive Reviews
+                {pal ? (
+                  <>
+                    <Text style={[styles.caption, { color: theme.textSecondary, marginTop: 2 }]}>
+                      3 Miles away
+                    </Text>
+                    <View style={[styles.inline, { marginTop: 10 }]}>
+                      <Ionicons name="thumbs-up" size={14} color={theme.textSecondary} />
+                      <Text style={[styles.caption, { color: theme.textSecondary, marginLeft: 8 }]}>
+                        {pal.reliability}% Reliable
+                      </Text>
+                    </View>
+                    <View style={[styles.inline, { marginTop: 6 }]}>
+                      <Ionicons name="star" size={14} color={theme.textSecondary} />
+                      <Text style={[styles.caption, { color: theme.textSecondary, marginLeft: 8 }]}>
+                        {pal.positiveReviews}% Positive Reviews
+                      </Text>
+                    </View>
+                  </>
+                ) : (
+                  <Text style={[styles.caption, { color: theme.textSecondary, marginTop: 2 }]}>
+                    Pal details unavailable for this favor.
                   </Text>
-                </View>
-              </>
-            ) : (
-              <Text style={[styles.caption, { color: theme.textSecondary, marginTop: 2 }]}>
-                Pal details unavailable for this favor.
-              </Text>
-            )}
-          </View>
-        </View>
+                )}
+              </View>
+            </View>
+          </>
+        )}
 
         <Divider />
 
@@ -510,16 +600,31 @@ export const FavorHistoryDetail = ({ navigation, route }: any) => {
           <View style={styles.inline}>
             <Ionicons name="card" size={20} color={theme.text} />
             <Text style={[styles.titleMd, { color: theme.text, marginLeft: 12 }]}>
-              {card ? `${cap(card.brand)} • ${card.last4}` : 'Card on file'}
+              {palSide ? 'Favor payout' : card ? `${cap(card.brand)} • ${card.last4}` : 'Card on file'}
             </Text>
           </View>
-          {/* v.2 #125:7216 shows the payment amount "+$20.00"-style. */}
-          <Text style={[styles.titleMd, { color: theme.text }]}>{`+${money(favor.total)}`}</Text>
+          {/* v.2 #125:7216 shows the payment amount "+$20.00"-style. Cancelled
+              favors show an em dash (no full charge happened); pal rows show the
+              payout earned; tipped member receipts include the tip. */}
+          <Text style={[styles.titleMd, { color: theme.text }]}>
+            {cancelled ? '—' : `+${amountLabel(favor, palSide)}`}
+          </Text>
         </View>
-        <Text style={[styles.bodySm, { color: theme.textSecondary, marginTop: 6, paddingLeft: 32 }]}>
-          Favor {money(favor.price)} + fees {money(feeTotal)}
-          {favor.tip ? ` + tip ${money(favor.tip)}` : ''}
-        </Text>
+        {cancelled ? (
+          <Text style={[styles.bodySm, { color: theme.textSecondary, marginTop: 6, paddingLeft: 32 }]}>
+            This favor was cancelled — at most a cancellation fee applied.
+          </Text>
+        ) : palSide ? (
+          <Text style={[styles.bodySm, { color: theme.textSecondary, marginTop: 6, paddingLeft: 32 }]}>
+            Favor {money(favor.price)} − service commission {money(payout.commission)}
+            {favor.tip ? ` + tip ${money(favor.tip)}` : ''}
+          </Text>
+        ) : (
+          <Text style={[styles.bodySm, { color: theme.textSecondary, marginTop: 6, paddingLeft: 32 }]}>
+            Favor {money(favor.price)} + fees {money(feeTotal)}
+            {favor.tip ? ` + tip ${money(favor.tip)}` : ''}
+          </Text>
+        )}
         <View style={[styles.inline, { marginTop: 14, paddingLeft: 32 }]}>
           <Text style={[styles.caption, { color: theme.textSecondary, width: 110 }]}>
             Date &amp; Time
@@ -616,14 +721,24 @@ export const FavorHistoryDetail = ({ navigation, route }: any) => {
             <Text style={[styles.caption, { color: theme.textSecondary, textAlign: 'right', marginTop: 8 }]}>
               700 characters max.
             </Text>
+            {submitError ? (
+              <View accessibilityLiveRegion="polite" style={[styles.inline, { marginTop: 8 }]}>
+                <Ionicons name="alert-circle" size={18} color={theme.primary} style={{ marginRight: 6 }} />
+                <Text style={[styles.caption, { color: theme.primary, flex: 1 }]}>{submitError}</Text>
+              </View>
+            ) : null}
             <TouchableOpacity
               activeOpacity={0.85}
-              onPress={markComplete}
-              style={[styles.ctaBtn, { backgroundColor: theme.cta }]}
+              onPress={() => { void markComplete(); }}
+              disabled={submitting}
+              style={[styles.ctaBtn, { backgroundColor: theme.cta, opacity: submitting ? 0.5 : 1 }]}
               accessibilityRole="button"
               accessibilityLabel="Mark favor complete"
+              accessibilityState={{ disabled: submitting, busy: submitting }}
             >
-              <Text style={[styles.ctaBtnTxt, { color: theme.ctaText }]}>MARK FAVOR COMPLETE</Text>
+              <Text style={[styles.ctaBtnTxt, { color: theme.ctaText }]}>
+                {submitting ? 'SUBMITTING…' : 'MARK FAVOR COMPLETE'}
+              </Text>
             </TouchableOpacity>
           </>
         ) : (
@@ -638,45 +753,26 @@ export const FavorHistoryDetail = ({ navigation, route }: any) => {
           </>
         )}
 
-        {/* ---- Support message (both variants — #125:7216 and #880:18160) ---- */}
+        {/* ---- Support (both variants — #125:7216 and #880:18160): opens the
+             real support inbox with this favor's id prefilled, same mailto
+             pattern as scenarios.tsx — no fake in-app composer. ---- */}
         <Text style={[styles.heading, { color: theme.text, marginTop: tokens.spacing.xxl }]}>
           Need help or have a question with this favor?
         </Text>
-        <Text style={[styles.heading, { color: theme.text }]}>Send us a message.</Text>
-        <View style={[styles.msgBox, { backgroundColor: theme.inputBg, marginTop: tokens.spacing.base }]}>
-          <TextInput
-            style={[styles.msgInput, { color: theme.text }]}
-            value={message}
-            onChangeText={setMessage}
-            multiline
-            maxLength={700}
-            placeholder={
-              'Provide as much detail as possible about your favor!  Let your provider know about what they will be doing, what they will need to bring, special requirements, etc.'
-            }
-            placeholderTextColor={theme.textTertiary}
-          />
-        </View>
-        <Text style={[styles.caption, { color: theme.textSecondary, textAlign: 'right', marginTop: 8 }]}>
-          700 characters max.
+        <Text style={[styles.bodySm, { color: theme.textSecondary, marginTop: 8 }]}>
+          Email our support team — this favor's ID is attached automatically so we can look into it right away.
         </Text>
         <TouchableOpacity
           activeOpacity={0.85}
-          onPress={sendMessage}
+          onPress={contactSupport}
           style={[styles.ctaBtn, { backgroundColor: theme.cta }]}
           accessibilityRole="button"
-          accessibilityLabel="Send message"
+          accessibilityLabel="Email support about this favor"
         >
-          <Text style={[styles.ctaBtnTxt, { color: theme.ctaText }]}>SEND</Text>
+          <Text style={[styles.ctaBtnTxt, { color: theme.ctaText }]}>EMAIL SUPPORT</Text>
         </TouchableOpacity>
       </ScrollView>
 
-      <InfoModal
-        visible={sent}
-        title="Message Sent"
-        message="Thanks for reaching out. We'll get back to you about this favor shortly."
-        buttonLabel="OKAY"
-        onClose={() => setSent(false)}
-      />
       <InfoModal
         visible={needRating}
         title="Add a Rating"
@@ -752,12 +848,6 @@ const styles = StyleSheet.create({
     fontFamily: P500,
     fontSize: 11,
     color: '#FFFFFF',
-  },
-  emptyTxt: {
-    fontFamily: fonts.displayMedium,
-    fontSize: 15,
-    textAlign: 'center',
-    marginTop: 48,
   },
   // ---- shared ----
   rowBetween: {

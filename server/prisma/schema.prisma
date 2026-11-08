@@ -105,6 +105,10 @@ model Favor {
   palId       String?
   tier        String  // "tiny" | "small" | "big" | "huge" | "custom" | "negotiate"
   price       Float
+  // The member's listed price, captured at create. Negotiation overwrites
+  // `price` at match time, so abandon restores price/fees from here when the
+  // favor reopens (custom/negotiate favors included).
+  listPrice   Float
   description String
   images      String  @default("[]") // JSON-encoded string[] (portable across SQLite/PG)
 

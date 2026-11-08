@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import {
   View, Text, TextInput, TouchableOpacity, ScrollView, Image, StyleSheet, FlatList, RefreshControl, Modal, ActivityIndicator,
-  Linking, Platform,
+  KeyboardAvoidingView, Linking, Platform,
 } from 'react-native';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
@@ -11,7 +11,7 @@ import { MapScene, MAP_SCENE_SUPPORTED } from '../components/MapScene';
 import type { MapSceneMarker } from '../components/MapScene';
 import { useStore } from '../store';
 import {
-  getIncomingApi, makeOfferApi, getFavorOffersApi, counterOfferApi, declineOfferApi,
+  getIncomingApi, makeOfferApi, getFavorOffersApi, counterOfferApi, declineOfferApi, rateMemberApi,
 } from '../api/endpoints';
 import { computePayout, computeFees, FAVOR_TIERS, Favor, FavorOffer } from '../types';
 
@@ -56,19 +56,25 @@ const CELEBRATION = require('../../assets/img/tracking/celebration.png');
 // pin) with the pal's live position as the car marker on en-route screens. Web
 // keeps the drawn v.2 navy backdrop (react-native-maps has no web support).
 function MapBackdrop({ route, dest }: { route?: boolean; dest?: { lat: number; lng: number } | null }) {
-  const origin = usePalOrigin();
+  const { origin, hasFix } = usePalOriginFix();
   if (MAP_SCENE_SUPPORTED) {
     const markers: MapSceneMarker[] = [];
     if (dest) markers.push({ lat: dest.lat, lng: dest.lng, kind: 'pin' });
-    if (route) markers.push({ lat: origin.lat, lng: origin.lng, kind: 'car' });
+    // The car is the pal's REAL position — never draw it at the Miami fallback.
+    if (route && hasFix) markers.push({ lat: origin.lat, lng: origin.lng, kind: 'car' });
     return (
       <View style={StyleSheet.absoluteFill}>
+        {/* MapScene applies `fit` exactly once (onMapReady), which fires before
+            the GPS fix replaces the fallback origin — so key the scene on the
+            fix: the remount re-runs the fit against the pal's true position
+            instead of leaving the camera framed around Miami. */}
         <MapScene
+          key={hasFix ? 'origin-fix' : 'origin-fallback'}
           dark
           center={dest ?? origin}
           zoom={14}
           markers={markers}
-          fit={route && dest ? [dest, origin] : undefined}
+          fit={route && dest && hasFix ? [dest, origin] : undefined}
           scrim="rgba(13,10,10,0.18)"
         />
       </View>
@@ -93,6 +99,35 @@ function MapBackdrop({ route, dest }: { route?: boolean; dest?: { lat: number; l
         </>
       ) : null}
     </View>
+  );
+}
+
+// Warning strip under the directions banner when the pal denied location
+// permission mid-favor — without it the member silently waits on "Locating
+// your Pal…" forever. Tapping opens device settings (native only).
+function LocationDeniedBanner({ visible }: { visible: boolean }) {
+  if (!visible) return null;
+  const openSettings = () => {
+    if (Platform.OS !== 'web') Linking.openSettings().catch(() => undefined);
+  };
+  return (
+    <TouchableOpacity
+      onPress={openSettings}
+      activeOpacity={0.8}
+      accessibilityRole="button"
+      accessibilityLabel="Location sharing is off. Open device settings to enable it"
+      style={{
+        position: 'absolute', top: 108, left: 16, right: 16, zIndex: 20,
+        flexDirection: 'row', alignItems: 'center', gap: 10,
+        backgroundColor: SHEET, borderRadius: 12, paddingVertical: 10, paddingHorizontal: 14,
+        borderWidth: StyleSheet.hairlineWidth, borderColor: 'rgba(255,255,255,0.18)',
+      }}
+    >
+      <Ionicons name="location-outline" size={18} color={RED} />
+      <Text style={{ color: TEXT, fontSize: 13, lineHeight: 18, fontFamily: P400, flex: 1 }}>
+        Location sharing is off — the member can't see you approaching. Tap to enable it in Settings.
+      </Text>
+    </TouchableOpacity>
   );
 }
 
@@ -145,7 +180,7 @@ function NavyModal({ visible, title, message, primaryLabel, onPrimary, dismissLa
 }) {
   return (
     <Modal transparent visible={visible} animationType="fade" onRequestClose={onDismiss ?? onPrimary}>
-      <View style={st.modalScrim}>
+      <View style={st.modalScrim} accessibilityViewIsModal>
         <View style={st.modalCard}>
           <Text style={st.modalTitle}>{title}</Text>
           <Text style={st.modalBody}>{message}</Text>
@@ -178,6 +213,10 @@ function NavyModal({ visible, title, message, primaryLabel, onPrimary, dismissLa
 const tierLabel = (f: Favor) =>
   (FAVOR_TIERS as Record<string, { label: string }>)[f.tier]?.label ?? 'Custom Favor';
 
+// One price format across the pal surface: whole dollars stay whole ('$25'),
+// fractional prices always carry cents ('$25.50') — never a bare '$25.5'.
+const fmtMoney = (n: number) => (Number.isInteger(n) ? `$${n}` : `$${n.toFixed(2)}`);
+
 // Fallback pal origin for distance/sort BEFORE the device's real GPS fix arrives
 // (or on web / when location permission is denied). Anchored to the demo city
 // (Miami) so it matches where the seeded/incoming favors are — an Austin origin
@@ -190,8 +229,8 @@ const PAL_ORIGIN_FALLBACK: Origin = { lat: 25.7617, lng: -80.1918 };
 // getCurrentPositionAsync; keeps the Miami fallback until (and unless) a real fix
 // lands, so the board never shows nonsense distances on web / without permission.
 // Dynamic import so a build lacking the native module can't break the JS bundle.
-export function usePalOrigin(): Origin {
-  const [origin, setOrigin] = useState<Origin>(PAL_ORIGIN_FALLBACK);
+function usePalOriginFix(): { origin: Origin; hasFix: boolean } {
+  const [state, setState] = useState<{ origin: Origin; hasFix: boolean }>({ origin: PAL_ORIGIN_FALLBACK, hasFix: false });
   useEffect(() => {
     let cancelled = false;
     (async () => {
@@ -200,14 +239,17 @@ export function usePalOrigin(): Origin {
         const { status } = await Location.requestForegroundPermissionsAsync();
         if (status !== 'granted') return;
         const pos = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.Balanced });
-        if (!cancelled) setOrigin({ lat: pos.coords.latitude, lng: pos.coords.longitude });
+        if (!cancelled) setState({ origin: { lat: pos.coords.latitude, lng: pos.coords.longitude }, hasFix: true });
       } catch {
         /* keep the fallback — web, missing module, or permission denied */
       }
     })();
     return () => { cancelled = true; };
   }, []);
-  return origin;
+  return state;
+}
+export function usePalOrigin(): Origin {
+  return usePalOriginFix().origin;
 }
 
 const toRad = (d: number) => (d * Math.PI) / 180;
@@ -239,14 +281,14 @@ function FavorCard({ favor, onPress, origin }: { favor: Favor; onPress: () => vo
       onPress={onPress}
       style={bw.card}
       accessibilityRole="button"
-      accessibilityLabel={`${tierLabel(favor)}, $${favor.price}. ${favor.description}. You earn $${payout.toFixed(2)}.`}
+      accessibilityLabel={`${tierLabel(favor)}, ${fmtMoney(favor.price)}. ${favor.description}. You earn $${payout.toFixed(2)}.`}
     >
       <View style={bw.cardTop}>
         {/* Pill shrinks (with ellipsis) before it can shove the price off-card. */}
         <View style={[bw.tierPill, { flexShrink: 1, marginRight: 10 }]}>
           <Text style={bw.tierPillText} numberOfLines={1}>{tierLabel(favor)}</Text>
         </View>
-        <Text style={bw.price}>${favor.price}</Text>
+        <Text style={bw.price}>{fmtMoney(favor.price)}</Text>
       </View>
       <Text style={bw.desc} numberOfLines={2}>{favor.description || 'No details provided.'}</Text>
       <View style={bw.metaRow}>
@@ -507,7 +549,7 @@ export const PalFavorDetail = ({ navigation, route }: any) => {
     // over — the member's approval flips the offer to 'accepted' → booked.
     if (res.ok && res.offer) {
       setOffer(res.offer);
-    } else if (res.code === 'unavailable') navigation.navigate('FavorUnavailable');
+    } else if (res.code === 'unavailable') setTaken(true); // our own dark taken state — never the member-light FavorUnavailable screen
     else setAcceptError(res.reason || 'This favor is no longer available.');
   };
 
@@ -560,24 +602,42 @@ export const PalFavorDetail = ({ navigation, route }: any) => {
           // cleanup-flag race the first cut of this effect had).
           bookedRef.current = true;
           clearInterval(id);
-          const fav = await s.refreshActive();
-          if (fav) navigation.navigate('Navigation');
-          else setTaken(true); // accepted but already ended (cancel race)
+          // refreshActive returns null on ANY error (a timeout looks identical
+          // to a cancel race) and `pal ?? member` can be a dual-role user's own
+          // member favor — so require OUR favor by id and retry once before
+          // telling a booked pal the favor was taken.
+          let fav = await s.refreshActive();
+          if (fav?.id !== favorId) {
+            await new Promise((r) => setTimeout(r, 1500));
+            fav = await s.refreshActive();
+          }
+          if (fav?.id === favorId) {
+            // Reset (not push) so Android back can't land on this stale sheet.
+            navigation.reset({ index: 1, routes: [{ name: 'Tabs' }, { name: 'Navigation' }] });
+          } else setTaken(true); // accepted but already ended (cancel race)
           return;
         }
         if (mine) setOffer(mine);
         if (favorStatus !== 'requested') setTaken(true); // someone else won it
-      } catch {
-        /* transient — keep last known state */
+      } catch (e: any) {
+        // 404 = our offer row no longer exists (withdrawn from another device)
+        // — clear it so the sheet can't wait for an approval that can't come.
+        if (e?.status === 404) setOffer(null);
+        /* otherwise transient — keep last known state */
       }
     }, 5000);
     return () => clearInterval(id);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [favorId, offerPending]);
 
-  const offerValue = Math.round(parseFloat(offerText) * 100) / 100;
+  // Comma-decimal locales: the decimal pad types '12,50' — normalize before
+  // parsing or parseFloat stops at the comma and sends $12.00.
+  const offerValue = Math.round(parseFloat(offerText.replace(',', '.')) * 100) / 100;
   const offerValid = !Number.isNaN(offerValue) && offerValue > 0 && offerValue <= 100000;
   const memberCountered = !!offer && offer.status === 'pending' && offer.lastBy === 'member';
+  // The member declined our request: the server keeps the row as 'declined' and
+  // 409s any re-accept, so the sheet must explain instead of re-offering ACCEPT.
+  const memberDeclined = offer?.status === 'declined';
 
   const sendOffer = async () => {
     if (!favorId || !offerValid || offerBusy) return;
@@ -606,7 +666,9 @@ export const PalFavorDetail = ({ navigation, route }: any) => {
     setOfferBusy(false);
     if (res.ok) {
       bookedRef.current = true;
-      navigation.navigate('Navigation');
+      // Reset (not push): unmounts this sheet — killing its 5s offers poll —
+      // and keeps Android back from landing on a stale pre-booking detail.
+      navigation.reset({ index: 1, routes: [{ name: 'Tabs' }, { name: 'Navigation' }] });
     } else setOfferError(res.reason || 'This offer is no longer available.');
   };
 
@@ -619,8 +681,11 @@ export const PalFavorDetail = ({ navigation, route }: any) => {
       // accept — silently booking a pal who thinks they withdrew.
       await declineOfferApi(favorId, offer.id);
       setOffer(null);
-    } catch {
-      setOfferError('Could not withdraw the offer — please try again.');
+    } catch (e: any) {
+      // 404 = the offer is already gone server-side (withdrawn on another
+      // device) — the withdraw is effectively done, so just clear local state.
+      if (e?.status === 404) setOffer(null);
+      else setOfferError('Could not withdraw the offer — please try again.');
     } finally {
       setOfferBusy(false);
     }
@@ -636,7 +701,7 @@ export const PalFavorDetail = ({ navigation, route }: any) => {
   const base = shownFavor?.price ?? 20;
   // v.2 quick view shows the requester's (first) name above the description.
   const requester = shownFavor?.memberName ?? 'Favor Member';
-  const title = shownFavor ? `${tierLabel(shownFavor)} $${base}` : 'Favor request';
+  const title = shownFavor ? `${tierLabel(shownFavor)} ${fmtMoney(base)}` : 'Favor request';
   // Pal-side economics: what THEY take home (never the member invoice total).
   const { payout } = computePayout(base);
   const area = shownFavor?.location?.address ?? 'Nearby';
@@ -660,7 +725,12 @@ export const PalFavorDetail = ({ navigation, route }: any) => {
             <Text style={{ color: SUBTLE, fontSize: 14, lineHeight: 21, fontFamily: P400, textAlign: 'center', marginTop: 8 }}>
               Another Favor Pal accepted it, or the member cancelled. Browse other open favors.
             </Text>
-            <TouchableOpacity style={[st.whiteBtn, { alignSelf: 'stretch' }]} onPress={() => navigation.goBack()}>
+            <TouchableOpacity
+              style={[st.whiteBtn, { alignSelf: 'stretch' }]}
+              onPress={() => navigation.goBack()}
+              accessibilityRole="button"
+              accessibilityLabel="Back to favors"
+            >
               <Text style={st.whiteBtnTxt}>BACK TO FAVORS</Text>
             </TouchableOpacity>
           </View>
@@ -675,113 +745,162 @@ export const PalFavorDetail = ({ navigation, route }: any) => {
       <MapTopBar navigation={navigation} onBack={() => navigation.goBack()} />
       <View style={st.sheet}>
         <Handle />
-        <Text style={{ color: TEXT, fontSize: 19, fontFamily: P500, textAlign: 'center', marginVertical: 14 }}>{title}</Text>
-        <View style={st.divider} />
-        <View style={{ flexDirection: 'row', marginTop: 16 }}>
-          <Avatar uri={undefined} size={56} name={requester} />
-          <View style={{ flex: 1, marginLeft: 14 }}>
-            {/* Tap-through: judge the requester (profile + reviews) before committing. */}
+        {/* The sheet caps at ~86% of the screen (st.sheet maxHeight) and scrolls:
+            a long description (server allows 2000 chars) expanded via View More
+            must not push the title/requester of this bottom-anchored sheet above
+            the top screen edge. */}
+        <ScrollView bounces={false} showsVerticalScrollIndicator={false}>
+          <Text style={{ color: TEXT, fontSize: 19, fontFamily: P500, textAlign: 'center', marginVertical: 14 }}>{title}</Text>
+          <View style={st.divider} />
+          <View style={{ flexDirection: 'row', marginTop: 16 }}>
+            <Avatar uri={undefined} size={56} name={requester} />
+            <View style={{ flex: 1, marginLeft: 14 }}>
+              {/* Tap-through: judge the requester (profile + reviews) before committing. */}
+              <TouchableOpacity
+                onPress={() => { if (shownFavor?.memberId) navigation.navigate('MemberProfile', { userId: shownFavor.memberId }); }}
+                accessibilityRole="button"
+                accessibilityLabel={`View ${requester}'s profile and reviews`}
+                style={{ flexDirection: 'row', alignItems: 'center' }}
+              >
+                <Text style={{ color: TEXT, fontSize: 16, fontFamily: P500 }}>{requester}</Text>
+                {shownFavor?.memberRating && shownFavor.memberRating > 0 ? (
+                  <Text style={{ color: SUBTLE, fontSize: 13, fontFamily: P400 }}>{`  ★ ${shownFavor.memberRating.toFixed(1)}`}</Text>
+                ) : null}
+                <Ionicons name="chevron-forward" size={14} color={SUBTLE} style={{ marginLeft: 4 }} />
+              </TouchableOpacity>
+              <Text style={{ color: SUBTLE, fontSize: 14, lineHeight: 20, marginTop: 4, fontFamily: P400 }} numberOfLines={expanded ? undefined : 2}>
+                {shownFavor?.description || 'No details provided yet.'}
+              </Text>
+              <Text style={{ color: SUBTLE, fontSize: 13, marginTop: 6, fontFamily: P400 }}>{when}</Text>
+              {/* app addition — no v2 frame (pal-side payout + area at a glance) */}
+              <Text style={{ fontSize: 14, marginTop: 6, fontFamily: P400 }}>
+                <Text style={{ color: TEXT, fontFamily: P500 }}>{`You earn $${payout.toFixed(2)}`}</Text>
+                <Text style={{ color: SUBTLE, fontFamily: P400 }}>{`   ·   ${area}`}</Text>
+              </Text>
+              <TouchableOpacity
+                onPress={() => setExpanded((v) => !v)}
+                accessibilityRole="button"
+                accessibilityState={{ expanded }}
+                accessibilityLabel={expanded ? 'View less favor detail' : 'View more favor detail'}
+              >
+                <Text style={{ color: TEXT, fontSize: 14, marginTop: 8, fontFamily: P500 }}>
+                  {expanded ? 'View Less' : 'View More'}
+                </Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+
+          {expanded && (
+            <View style={{ marginTop: 16 }}>
+              <View style={st.divider} />
+              <QuickRow label="When" value={when} />
+              {/* Privacy: precise address is withheld until the pal accepts the favor. */}
+              <QuickRow label="Pickup area" value={`${area} · exact address shared once you accept`} />
+              <QuickRow label="You earn (after 20% commission)" value={`$${payout.toFixed(2)}`} />
+            </View>
+          )}
+
+          {/* Negotiation / approval state — our pending request or the member's counter. */}
+          {offer && offer.status === 'pending' ? (
+            <View style={st.waitBanner}>
+              {offer.lastBy === 'pal' ? <ActivityIndicator color={TEXT} /> : null}
+              <Text style={st.waitText}>
+                {offer.lastBy === 'pal'
+                  ? offer.price === (favor?.price ?? offer.price)
+                    ? `Waiting for ${requester} to approve you — ${fmtMoney(offer.price)}`
+                    : `You offered ${fmtMoney(offer.price)} — waiting for ${requester}`
+                  : `${requester} countered ${fmtMoney(offer.price)}`}
+              </Text>
+            </View>
+          ) : null}
+
+          {/* The member said no — say so on the sheet instead of silently
+              reverting to a plain ACCEPT the server would only 409. */}
+          {memberDeclined ? (
+            <View style={st.waitBanner}>
+              <Ionicons name="close-circle" size={18} color="#FF6B70" />
+              <Text style={[st.waitText, { flexShrink: 1 }]}>
+                {`${requester} declined your request for this favor.`}
+              </Text>
+            </View>
+          ) : null}
+
+          {memberDeclined ? (
+            // Accepting again would only 409 — steer back to the open board.
             <TouchableOpacity
-              onPress={() => { if (shownFavor?.memberId) navigation.navigate('MemberProfile', { userId: shownFavor.memberId }); }}
+              style={st.whiteBtn}
               accessibilityRole="button"
-              accessibilityLabel={`View ${requester}'s profile and reviews`}
-              style={{ flexDirection: 'row', alignItems: 'center' }}
+              accessibilityLabel="Browse other favors"
+              onPress={() => navigation.goBack()}
             >
-              <Text style={{ color: TEXT, fontSize: 16, fontFamily: P500 }}>{requester}</Text>
-              {shownFavor?.memberRating && shownFavor.memberRating > 0 ? (
-                <Text style={{ color: SUBTLE, fontSize: 13, fontFamily: P400 }}>{`  ★ ${shownFavor.memberRating.toFixed(1)}`}</Text>
-              ) : null}
-              <Ionicons name="chevron-forward" size={14} color={SUBTLE} style={{ marginLeft: 4 }} />
+              <Text style={st.whiteBtnTxt}>BROWSE OTHER FAVORS</Text>
             </TouchableOpacity>
-            <Text style={{ color: SUBTLE, fontSize: 14, lineHeight: 20, marginTop: 4, fontFamily: P400 }} numberOfLines={expanded ? undefined : 2}>
-              {shownFavor?.description || 'No details provided yet.'}
-            </Text>
-            <Text style={{ color: SUBTLE, fontSize: 13, marginTop: 6, fontFamily: P400 }}>{when}</Text>
-            {/* app addition — no v2 frame (pal-side payout + area at a glance) */}
-            <Text style={{ fontSize: 14, marginTop: 6, fontFamily: P400 }}>
-              <Text style={{ color: TEXT, fontFamily: P500 }}>{`You earn $${payout.toFixed(2)}`}</Text>
-              <Text style={{ color: SUBTLE, fontFamily: P400 }}>{`   ·   ${area}`}</Text>
-            </Text>
+          ) : memberCountered && offer ? (
+            // Accept the member's counter price → booked at that price (the member
+            // engaged this pal by countering, so their counter is the approval).
             <TouchableOpacity
-              onPress={() => setExpanded((v) => !v)}
+              style={[st.whiteBtn, offerBusy && { opacity: 0.6 }]}
+              disabled={offerBusy}
               accessibilityRole="button"
-              accessibilityState={{ expanded }}
-              accessibilityLabel={expanded ? 'View less favor detail' : 'View more favor detail'}
+              accessibilityLabel={`Accept the counter offer of ${fmtMoney(offer.price)}`}
+              onPress={acceptCounter}
             >
-              <Text style={{ color: TEXT, fontSize: 14, marginTop: 8, fontFamily: P500 }}>
-                {expanded ? 'View Less' : 'View More'}
+              <Text style={st.whiteBtnTxt}>{offerBusy ? 'ACCEPTING…' : `ACCEPT ${fmtMoney(offer.price)}`}</Text>
+            </TouchableOpacity>
+          ) : offerPending && offer?.lastBy === 'pal' ? (
+            // Our request/offer is on the member's screen — nothing to tap here.
+            <View style={[st.whiteBtn, { opacity: 0.55 }]} accessibilityLabel="Waiting for the member's approval">
+              <Text style={st.whiteBtnTxt}>WAITING FOR APPROVAL</Text>
+            </View>
+          ) : (
+            // Request at the listed price (while the favor is open).
+            <TouchableOpacity
+              style={[st.whiteBtn, accepting && { opacity: 0.6 }]}
+              disabled={accepting}
+              accessibilityRole="button"
+              accessibilityLabel="Accept this favor"
+              onPress={() => { if (favor) void onAccept(favor.id); }}
+            >
+              <Text style={st.whiteBtnTxt}>{accepting ? 'SENDING…' : 'ACCEPT'}</Text>
+            </TouchableOpacity>
+          )}
+
+          {/* Propose (or revise) a price instead of accepting as listed. */}
+          {!memberDeclined ? (
+            <TouchableOpacity
+              style={st.darkBtn}
+              accessibilityRole="button"
+              accessibilityLabel="Negotiate the price"
+              onPress={() => { setOfferText(''); setNegotiateOpen(true); }}
+            >
+              <Text style={st.darkBtnTxt}>
+                {offer && offer.status === 'pending'
+                  ? offer.lastBy === 'pal' ? 'CHANGE YOUR OFFER' : 'COUNTER BACK'
+                  : 'NEGOTIATE PRICE'}
               </Text>
             </TouchableOpacity>
-          </View>
-        </View>
+          ) : null}
 
-        {expanded && (
-          <View style={{ marginTop: 16 }}>
-            <View style={st.divider} />
-            <QuickRow label="When" value={when} />
-            {/* Privacy: precise address is withheld until the pal accepts the favor. */}
-            <QuickRow label="Pickup area" value={`${area} · exact address shared once you accept`} />
-            <QuickRow label="You earn (after 20% commission)" value={`$${payout.toFixed(2)}`} />
-          </View>
-        )}
-
-        {/* Negotiation / approval state — our pending request or the member's counter. */}
-        {offer && offer.status === 'pending' ? (
-          <View style={st.waitBanner}>
-            {offer.lastBy === 'pal' ? <ActivityIndicator color={TEXT} /> : null}
-            <Text style={st.waitText}>
-              {offer.lastBy === 'pal'
-                ? offer.price === (favor?.price ?? offer.price)
-                  ? `Waiting for ${requester} to approve you — $${offer.price.toFixed(2)}`
-                  : `You offered $${offer.price.toFixed(2)} — waiting for ${requester}`
-                : `${requester} countered $${offer.price.toFixed(2)}`}
-            </Text>
-          </View>
-        ) : null}
-
-        {memberCountered && offer ? (
-          // Accept the member's counter price → booked at that price (the member
-          // engaged this pal by countering, so their counter is the approval).
-          <TouchableOpacity
-            style={[st.whiteBtn, offerBusy && { opacity: 0.6 }]}
-            disabled={offerBusy}
-            accessibilityRole="button"
-            accessibilityLabel={`Accept the counter offer of $${offer.price.toFixed(2)}`}
-            onPress={acceptCounter}
-          >
-            <Text style={st.whiteBtnTxt}>{offerBusy ? 'ACCEPTING…' : `ACCEPT $${offer.price.toFixed(2)}`}</Text>
-          </TouchableOpacity>
-        ) : offerPending && offer?.lastBy === 'pal' ? (
-          // Our request/offer is on the member's screen — nothing to tap here.
-          <View style={[st.whiteBtn, { opacity: 0.55 }]} accessibilityLabel="Waiting for the member's approval">
-            <Text style={st.whiteBtnTxt}>WAITING FOR APPROVAL</Text>
-          </View>
-        ) : (
-          // Request at the listed price (while the favor is open).
-          <TouchableOpacity
-            style={[st.whiteBtn, accepting && { opacity: 0.6 }]}
-            disabled={accepting}
-            accessibilityRole="button"
-            accessibilityLabel="Accept this favor"
-            onPress={() => { if (favor) void onAccept(favor.id); }}
-          >
-            <Text style={st.whiteBtnTxt}>{accepting ? 'SENDING…' : 'ACCEPT'}</Text>
-          </TouchableOpacity>
-        )}
-
-        {/* Propose (or revise) a price instead of accepting as listed. */}
-        <TouchableOpacity
-          style={st.darkBtn}
-          accessibilityRole="button"
-          accessibilityLabel="Negotiate the price"
-          onPress={() => { setOfferText(''); setNegotiateOpen(true); }}
-        >
-          <Text style={st.darkBtnTxt}>
-            {offer && offer.status === 'pending'
-              ? offer.lastBy === 'pal' ? 'CHANGE YOUR OFFER' : 'COUNTER BACK'
-              : 'NEGOTIATE PRICE'}
-          </Text>
-        </TouchableOpacity>
+          {offer && offer.status === 'pending' ? (
+            <TouchableOpacity
+              onPress={withdrawOffer}
+              style={{ alignSelf: 'center', marginTop: 14 }}
+              accessibilityRole="button"
+              accessibilityLabel="Withdraw your offer"
+            >
+              <Text style={{ color: SUBTLE, fontSize: 14, fontFamily: P500 }}>withdraw your offer</Text>
+            </TouchableOpacity>
+          ) : !memberDeclined ? (
+            <TouchableOpacity
+              onPress={() => { if (favor) s.declineFavor(favor.id); navigation.goBack(); }}
+              style={{ alignSelf: 'center', marginTop: 14 }}
+              accessibilityRole="button"
+              accessibilityLabel="Decline this favor"
+            >
+              <Text style={{ color: SUBTLE, fontSize: 14, fontFamily: P500 }}>decline this favor</Text>
+            </TouchableOpacity>
+          ) : null}
+        </ScrollView>
 
         <NavyModal
           visible={!!acceptError}
@@ -797,37 +916,23 @@ export const PalFavorDetail = ({ navigation, route }: any) => {
           primaryLabel="OK"
           onPrimary={() => setOfferError('')}
         />
-
-        {offer && offer.status === 'pending' ? (
-          <TouchableOpacity
-            onPress={withdrawOffer}
-            style={{ alignSelf: 'center', marginTop: 14 }}
-            accessibilityRole="button"
-            accessibilityLabel="Withdraw your offer"
-          >
-            <Text style={{ color: SUBTLE, fontSize: 14, fontFamily: P500 }}>withdraw your offer</Text>
-          </TouchableOpacity>
-        ) : (
-          <TouchableOpacity
-            onPress={() => { if (favor) s.declineFavor(favor.id); navigation.goBack(); }}
-            style={{ alignSelf: 'center', marginTop: 14 }}
-            accessibilityRole="button"
-            accessibilityLabel="Decline this favor"
-          >
-            <Text style={{ color: SUBTLE, fontSize: 14, fontFamily: P500 }}>decline this favor</Text>
-          </TouchableOpacity>
-        )}
       </View>
 
       {/* Offer / counter input */}
       <Modal visible={negotiateOpen} transparent animationType="fade" onRequestClose={() => setNegotiateOpen(false)}>
-        <View style={st.offerScrim}>
+        {/* Keyboard avoidance: the decimal pad must push the centered card up,
+            not cover the SEND OFFER / Cancel controls on small screens. */}
+        <KeyboardAvoidingView
+          behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+          style={st.offerScrim}
+          accessibilityViewIsModal
+        >
           <View style={st.offerCard}>
             <Text style={st.offerTitle}>Negotiate the price</Text>
             <Text style={st.offerBody}>
               {memberCountered && offer
-                ? `${requester} countered $${offer.price.toFixed(2)}. Counter back with your price.`
-                : `Listed at $${base}. Propose your price — ${requester} can accept or counter.`}
+                ? `${requester} countered ${fmtMoney(offer.price)}. Counter back with your price.`
+                : `Listed at ${fmtMoney(base)}. Propose your price — ${requester} can accept or counter.`}
             </Text>
             <View style={st.offerField}>
               <TextInput
@@ -848,7 +953,7 @@ export const PalFavorDetail = ({ navigation, route }: any) => {
               onPress={sendOffer}
             >
               <Text style={st.whiteBtnTxt}>
-                {offerBusy ? 'SENDING…' : offerValid ? `SEND OFFER — $${offerValue.toFixed(2)}` : 'SEND OFFER'}
+                {offerBusy ? 'SENDING…' : offerValid ? `SEND OFFER — ${fmtMoney(offerValue)}` : 'SEND OFFER'}
               </Text>
             </TouchableOpacity>
             <TouchableOpacity
@@ -860,7 +965,7 @@ export const PalFavorDetail = ({ navigation, route }: any) => {
               <Text style={{ color: SUBTLE, fontSize: 14, fontFamily: P500 }}>Cancel</Text>
             </TouchableOpacity>
           </View>
-        </View>
+        </KeyboardAvoidingView>
       </Modal>
     </View>
   );
@@ -919,7 +1024,11 @@ export const Navigation = ({ navigation }: any) => {
   const fav = s.activePalFavor;
   const [callOpen, setCallOpen] = useState(false);
   const [arriveOpen, setArriveOpen] = useState(false);
+  const [arriveBusy, setArriveBusy] = useState(false);
+  const [arriveError, setArriveError] = useState('');
   const [cancelOpen, setCancelOpen] = useState(false);
+  const [cancelBusy, setCancelBusy] = useState(false);
+  const [cancelError, setCancelError] = useState('');
   const [cancelledOpen, setCancelledOpen] = useState(false);
   const fontsLoaded = usePoppins();
   const memberName = fav?.memberName ?? 'Favor Member';
@@ -931,11 +1040,12 @@ export const Navigation = ({ navigation }: any) => {
   const banner = fav?.location?.address ? `Head to ${fav.location.address}` : 'Head to the favor location.';
 
   const [msgBusy, setMsgBusy] = useState(false);
+  const [msgError, setMsgError] = useState(false);
   // Fast path: a thread with this member is usually already in the store —
   // open it instantly instead of blocking on a create-thread round trip.
   const memberThread = s.threads.find((t) => t.withUser.id === fav?.memberId);
   const openMessage = async () => {
-    if (!fav?.memberId) return;
+    if (!fav?.memberId || msgBusy) return;
     if (memberThread) {
       navigation.navigate('MessageThread', { threadId: memberThread.id });
       return;
@@ -944,6 +1054,7 @@ export const Navigation = ({ navigation }: any) => {
     const id = await s.openThreadWith(fav.memberId);
     setMsgBusy(false);
     if (id) navigation.navigate('MessageThread', { threadId: id });
+    else setMsgError(true); // openThreadWith swallows the error — never fail silently
   };
 
   // Real phone call — the in-flight favor carries the member's number for the
@@ -966,6 +1077,7 @@ export const Navigation = ({ navigation }: any) => {
     <View style={{ flex: 1, backgroundColor: PAGE_BG }}>
       <MapBackdrop route dest={fav?.location} />
       <MapTopBar navigation={navigation} banner={banner} />
+      <LocationDeniedBanner visible={s.locationDenied} />
       <View style={st.sheet}>
         <Handle />
         <Text style={{ color: TEXT, fontSize: 18, fontFamily: P600, textAlign: 'center', marginVertical: 12 }}>Favor Booked</Text>
@@ -977,8 +1089,10 @@ export const Navigation = ({ navigation }: any) => {
           accessibilityLabel={`View ${memberName}'s profile and reviews`}
         >
           <Avatar uri={undefined} size={56} name={memberName} />
-          <View style={{ marginLeft: 14 }}>
-            <Text style={{ color: TEXT, fontSize: 17, fontFamily: P500 }}>{memberName}</Text>
+          {/* flex:1 + numberOfLines so a long member name truncates instead of
+              running off the sheet (rows default to flexShrink:0). */}
+          <View style={{ flex: 1, marginLeft: 14 }}>
+            <Text style={{ color: TEXT, fontSize: 17, fontFamily: P500 }} numberOfLines={1}>{memberName}</Text>
             <Text style={{ color: SUBTLE, fontSize: 14, marginTop: 2, fontFamily: P400 }}>{tierName}</Text>
             {distance ? <Text style={{ color: SUBTLE, fontSize: 13, marginTop: 2, fontFamily: P400 }}>{distance} away</Text> : null}
           </View>
@@ -987,7 +1101,7 @@ export const Navigation = ({ navigation }: any) => {
         <View style={st.windowPill}><Text style={{ color: SUBTLE, fontSize: 13, fontFamily: P400 }}>Arrival Window</Text></View>
 
         <ActionRow icon="call" label="Call About This Favor" onPress={callMember} />
-        <ActionRow icon="mail" label={msgBusy ? 'Opening chat…' : 'Message Favor Member'} red onPress={openMessage} />
+        <ActionRow icon="mail" label={msgBusy ? 'Opening chat…' : 'Message Favor Member'} red disabled={msgBusy} onPress={openMessage} />
 
         <TouchableOpacity
           style={st.whiteBtn}
@@ -1007,25 +1121,62 @@ export const Navigation = ({ navigation }: any) => {
         </TouchableOpacity>
       </View>
 
-      {/* Arrive confirm (v.2 Arrive Modal) — fires before marking arrived. */}
+      {/* Arrive confirm (v.2 Arrive Modal) — fires before marking arrived.
+          Awaited: advanceFavor reverts + returns false on API failure, and
+          navigating forward on a failed advance would leave the server on
+          'matched' while the UI claims arrival (the finish would then 409). */}
       <NavyModal
         visible={arriveOpen}
         title="You have arrived to your destination"
         message={`Notify ${memberName} that you have arrived.`}
-        primaryLabel="I AM HERE"
-        onPrimary={() => { setArriveOpen(false); s.advanceFavor('arrived'); navigation.navigate('PalFavorInProgress'); }}
+        primaryLabel={arriveBusy ? 'CONFIRMING…' : 'I AM HERE'}
+        onPrimary={async () => {
+          if (arriveBusy) return;
+          setArriveBusy(true);
+          const ok = await s.advanceFavor('arrived');
+          setArriveBusy(false);
+          setArriveOpen(false);
+          // replace (not push): back from In Progress must not land on this
+          // stale "Favor Booked" sheet with a dead I AM HERE.
+          if (ok) navigation.replace('PalFavorInProgress');
+          else setArriveError("We couldn't mark you as arrived. Check your connection and try again.");
+        }}
         dismissLabel="Not yet"
-        onDismiss={() => setArriveOpen(false)}
+        onDismiss={() => { if (!arriveBusy) setArriveOpen(false); }}
       />
-      {/* Cancel confirm (v.2 Cancel Favor Modal — pal copy). */}
+      <NavyModal
+        visible={!!arriveError}
+        title="Couldn't update your status"
+        message={arriveError}
+        primaryLabel="OK"
+        onPrimary={() => setArriveError('')}
+      />
+      {/* Cancel confirm (v.2 Cancel Favor Modal — pal copy). Awaited: the
+          "member was notified" confirmation may only appear when the server
+          actually released the favor. */}
       <NavyModal
         visible={cancelOpen}
         title="Are you sure you want to cancel?"
         message="You will not receive payment for this favor if you cancel."
-        primaryLabel="AGREE"
-        onPrimary={() => { setCancelOpen(false); void s.abandonFavor(); setCancelledOpen(true); }}
+        primaryLabel={cancelBusy ? 'CANCELLING…' : 'AGREE'}
+        onPrimary={async () => {
+          if (cancelBusy) return;
+          setCancelBusy(true);
+          const ok = await s.abandonFavor();
+          setCancelBusy(false);
+          setCancelOpen(false);
+          if (ok) setCancelledOpen(true);
+          else setCancelError("We couldn't cancel this favor. Check your connection and try again — you are still assigned to it.");
+        }}
         dismissLabel="Keep this favor"
-        onDismiss={() => setCancelOpen(false)}
+        onDismiss={() => { if (!cancelBusy) setCancelOpen(false); }}
+      />
+      <NavyModal
+        visible={!!cancelError}
+        title="Couldn't cancel"
+        message={cancelError}
+        primaryLabel="OK"
+        onPrimary={() => setCancelError('')}
       />
       {/* Cancellation confirmed (v.2). */}
       <NavyModal
@@ -1043,18 +1194,28 @@ export const Navigation = ({ navigation }: any) => {
         primaryLabel="OK"
         onPrimary={() => setCallOpen(false)}
       />
+      {/* Chat open failed (openThreadWith swallows the error). */}
+      <NavyModal
+        visible={msgError}
+        title="Chat unavailable"
+        message={`We couldn't open a chat with ${memberName}. Check your connection and try again.`}
+        primaryLabel="OK"
+        onPrimary={() => setMsgError(false)}
+      />
     </View>
   );
 };
 
-function ActionRow({ icon, label, red, onPress }: any) {
+function ActionRow({ icon, label, red, onPress, disabled }: any) {
   return (
     <TouchableOpacity
       onPress={onPress}
       activeOpacity={0.7}
-      style={st.actionRow}
+      disabled={!!disabled}
+      style={[st.actionRow, disabled && { opacity: 0.6 }]}
       accessibilityRole="button"
       accessibilityLabel={label}
+      accessibilityState={{ disabled: !!disabled }}
     >
       <Ionicons name={icon} size={20} color={red ? RED : TEXT} />
       <Text style={{ color: red ? RED : TEXT, fontSize: 15, marginLeft: 14, flex: 1, fontFamily: P500 }}>{label}</Text>
@@ -1073,6 +1234,8 @@ export const PalFavorInProgress = ({ navigation }: any) => {
   const insets = useSafeAreaInsets();
   const origin = usePalOrigin();
   const fontsLoaded = usePoppins();
+  const [finishBusy, setFinishBusy] = useState(false);
+  const [finishError, setFinishError] = useState('');
   const fav = s.activePalFavor;
   const base = fav?.price ?? 20;
   // Pal-side breakdown — what the pal takes home, NOT the member's invoice.
@@ -1098,6 +1261,7 @@ export const PalFavorInProgress = ({ navigation }: any) => {
     <View style={{ flex: 1, backgroundColor: PAGE_BG }}>
       <MapBackdrop route dest={fav?.location} />
       <MapTopBar navigation={navigation} banner={banner} />
+      <LocationDeniedBanner visible={s.locationDenied} />
       <View style={[st.miniCard, { bottom: insets.bottom + 16 }]}>
         <View style={{ flexDirection: 'row', alignItems: 'center' }}>
           <Avatar uri={undefined} size={48} name={memberName} />
@@ -1122,24 +1286,45 @@ export const PalFavorInProgress = ({ navigation }: any) => {
           <CostRow label="You earn" value={`$${payout.toFixed(2)}`} bold />
         </View>
         <TouchableOpacity
-          style={[st.whiteBtn, { marginTop: 16, opacity: fav ? 1 : 0.5 }]}
-          disabled={!fav}
+          style={[st.whiteBtn, { marginTop: 16, opacity: fav && !finishBusy ? 1 : 0.5 }]}
+          disabled={!fav || finishBusy}
           accessibilityRole="button"
           accessibilityLabel="Mark favor done and get paid"
-          accessibilityState={{ disabled: !fav }}
-          onPress={() => {
-            // Guard: never let a null favor produce a phantom payout.
-            if (!s.activePalFavor) return;
+          accessibilityState={{ disabled: !fav || finishBusy }}
+          onPress={async () => {
+            // Guards: never let a null favor produce a phantom payout, and never
+            // fire a second finish while one is in flight.
+            if (!s.activePalFavor || finishBusy) return;
             const finishedId = s.activePalFavor.id;
-            const earned = s.finishFavorAsPal();
-            // Terminal transition: reset so backing out lands on Tabs (not this
-            // now-stale in-progress screen) and can't refire "You got paid".
-            navigation.reset({ index: 1, routes: [{ name: 'Tabs' }, { name: 'PalFavorSuccess', params: { payout: earned, favorId: finishedId } }] });
+            setFinishBusy(true);
+            const res = await s.finishFavorAsPal();
+            setFinishBusy(false);
+            if (res.ok) {
+              // Terminal transition: reset so backing out lands on Tabs (not this
+              // now-stale in-progress screen) and can't refire "You got paid".
+              navigation.reset({
+                index: 1,
+                routes: [{ name: 'Tabs' }, {
+                  name: 'PalFavorSuccess',
+                  params: { payout: res.payout, ledgerStatus: res.ledgerStatus, favorId: finishedId },
+                }],
+              });
+            } else {
+              // The server rejected the finish — say why instead of celebrating.
+              setFinishError(res.reason || 'Could not complete the favor. Please try again.');
+            }
           }}
         >
-          <Text style={st.whiteBtnTxt}>MARK AS DONE</Text>
+          <Text style={st.whiteBtnTxt}>{finishBusy ? 'FINISHING…' : 'MARK AS DONE'}</Text>
         </TouchableOpacity>
       </View>
+      <NavyModal
+        visible={!!finishError}
+        title="Couldn't complete the favor"
+        message={finishError}
+        primaryLabel="OK"
+        onPrimary={() => setFinishError('')}
+      />
     </View>
   );
 };
@@ -1160,27 +1345,32 @@ function CostRow({ label, value, bold }: any) {
 export const PalFavorSuccess = ({ navigation, route }: any) => {
   const fontsLoaded = usePoppins();
   const s = useStore();
-  const { payout: optimisticPayout, favorId } = route?.params ?? {};
-  // The amount passed in params is a client-side guess made before the server
-  // responded; once the earnings refresh lands, the ledger row for this favor
-  // carries the authoritative payout — prefer it.
+  const { payout: optimisticPayout, favorId, ledgerStatus } = route?.params ?? {};
+  // The amount passed in params is the server's /finish response; once the
+  // earnings refresh lands, the ledger row for this favor carries the
+  // authoritative payout AND status — prefer it.
   const serverRow = favorId
     ? s.earnings.find((e) => e.favorId === favorId && e.kind === 'earning' && !e.id.startsWith('pending_'))
     : undefined;
   const payout = serverRow?.amount ?? optimisticPayout;
   const paid = typeof payout === 'number';
+  // "You just got paid!" is only honest when the earning settled 'completed' —
+  // an 'incomplete' row was recorded but not collected (not cashable yet).
+  const collected = (serverRow?.status ?? ledgerStatus) !== 'incomplete';
   if (!fontsLoaded) return <View style={{ flex: 1, backgroundColor: PAGE_BG }} />;
   return (
     <SafeAreaView edges={['top', 'bottom']} style={{ flex: 1, backgroundColor: PAGE_BG }}>
       <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 24 }}>
         <Ionicons name="checkmark-circle" size={120} color={SUCCESS} />
         <Text style={{ color: TEXT, fontSize: 24, fontFamily: P500, textAlign: 'center', marginTop: 24 }}>
-          You just got paid!
+          {collected ? 'You just got paid!' : 'Favor completed!'}
         </Text>
         {paid && (
           // app addition — no v2 frame (surface the exact amount + ledger note)
           <Text style={{ color: SUBTLE, fontSize: 15, lineHeight: 22, fontFamily: P400, textAlign: 'center', marginTop: 10 }}>
-            {`$${payout.toFixed(2)} was added to your Earning History.`}
+            {collected
+              ? `$${payout.toFixed(2)} was added to your Earning History.`
+              : `$${payout.toFixed(2)} is pending collection — it will show in your Earning History.`}
           </Text>
         )}
       </View>
@@ -1229,10 +1419,22 @@ export const PalFavorComplete = ({ navigation, route }: any) => {
   const onSubmit = async () => {
     if (!rating || submitBusy) return;
     setSubmitBusy(true);
-    const ok = await s.rateMember(route?.params?.favorId ?? null, rating, feedback);
-    setSubmitBusy(false);
-    if (ok) setSubmitted(true);
-    else setSubmitError('Could not submit your feedback. Check your connection and try again.');
+    const favorId = route?.params?.favorId ?? null;
+    try {
+      if (favorId) {
+        // Call the API directly when we know the favor id so the server's real
+        // reasons (e.g. 409 "Favor already rated") reach the pal — the store's
+        // rateMember collapses every failure to connection blame.
+        await rateMemberApi(favorId, { rating, feedback: feedback ?? '' });
+      } else if (!(await s.rateMember(null, rating, feedback))) {
+        throw new Error('Could not submit your feedback. Check your connection and try again.');
+      }
+      setSubmitted(true);
+    } catch (e: any) {
+      setSubmitError(e?.message || 'Could not submit your feedback. Check your connection and try again.');
+    } finally {
+      setSubmitBusy(false);
+    }
   };
   // Rating the member is optional — let the pal leave without being forced to rate.
   const skip = () => navigation.reset({ index: 0, routes: [{ name: 'Tabs' }] });
@@ -1297,6 +1499,7 @@ export const PalFavorComplete = ({ navigation, route }: any) => {
             onChangeText={setFeedback}
             placeholder="Write your feedback..."
             placeholderTextColor={MUTED}
+            accessibilityLabel="Write your feedback"
           />
         </View>
         <View style={{ flex: 1 }} />
@@ -1333,7 +1536,9 @@ export const PalFavorComplete = ({ navigation, route }: any) => {
 const st = StyleSheet.create({
   iconBtn: { width: 40, height: 40, borderRadius: 12, backgroundColor: SHEET_ALT, alignItems: 'center', justifyContent: 'center', borderWidth: StyleSheet.hairlineWidth, borderColor: BORDER },
   navBanner: { backgroundColor: SHEET, borderRadius: 8, paddingHorizontal: 18, paddingVertical: 14, flexDirection: 'row', alignItems: 'center', borderWidth: StyleSheet.hairlineWidth, borderColor: BORDER },
-  sheet: { position: 'absolute', left: 0, right: 0, bottom: 0, backgroundColor: SHEET, borderTopLeftRadius: 20, borderTopRightRadius: 20, paddingHorizontal: 24, paddingTop: 12, paddingBottom: 36, borderTopWidth: StyleSheet.hairlineWidth, borderColor: BORDER, shadowColor: '#000', shadowOffset: { width: 0, height: -3 }, shadowOpacity: 0.4, shadowRadius: 12, elevation: 16 },
+  // maxHeight so an expanded long description scrolls inside the sheet instead
+  // of growing the bottom-anchored sheet past the top of the screen.
+  sheet: { position: 'absolute', left: 0, right: 0, bottom: 0, maxHeight: '86%', backgroundColor: SHEET, borderTopLeftRadius: 20, borderTopRightRadius: 20, paddingHorizontal: 24, paddingTop: 12, paddingBottom: 36, borderTopWidth: StyleSheet.hairlineWidth, borderColor: BORDER, shadowColor: '#000', shadowOffset: { width: 0, height: -3 }, shadowOpacity: 0.4, shadowRadius: 12, elevation: 16 },
   miniCard: { position: 'absolute', left: 16, right: 16, backgroundColor: SHEET, borderRadius: 16, padding: 16, borderWidth: StyleSheet.hairlineWidth, borderColor: BORDER, shadowColor: '#000', shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.4, shadowRadius: 12, elevation: 16 },
   handle: { alignSelf: 'center', width: 44, height: 5, borderRadius: 3, backgroundColor: 'rgba(255,255,255,0.25)' },
   divider: { height: StyleSheet.hairlineWidth, backgroundColor: DIVIDER },

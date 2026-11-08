@@ -184,7 +184,11 @@ const CodeBoxes: React.FC<{
           onChangeText={(v) => onDigit(i, v)}
           onKeyPress={(e) => onKeyPress(i, e)}
           keyboardType="number-pad"
-          maxLength={1}
+          // maxLength 4 (not 1) so a pasted / OS-autofilled code reaches
+          // onDigit intact — the handler fans the digits out across the boxes.
+          maxLength={4}
+          textContentType="oneTimeCode"
+          autoComplete="sms-otp"
           accessibilityLabel={`Code digit ${i + 1}`}
           style={[
             styles.codeBox,
@@ -400,7 +404,15 @@ export const NewPassword = ({ navigation, route }: any) => {
       await resetPasswordApi(email, code, pw);
       setDone(true);
     } catch (e: any) {
-      setError(e?.message || 'Could not reset your password. The code may have expired.');
+      const msg = e?.message || 'Could not reset your password. The code may have expired.';
+      // A rejected code (400) or attempt lockout (429) is fixed back at the
+      // Enter Code step — pop straight there with the error shown instead of
+      // leaving the user to find their own way two screens back.
+      if (e?.status === 400 || e?.status === 429) {
+        navigation.popTo('OtpVerify', { context: 'reset', destination: email, error: msg });
+      } else {
+        setError(msg);
+      }
     } finally {
       setBusy(false);
     }
@@ -517,7 +529,7 @@ export const Signup = ({ navigation, route }: any) => {
   const onSignup = async () => {
     if (submitting) return;
     if (!agreeTerms) {
-      setError('Please agree to MyFavor’s Liability Waiver, Privacy Policy, and Terms & Conditions to continue.');
+      setError('Please agree to MyFavor’s Terms & Conditions and Privacy Policy to continue.');
       return;
     }
     // Client-side validation mirroring the server's signupSchema so a bad field
@@ -554,6 +566,21 @@ export const Signup = ({ navigation, route }: any) => {
       });
       navigation.navigate('OtpVerify', { destination: email.trim().toLowerCase(), password });
     } catch (e: any) {
+      // Dismissing the verification modal leaves the account created but
+      // unverified, so resubmitting this form 409s "already exists". Re-drive
+      // the login-unverified path (the store sets pendingDest and the server
+      // issues a fresh code) so the same email + password reopens the OTP
+      // modal instead of stranding the user.
+      if (e?.status === 409) {
+        try {
+          const r = await s.login(email.trim(), password);
+          if (r === 'ok') return; // verified account + matching password — signed straight in
+          if (r === 'unverified') {
+            navigation.navigate('OtpVerify', { destination: email.trim().toLowerCase(), password });
+            return;
+          }
+        } catch { /* fall through to the signup error */ }
+      }
       setError(e?.message || 'Could not sign up. Please try again.');
     } finally {
       setSubmitting(false);
@@ -651,24 +678,23 @@ export const Signup = ({ navigation, route }: any) => {
 
         <PasswordField label="Set Password" value={password} onChangeText={setPassword} placeholder="Set Password" />
 
-        {/* Liability Waiver / Privacy Policy / Terms & Conditions agreement.
-            Copy (incl. the space before the comma) matches the frame exactly. */}
+        {/* Terms & Conditions / Privacy Policy agreement. The frame's first link
+            said "Liability Waiver", but no such document exists in the app —
+            the consent copy names only the real docs the links actually open. */}
         <TouchableOpacity
           onPress={() => { setAgreeTerms((v) => !v); setError(''); }}
           activeOpacity={0.7}
           accessibilityRole="checkbox"
           accessibilityState={{ checked: agreeTerms }}
-          accessibilityLabel="I am 18 or older and agree to MyFavor's Liability Waiver, Privacy Policy, and Terms and Conditions"
+          accessibilityLabel="I am 18 or older and agree to MyFavor's Terms and Conditions and Privacy Policy"
           style={styles.checkRow}
         >
           <CheckBox checked={agreeTerms} />
           <Txt style={{ flex: 1, fontFamily: P_MEDIUM, fontSize: 15, lineHeight: 22 }}>
             {'I confirm I am 18 or older and agree to MyFavor’s '}
-            {legalLink('Liability Waiver', 'terms')}
-            {', '}
-            {legalLink('Privacy Policy', 'privacy')}
-            {' , and '}
             {legalLink('Terms & Conditions', 'terms')}
+            {' and '}
+            {legalLink('Privacy Policy', 'privacy')}
             {'.'}
           </Txt>
         </TouchableOpacity>
@@ -714,7 +740,11 @@ export const Signup = ({ navigation, route }: any) => {
 //    • reset: the full-screen "Enter Code" step of the password-reset flow
 //      (#125:11525 / Filled #125:11542), whose SUBMIT moves to New Password.
 // ---------------------------------------------------------------------------
-const OTP_SECONDS = 43;
+// Server OTPs are valid for 10 minutes (config.otp.ttlMinutes) — the countdown
+// mirrors that real TTL. Resend unlocks after a short 30s cooldown regardless,
+// so a mistyped email never means waiting out the full expiry.
+const OTP_SECONDS = 600;
+const RESEND_SECONDS = 30;
 
 export const OtpVerify = ({ navigation, route }: any) => {
   const { theme } = useTheme();
@@ -727,6 +757,7 @@ export const OtpVerify = ({ navigation, route }: any) => {
   const [resending, setResending] = useState(false);
   const [verified, setVerified] = useState(false);
   const [seconds, setSeconds] = useState(OTP_SECONDS);
+  const [resendSeconds, setResendSeconds] = useState(RESEND_SECONDS);
   const inputs = useRef<Array<TextInput | null>>([]);
   const dest: string | undefined = route?.params?.destination;
   // Password from Signup/Login so the Success step can complete the login
@@ -734,20 +765,58 @@ export const OtpVerify = ({ navigation, route }: any) => {
   const password: string | undefined = route?.params?.password;
   const isReset = route?.params?.context === 'reset';
 
-  // Live "Code expires in 00:43" countdown; Resend unlocks at zero.
+  // Live "Code expires in 10:00" countdown (the server's real TTL).
   useEffect(() => {
     if (seconds <= 0) return;
     const id = setTimeout(() => setSeconds((sec) => sec - 1), 1000);
     return () => clearTimeout(id);
   }, [seconds]);
 
+  // Separate 30s resend cooldown — decoupled from expiry so Resend unlocks
+  // long before the code runs out.
+  useEffect(() => {
+    if (resendSeconds <= 0) return;
+    const id = setTimeout(() => setResendSeconds((sec) => sec - 1), 1000);
+    return () => clearTimeout(id);
+  }, [resendSeconds]);
+
+  // A rejected code in NewPassword pops straight back here with the error —
+  // surface it and clear the boxes for a clean re-entry.
+  const paramError: string | undefined = route?.params?.error;
+  useEffect(() => {
+    if (!paramError) return;
+    setError(paramError);
+    setCode(['', '', '', '']);
+    inputs.current[0]?.focus();
+    navigation.setParams({ error: undefined });
+  }, [paramError, navigation]);
+
   const fmt = (sec: number) =>
     `${String(Math.floor(sec / 60)).padStart(2, '0')}:${String(sec % 60).padStart(2, '0')}`;
 
   const setDigit = (i: number, v: string) => {
-    const ch = v.replace(/[^0-9]/g, '').slice(-1);
+    const digits = v.replace(/[^0-9]/g, '');
     setError('');
     setNotice('');
+    // A full 4-digit string (paste / OS autofill) fills every box wherever it
+    // lands; a shorter multi-digit paste into an EMPTY box fans out from there.
+    // Multi-char in a FILLED box is just typing over it — keep the last digit
+    // in place so the neighbouring boxes never get clobbered.
+    if (digits.length >= 4) {
+      setCode(digits.slice(0, 4).split(''));
+      inputs.current[3]?.focus();
+      return;
+    }
+    if (digits.length > 1 && !code[i]) {
+      setCode((prev) => {
+        const next = [...prev];
+        for (let j = 0; j < digits.length && i + j < 4; j += 1) next[i + j] = digits[j];
+        return next;
+      });
+      inputs.current[Math.min(i + digits.length, 3)]?.focus();
+      return;
+    }
+    const ch = digits.slice(-1);
     setCode((prev) => {
       const next = [...prev];
       next[i] = ch;
@@ -815,10 +884,10 @@ export const OtpVerify = ({ navigation, route }: any) => {
   };
 
   // Working Resend: requests a fresh code from the backend (so an expired code
-  // is replaced), clears the boxes, restarts the countdown, and confirms.
-  // Disabled until the current code expires.
+  // is replaced), clears the boxes, restarts both countdowns, and confirms.
+  // Disabled only for the short cooldown after each send — NOT until expiry.
   const onResend = async () => {
-    if (seconds > 0 || resending) return;
+    if (resendSeconds > 0 || resending) return;
     setResending(true);
     setError('');
     setNotice('');
@@ -826,6 +895,7 @@ export const OtpVerify = ({ navigation, route }: any) => {
       if (dest) await (isReset ? forgotPasswordApi(dest) : resendOtpApi(dest, 'signup'));
       setCode(['', '', '', '']);
       setSeconds(OTP_SECONDS);
+      setResendSeconds(RESEND_SECONDS);
       setNotice('A new code has been sent.');
       inputs.current[0]?.focus();
     } catch (e) {
@@ -839,7 +909,7 @@ export const OtpVerify = ({ navigation, route }: any) => {
     if (navigation.canGoBack()) navigation.goBack();
   };
 
-  const resendBlocked = seconds > 0 || resending;
+  const resendBlocked = resendSeconds > 0 || resending;
 
   // ----- reset context: full-screen "Enter Code" (#125:11525) -----
   if (isReset) {
@@ -875,7 +945,7 @@ export const OtpVerify = ({ navigation, route }: any) => {
                 color={resendBlocked ? theme.textTertiary : theme.text}
                 style={{ fontFamily: fonts.displayMedium, fontSize: 15 }}
               >
-                {resending ? 'Sending…' : seconds > 0 ? `Resend in ${fmt(seconds)}` : 'Resend'}
+                {resending ? 'Sending…' : resendSeconds > 0 ? `Resend in ${fmt(resendSeconds)}` : 'Resend'}
               </Txt>
             </TouchableOpacity>
           </View>
@@ -981,7 +1051,7 @@ export const OtpVerify = ({ navigation, route }: any) => {
                     color={resendBlocked ? theme.textTertiary : theme.text}
                     style={{ fontFamily: fonts.displayMedium, fontSize: 16 }}
                   >
-                    {resending ? 'Sending…' : 'Resend'}
+                    {resending ? 'Sending…' : resendSeconds > 0 ? `Resend in ${fmt(resendSeconds)}` : 'Resend'}
                   </Txt>
                 </TouchableOpacity>
 

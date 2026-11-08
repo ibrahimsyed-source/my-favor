@@ -122,10 +122,11 @@ export function publicFavor(
     description: f.description,
     images: parseImages(f.images),
     location: { lat: f.locationLat, lng: f.locationLng, address: f.locationAddress },
-    // Live pal position — only ever serialized here (participant-facing), so a
-    // pal's real-time location is never exposed on the open feed / to strangers.
+    // Live pal position — emitted only while a pal is assigned AND the favor is
+    // in flight, so a (former) pal's real-time location is never exposed on the
+    // open feed / to strangers, and never outlives the active window.
     palLocation:
-      f.palLat != null && f.palLng != null
+      f.palId != null && inContact && f.palLat != null && f.palLng != null
         ? { lat: f.palLat, lng: f.palLng, at: f.palLocationAt ? f.palLocationAt.getTime() : undefined }
         : undefined,
     status: f.status,

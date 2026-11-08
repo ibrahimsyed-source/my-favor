@@ -3,7 +3,7 @@ import { View, ActivityIndicator, TouchableOpacity, StyleSheet } from 'react-nat
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { useTheme, tokens, AppTheme } from '../theme';
-import { Screen, Txt, Button } from './index';
+import { Txt, Button } from './index';
 
 // ---------------------------------------------------------------------------
 // Shared, themed state-component kit.
@@ -261,9 +261,9 @@ export const ResourceUnavailable: React.FC<{
 // FullScreenState — full-Screen wrapper for standalone scenario screens
 // (maintenance, force-update, 404, account-suspended, active-favor recovery…).
 // Icon + title + message centered, with a pinned primary + optional secondary
-// action at the bottom. Reuses <Screen> for the member-light path; renders a
-// self-contained dark SafeAreaView for the pal-dark path so the whole surface
-// (incl. safe areas) is themed.
+// action at the bottom. Both themes render a self-contained SafeAreaView with
+// top AND bottom edges so the pinned CTA clears the home indicator (the shared
+// <Screen> only insets the top).
 // ---------------------------------------------------------------------------
 export const FullScreenState: React.FC<{
   icon?: IoniconName;
@@ -315,14 +315,11 @@ export const FullScreenState: React.FC<{
     </View>
   );
 
-  if (dark) {
-    return (
-      <SafeAreaView style={{ flex: 1, backgroundColor: p.bg }} edges={['top', 'bottom']}>
-        <View style={{ flex: 1, padding: tokens.spacing.lg }}>{body}</View>
-      </SafeAreaView>
-    );
-  }
-  return <Screen>{body}</Screen>;
+  return (
+    <SafeAreaView style={{ flex: 1, backgroundColor: p.bg }} edges={['top', 'bottom']}>
+      <View style={{ flex: 1, padding: tokens.spacing.lg }}>{body}</View>
+    </SafeAreaView>
+  );
 };
 
 const styles = StyleSheet.create({
@@ -331,7 +328,8 @@ const styles = StyleSheet.create({
   actionSlot: { marginTop: 24, alignSelf: 'stretch' },
   footer: { paddingBottom: 8, gap: 10 },
   outlineBtn: {
-    height: 54,
+    // Matches the shared <Button>'s 48h/r8 v.2 CTA convention.
+    height: 48,
     borderRadius: tokens.radius.sm,
     borderWidth: 1.5,
     alignItems: 'center',

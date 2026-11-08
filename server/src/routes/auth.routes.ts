@@ -4,7 +4,7 @@ import bcrypt from 'bcryptjs';
 import { Prisma } from '@prisma/client';
 import { prisma } from '../db';
 import { validate } from '../lib/validate';
-import { asyncHandler, badRequest, conflict, unauthorized, forbidden, tooMany, accountSuspended } from '../lib/errors';
+import { AppError, asyncHandler, badRequest, conflict, unauthorized, forbidden, tooMany, accountSuspended } from '../lib/errors';
 import {
   hashPassword,
   verifyPassword,
@@ -14,7 +14,7 @@ import {
   revokeRefreshToken,
   revokeAllRefreshTokens,
 } from '../lib/auth';
-import { issueOtp, verifyOtp } from '../lib/otp';
+import { issueOtp, verifyOtp, otpLockUntil } from '../lib/otp';
 import { publicUser } from '../lib/serialize';
 import { authenticate } from '../middleware/authenticate';
 import { authLimiter, otpLimiter, sessionLimiter } from '../middleware/rateLimit';
@@ -211,8 +211,25 @@ authRouter.post(
     if (user.suspended) throw accountSuspended();
 
     if (!user.verified) {
-      await issueOtp({ destination: user.email, purpose: 'signup', userId: user.id });
-      throw forbidden('Account not verified — we sent you a new code');
+      // Re-issue a verification code so the user can finish signup. During an
+      // OTP lockout no code is sent — say so instead of claiming one was.
+      const otp = await issueOtp({ destination: user.email, purpose: 'signup', userId: user.id });
+      if (otp.locked) {
+        const until = await otpLockUntil(user.email);
+        const mins = until ? Math.max(1, Math.ceil((until.getTime() - Date.now()) / 60_000)) : 0;
+        throw forbidden(
+          mins > 0
+            ? `Too many attempts — try again in ${mins} minute${mins === 1 ? '' : 's'}.`
+            : 'Too many attempts — try again in a few minutes.',
+        );
+      }
+      // In development the fresh code rides along (mirrors signup's dev behavior).
+      throw new AppError(
+        403,
+        'forbidden',
+        'Account not verified — we sent you a new code',
+        otp.devCode ? { devCode: otp.devCode } : undefined,
+      );
     }
 
     const session = await issueSession(user.id, user.role);

@@ -1,15 +1,15 @@
 import React, { useState } from 'react';
 import {
   View, TextInput, TouchableOpacity, Pressable, ScrollView, StyleSheet,
-  KeyboardAvoidingView, Platform, Modal, ActivityIndicator,
+  KeyboardAvoidingView, Platform, Modal, ActivityIndicator, Linking,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
-import Svg, { Circle, Path } from 'react-native-svg';
 import * as ImagePicker from 'expo-image-picker';
 import { Txt, Avatar } from '../components';
 import { fonts } from '../theme';
 import { useStore } from '../store';
+import { ApiError } from '../api/client';
 
 // ---------------------------------------------------------------------------
 // User App v.2 (Figma "Mockup" canvas, #125) — these account screens are LIGHT.
@@ -29,7 +29,6 @@ const L = {
   cta: '#141414', // black CTA bars
   red: '#ED1C24',
   star: '#FFBD00',
-  green: '#4CAF50', // Help-Success check
   toggleOff: '#E4E4E6',
 } as const;
 
@@ -106,7 +105,7 @@ function LightModal({ visible, title, message, buttonLabel, onClose, dark }: {
   visible: boolean; title: string; message: string; buttonLabel: string; onClose: () => void; dark?: boolean;
 }) {
   return (
-    <Modal visible={visible} transparent animationType="fade" onRequestClose={onClose}>
+    <Modal visible={visible} transparent animationType="fade" onRequestClose={onClose} accessibilityViewIsModal>
       <Pressable style={st.scrim} onPress={onClose}>
         <Pressable style={[st.alertCard, dark && st.alertCardDark]} onPress={() => {}}>
           <Txt style={dark ? { ...st.alertTitle, color: D.text } : st.alertTitle} center>{title}</Txt>
@@ -210,12 +209,15 @@ function TinyToggle({ value, onChange }: { value: boolean; onChange: (v: boolean
 // design as a root (no back chevron) plus the red Set Status link, which no
 // v.2 frame covers but keeps s.setStatus reachable.
 // ===========================================================================
-function ProfileBody({ navigation, onBack, showSetStatus }: { navigation: any; onBack?: () => void; showSetStatus?: boolean }) {
+function ProfileBody({ navigation, onBack, showSetStatus, showBlocked }: { navigation: any; onBack?: () => void; showSetStatus?: boolean; showBlocked?: boolean }) {
   const s = useStore();
   const user = s.user;
   const [confirming, setConfirming] = useState(false);
   const [agree, setAgree] = useState(false);
   const [deleting, setDeleting] = useState(false);
+  const [switching, setSwitching] = useState(false);
+  const [unblockingId, setUnblockingId] = useState<string | null>(null);
+  const [notice, setNotice] = useState<{ title: string; message: string } | null>(null);
   if (!user) return null;
 
   const isPal = user.role === 'pal';
@@ -223,9 +225,52 @@ function ProfileBody({ navigation, onBack, showSetStatus }: { navigation: any; o
 
   const runDelete = async () => {
     setDeleting(true);
-    await s.deleteAccount();
-    // store wipes the session + signs out; the auth navigator unmounts this screen.
+    const ok = await s.deleteAccount();
+    // Success: the store wipes the session + signs out; the auth navigator
+    // unmounts this screen. Only a FAILURE leaves anything to render.
+    if (!ok) {
+      setDeleting(false);
+      setConfirming(false);
+      setNotice({
+        title: 'Account Not Deleted',
+        message: 'We couldn’t delete your account right now. Your account is still active — please try again.',
+      });
+    }
   };
+
+  const switchRole = async () => {
+    if (switching) return;
+    if (!isPal && !user.palVerified) { navigation.navigate('Vetting'); return; }
+    setSwitching(true);
+    const ok = await s.setRole(isPal ? 'member' : 'pal'); // optimistic in the store; reverts itself on failure
+    setSwitching(false);
+    if (!ok) {
+      setNotice({
+        title: 'Couldn’t Switch',
+        message: 'Your role wasn’t changed. Please check your connection and try again.',
+      });
+    }
+  };
+
+  const runUnblock = async (userId: string) => {
+    if (unblockingId) return;
+    setUnblockingId(userId);
+    const ok = await s.unblockUser(userId);
+    setUnblockingId(null);
+    if (!ok) {
+      setNotice({
+        title: 'Couldn’t Unblock',
+        message: 'This user is still blocked. Please check your connection and try again.',
+      });
+    }
+  };
+
+  // Role-aware favor count: User.totalFavors only counts favors done AS a pal,
+  // so member mode counts their own completed requests from history instead.
+  const totalFavors = isPal
+    ? user.totalFavors
+    : s.history.filter((f) => f.memberId === user.id && f.status === 'completed').length;
+  const ratingValue = isPal ? user.rating : user.memberRating ?? 0;
 
   return (
     <SafeAreaView edges={['top']} style={{ flex: 1, backgroundColor: dark ? D.bg : L.bg }}>
@@ -236,7 +281,9 @@ function ProfileBody({ navigation, onBack, showSetStatus }: { navigation: any; o
         </View>
         <Txt style={dark ? { ...st.profileName, color: D.text } : st.profileName} center>{user.firstName}</Txt>
 
-        {showSetStatus ? (
+        {/* Availability is a PAL concept (broadcast/directory visibility) —
+            member mode hides the link entirely. */}
+        {showSetStatus && isPal ? (
           <TouchableOpacity
             onPress={() => navigation.navigate('SetStatus')}
             style={st.setStatus}
@@ -257,26 +304,21 @@ function ProfileBody({ navigation, onBack, showSetStatus }: { navigation: any; o
             accept favors in. */}
         <View style={st.switchPill}>
           <Txt style={st.switchPillText}>{isPal ? 'Switch to request a favor' : 'Switch to be a favor pal'}</Txt>
-          <TinyToggle
-            value={isPal}
-            onChange={() => {
-              if (!isPal && !user.palVerified) { navigation.navigate('Vetting'); return; }
-              s.setRole(isPal ? 'member' : 'pal');
-            }}
-          />
+          <TinyToggle value={isPal} onChange={() => { void switchRole(); }} />
         </View>
 
         {/* Stats */}
         <View style={st.statsRow}>
           <View style={{ flex: 1, alignItems: 'flex-start' }}>
-            <Txt style={dark ? { ...st.statValue, color: D.text } : st.statValue}>{String(user.totalFavors)}</Txt>
+            <Txt style={dark ? { ...st.statValue, color: D.text } : st.statValue}>{String(totalFavors)}</Txt>
             <Txt style={dark ? { ...st.statLabel, color: D.sub } : st.statLabel}>Total Favors</Txt>
           </View>
           <View style={{ flex: 1, alignItems: 'center' }}>
             {/* Role-aware: pals show their pal rating (member->pal reviews);
-                members show their member rating (pal->member reviews). */}
+                members show their member rating (pal->member reviews). An
+                unrated user shows 'New' — the app-wide convention, not '0.0'. */}
             <Txt style={dark ? { ...st.statValue, color: D.text } : st.statValue}>
-              {(isPal ? user.rating : user.memberRating ?? 0).toFixed(1)}
+              {ratingValue > 0 ? ratingValue.toFixed(1) : 'New'}
             </Txt>
             <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4, marginTop: 4 }}>
               <Ionicons name="star" size={12} color={L.star} />
@@ -296,6 +338,37 @@ function ProfileBody({ navigation, onBack, showSetStatus }: { navigation: any; o
         <InfoRow icon="home" title="Home" subtitle={user.homeAddress} onPress={() => navigation.navigate('EditProfile')} dark={dark} />
         <InfoRow icon="lock-closed" title="Password" subtitle="Change Password" onPress={() => navigation.navigate('EditProfile')} dark={dark} />
 
+        {/* Blocked users — Settings only; hidden while nobody is blocked. The
+            store only knows ids; pals resolve to a name via the directory. */}
+        {showBlocked && s.blockedUsers.length > 0 ? (
+          <View style={{ marginTop: 26 }}>
+            <Txt style={dark ? { ...st.blockedHeading, color: D.text } : st.blockedHeading}>Blocked users</Txt>
+            {s.blockedUsers.map((id) => {
+              const known = s.palById(id);
+              const name = known ? `${known.firstName} ${known.lastName}`.trim() : 'Blocked user';
+              const busy = unblockingId === id;
+              return (
+                <View key={id} style={[st.blockedRow, dark && { borderBottomColor: D.divider }]}>
+                  <Avatar uri={known?.avatar} name={known?.firstName ?? '?'} size={36} />
+                  <Txt style={dark ? { ...st.blockedName, color: D.text } : st.blockedName} numberOfLines={1}>{name}</Txt>
+                  <TouchableOpacity
+                    onPress={() => { void runUnblock(id); }}
+                    disabled={!!unblockingId}
+                    hitSlop={8}
+                    accessibilityRole="button"
+                    accessibilityLabel={`Unblock ${name}`}
+                    accessibilityState={{ disabled: !!unblockingId, busy }}
+                  >
+                    {busy
+                      ? <ActivityIndicator size="small" color={L.red} />
+                      : <Txt style={st.unblockText}>UNBLOCK</Txt>}
+                  </TouchableOpacity>
+                </View>
+              );
+            })}
+          </View>
+        ) : null}
+
         <Cta
           title="DELETE MY ACCOUNT"
           onPress={() => { setAgree(false); setConfirming(true); }}
@@ -308,7 +381,7 @@ function ProfileBody({ navigation, onBack, showSetStatus }: { navigation: any; o
           Copy matches the frame, with the design's "within45days"/"cetain"
           typos corrected per app policy ("within 45 days"/"certain").
           App Store 5.1.1(v): deletion initiated + completed in-app. */}
-      <Modal visible={confirming} transparent animationType="fade" onRequestClose={() => !deleting && setConfirming(false)}>
+      <Modal visible={confirming} transparent animationType="fade" onRequestClose={() => !deleting && setConfirming(false)} accessibilityViewIsModal>
         <Pressable style={st.scrim} onPress={() => !deleting && setConfirming(false)}>
           <Pressable style={[st.deleteCard, dark && { backgroundColor: D.sheet }]} onPress={() => {}}>
             <Txt style={dark ? { ...st.deleteTitle, color: D.text } : st.deleteTitle} center>DELETE MY ACCOUNT</Txt>
@@ -335,13 +408,25 @@ function ProfileBody({ navigation, onBack, showSetStatus }: { navigation: any; o
           </Pressable>
         </Pressable>
       </Modal>
+
+      {/* Failure notices (delete / role switch / unblock didn't stick). */}
+      <LightModal
+        visible={!!notice}
+        title={notice?.title ?? ''}
+        message={notice?.message ?? ''}
+        buttonLabel="OK"
+        onClose={() => setNotice(null)}
+        dark={dark}
+      />
     </SafeAreaView>
   );
 }
 
 function InfoRow({ icon, title, subtitle, onPress, dark }: any) {
+  // An unset subtitle must not be read out as the literal word "undefined".
+  const a11y = subtitle ? `${title}, ${subtitle}` : title;
   return (
-    <TouchableOpacity onPress={onPress} activeOpacity={0.7} style={[st.infoRow, dark && { borderBottomColor: D.divider }]} accessibilityRole="button" accessibilityLabel={`${title}, ${subtitle}`}>
+    <TouchableOpacity onPress={onPress} activeOpacity={0.7} style={[st.infoRow, dark && { borderBottomColor: D.divider }]} accessibilityRole="button" accessibilityLabel={a11y}>
       <Ionicons name={icon} size={17} color={dark ? D.text : L.text} style={{ width: 34, marginTop: 2 }} />
       <View style={{ flex: 1 }}>
         <Txt style={dark ? { ...st.infoTitle, color: D.text } : st.infoTitle}>{title}</Txt>
@@ -358,9 +443,10 @@ export const Profile = ({ navigation }: any) => (
 
 // 2. Settings — "Settings - Revised" frame #125:7465 (in-app title "Profile").
 // showSetStatus surfaces the red "Set Status" link under the name — required by
-// the Provider App v.2 dark Settings (#181:9932); harmless in member light.
+// the Provider App v.2 dark Settings (#181:9932); pal mode only (ProfileBody
+// hides it for members). Settings is also where blocked users are managed.
 export const Settings = ({ navigation }: any) => (
-  <ProfileBody navigation={navigation} onBack={() => navigation.goBack()} showSetStatus />
+  <ProfileBody navigation={navigation} onBack={() => navigation.goBack()} showSetStatus showBlocked />
 );
 
 // ===========================================================================
@@ -387,6 +473,8 @@ export const EditProfile = ({ navigation }: any) => {
   const [newPw, setNewPw] = useState('');
   const [avatar, setAvatar] = useState(u?.avatar);
   const [modal, setModal] = useState<{ title: string; message: string; success?: boolean } | null>(null);
+  const [savingProfile, setSavingProfile] = useState(false);
+  const [savingPassword, setSavingPassword] = useState(false);
 
   const pickImage = async () => {
     try {
@@ -404,6 +492,17 @@ export const EditProfile = ({ navigation }: any) => {
   // via PATCH /profile/me (the server schema is .strict() and rejects them, so
   // including them 400s the whole save). Send only the editable fields.
   const saveProfile = async () => {
+    if (savingProfile) return;
+    // The server requires a non-empty first/last name (updateSchema min(1)) —
+    // name the problem here instead of round-tripping into a generic 400.
+    if (!firstName.trim() || !lastName.trim()) {
+      setModal({
+        title: 'Couldn’t Save Changes',
+        message: 'First and last name are required — please fill them in and save again.',
+      });
+      return;
+    }
+    setSavingProfile(true);
     try {
       await s.updateProfile({
         firstName, lastName, bio,
@@ -419,20 +518,31 @@ export const EditProfile = ({ navigation }: any) => {
       if (avatar && avatar !== u?.avatar && /^https?:\/\//i.test(avatar)) {
         await s.updateProfile({ avatar });
       }
-    } catch {
-      // updateProfile can reject on a network error — surface it instead of
-      // leaving the SAVE button looking dead.
+    } catch (e) {
+      // Surface the failure honestly: a server rejection (validation etc.)
+      // shows the server's verdict — only a genuine network failure blames
+      // the connection.
+      setSavingProfile(false);
+      const serverSaysNo = e instanceof ApiError && e.status > 0;
       setModal({
         title: "Couldn't Save Changes",
-        message: 'Something went wrong while saving your profile. Please check your connection and try again.',
+        message: serverSaysNo
+          ? (e.code === 'validation_error'
+            ? 'The server rejected these changes — please check your entries and try again.'
+            : e.message)
+          : 'Something went wrong while saving your profile. Please check your connection and try again.',
       });
       return;
     }
+    setSavingProfile(false);
     setModal({ title: 'Success!', message: 'User Profile has been Successfully updated', success: true });
   };
 
-  // Second SAVE (after New Password) — password change only.
+  // Second SAVE (after New Password) — password change only. The in-flight
+  // state matters here: a double-tap used to fire TWO change calls, the second
+  // failing against the fresh hash and replacing 'Success!' with an error.
   const savePassword = async () => {
+    if (savingPassword) return;
     // Client-side guard: the server requires a new password of at least 8
     // characters (auth.routes.ts passwordSchema). Short-circuit obviously
     // invalid input before the 400 round-trip and keep the copy in sync.
@@ -443,7 +553,9 @@ export const EditProfile = ({ navigation }: any) => {
       });
       return;
     }
+    setSavingPassword(true);
     const ok = await s.changePassword(currentPw, newPw);
+    setSavingPassword(false);
     if (!ok) {
       setModal({
         title: 'Password Not Changed',
@@ -505,7 +617,7 @@ export const EditProfile = ({ navigation }: any) => {
             <LightField label="Zip Code" value={zip} onChangeText={setZip} keyboardType="number-pad" dark={dark} />
           </View>
 
-          <Cta title="SAVE" onPress={saveProfile} dark={dark} style={{ marginTop: 10 }} />
+          <Cta title="SAVE" onPress={saveProfile} loading={savingProfile} dark={dark} style={{ marginTop: 10 }} />
 
           <View style={[st.fieldWrap, { marginTop: 26 }]}>
             <LightField label="Current Password" value={currentPw} onChangeText={setCurrentPw} secureTextEntry dark={dark} />
@@ -515,7 +627,7 @@ export const EditProfile = ({ navigation }: any) => {
             <LightField label="New Password" value={newPw} onChangeText={setNewPw} secureTextEntry dark={dark} />
           </View>
 
-          <Cta title="SAVE" onPress={savePassword} dark={dark} style={{ marginTop: 10 }} />
+          <Cta title="SAVE" onPress={savePassword} loading={savingPassword} dark={dark} style={{ marginTop: 10 }} />
         </ScrollView>
       </KeyboardAvoidingView>
       <LightModal
@@ -531,64 +643,35 @@ export const EditProfile = ({ navigation }: any) => {
 };
 
 // ===========================================================================
-// 4. Help — light contact form (#125:7401) + full-screen success (#125:7430).
+// 4. Help — support contact (#125:7401 layout, EMAIL CTA). The old in-app
+// composer silently discarded the message (no support endpoint exists), so per
+// product decision the screen opens a prefilled support email instead — the
+// same pattern as scenarios.tsx — and shows no fake success state. Themed to
+// the active role (pal mode renders the Provider v.2 dark kit).
 // ===========================================================================
-function GreenCheck({ size = 96 }: { size?: number }) {
-  return (
-    <Svg width={size} height={size} viewBox="0 0 96 96" fill="none">
-      <Circle cx={48} cy={48} r={41} stroke={L.green} strokeWidth={7} />
-      <Path d="M31 49 L43.5 61.5 L66 37" stroke={L.green} strokeWidth={7} strokeLinecap="round" strokeLinejoin="round" />
-    </Svg>
-  );
-}
+const SUPPORT_EMAIL = 'support@myfavorr.com';
 
 export const Help = ({ navigation }: any) => {
-  const [msg, setMsg] = useState('');
-  const [sent, setSent] = useState(false);
-
-  if (sent) {
-    // Help - Success frame has no header/back — just the check, copy, CONTINUE.
-    return (
-      <SafeAreaView edges={['top']} style={{ flex: 1, backgroundColor: L.bg }}>
-        <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 24 }}>
-          <GreenCheck size={96} />
-          <Txt style={st.successText} center>
-            You’ve successfully{'\n'}submitted your{'\n'}question!
-          </Txt>
-        </View>
-        <View style={{ paddingHorizontal: 24, paddingBottom: 28 }}>
-          <Cta title="CONTINUE" onPress={() => navigation.goBack()} />
-        </View>
-      </SafeAreaView>
-    );
-  }
+  const s = useStore();
+  const dark = s.user?.role === 'pal';
+  // Linking rejects on unsupported platforms (e.g. web) — swallow it.
+  const emailSupport = () => {
+    void Linking.openURL(
+      `mailto:${SUPPORT_EMAIL}?subject=${encodeURIComponent('MyFavor support request')}`,
+    ).catch(() => {});
+  };
 
   return (
-    <SafeAreaView edges={['top']} style={{ flex: 1, backgroundColor: L.bg }}>
-      <LightHeader title="Help" onBack={() => navigation.goBack()} />
-      <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
-        <ScrollView contentContainerStyle={{ flexGrow: 1, padding: 24 }} keyboardShouldPersistTaps="handled">
-          <Txt style={st.helpHeading}>Need help or have a question?</Txt>
-          <Txt style={st.helpSub}>Send us a message</Txt>
-
-          <View style={st.helpBox}>
-            <TextInput
-              style={st.helpInput}
-              value={msg}
-              onChangeText={setMsg}
-              multiline
-              maxLength={700}
-              placeholder="Enter message here"
-              placeholderTextColor={L.placeholder}
-              textAlignVertical="top"
-            />
-          </View>
-          <Txt style={st.helpMax}>700 characters max.</Txt>
-
-          <View style={{ flex: 1 }} />
-          <Cta title="SUBMIT" onPress={() => setSent(true)} disabled={!msg.trim()} style={{ marginTop: 24 }} />
-        </ScrollView>
-      </KeyboardAvoidingView>
+    <SafeAreaView edges={['top']} style={{ flex: 1, backgroundColor: dark ? D.bg : L.bg }}>
+      <LightHeader title="Help" onBack={() => navigation.goBack()} dark={dark} />
+      <View style={{ flex: 1, padding: 24 }}>
+        <Txt style={dark ? { ...st.helpHeading, color: D.text } : st.helpHeading}>Need help or have a question?</Txt>
+        <Txt style={dark ? { ...st.helpSub, color: D.sub } : st.helpSub}>
+          Email our support team at {SUPPORT_EMAIL} and we’ll get back to you as soon as we can.
+        </Txt>
+        <View style={{ flex: 1 }} />
+        <Cta title="EMAIL SUPPORT" onPress={emailSupport} dark={dark} style={{ marginBottom: 28 }} />
+      </View>
     </SafeAreaView>
   );
 };
@@ -631,7 +714,9 @@ export const SideDrawer = ({ navigation }: any) => {
               <Ionicons name="pencil" size={15} color="#FFFFFF" />
             </TouchableOpacity>
           </View>
-          <Txt style={{ ...st.drawerName, color: ink }}>{u?.firstName ?? 'Anton'}</Txt>
+          {/* No placeholder identity: a momentarily-null user renders (and is
+              announced as) nothing rather than the Figma sample name. */}
+          <Txt style={{ ...st.drawerName, color: ink }}>{u?.firstName ?? ''}</Txt>
           <TouchableOpacity onPress={() => go('Tabs', { screen: 'Account' })} hitSlop={6} accessibilityRole="button" accessibilityLabel="View Profile">
             <Txt style={isPal ? { ...st.drawerViewProfile, color: DK.sub } : st.drawerViewProfile}>View Profile</Txt>
           </TouchableOpacity>
@@ -716,9 +801,18 @@ const STATUS_OPTIONS: { key: 'online' | 'invisible' | 'offline'; label: string; 
 export const SetStatus = ({ navigation }: any) => {
   const s = useStore();
   const current = s.user?.status ?? 'online';
-  const choose = (status: 'online' | 'invisible' | 'offline') => {
-    s.setStatus(status);
-    navigation.goBack();
+  // Server-confirmed: only dismiss once the change stuck (the store is
+  // optimistic and reverts user.status itself on failure).
+  const [saving, setSaving] = useState<string | null>(null);
+  const [failed, setFailed] = useState(false);
+  const choose = async (status: 'online' | 'invisible' | 'offline') => {
+    if (saving) return;
+    setSaving(status);
+    setFailed(false);
+    const ok = await s.setStatus(status);
+    if (ok) { navigation.goBack(); return; }
+    setSaving(null);
+    setFailed(true);
   };
   return (
     <Pressable style={[st.scrim, { paddingHorizontal: 28 }]} onPress={() => navigation.goBack()}>
@@ -727,25 +821,31 @@ export const SetStatus = ({ navigation }: any) => {
         <View style={st.statusDivider} />
         {STATUS_OPTIONS.map((opt) => {
           const sel = current === opt.key;
+          const busy = saving === opt.key;
           return (
             <TouchableOpacity
               key={opt.key}
               activeOpacity={0.7}
-              onPress={() => choose(opt.key)}
+              disabled={!!saving}
+              onPress={() => { void choose(opt.key); }}
               accessibilityRole="radio"
               accessibilityLabel={opt.label}
-              accessibilityState={{ selected: sel, checked: sel }}
+              accessibilityState={{ selected: sel, checked: sel, disabled: !!saving, busy }}
             >
               <View style={st.statusRow}>
                 <View style={[st.statusRadio, { borderColor: opt.ring, backgroundColor: opt.dot }]} />
                 <Txt style={{ fontFamily: sel ? fonts.displayMedium : POPPINS_MEDIUM, fontSize: 15, color: opt.color }}>
                   {opt.label}
                 </Txt>
+                {busy ? <ActivityIndicator size="small" color="#FFFFFF" style={{ marginLeft: 'auto' }} /> : null}
               </View>
               <View style={st.statusDivider} />
             </TouchableOpacity>
           );
         })}
+        {failed ? (
+          <Txt style={st.statusError} center>Couldn’t update your status. Please try again.</Txt>
+        ) : null}
       </Pressable>
     </Pressable>
   );
@@ -838,11 +938,16 @@ const st = StyleSheet.create({
 
   // Help
   helpHeading: { fontFamily: fonts.displayMedium, fontSize: 21, color: L.text, marginTop: 14 },
-  helpSub: { fontFamily: fonts.bodyRegular, fontSize: 14, color: L.text, marginTop: 12 },
-  helpBox: { backgroundColor: L.input, borderRadius: 8, height: 160, paddingHorizontal: 14, paddingVertical: 12, marginTop: 18 },
-  helpInput: { flex: 1, fontFamily: fonts.bodyRegular, fontSize: 15, color: L.text, paddingVertical: 0 },
-  helpMax: { fontFamily: fonts.bodyRegular, fontSize: 11.5, color: L.placeholder, textAlign: 'right', marginTop: 8 },
-  successText: { fontFamily: fonts.displayMedium, fontSize: 22, lineHeight: 31, color: L.text, marginTop: 26 },
+  helpSub: { fontFamily: fonts.bodyRegular, fontSize: 14, lineHeight: 21, color: L.text, marginTop: 12 },
+
+  // Blocked users (Settings)
+  blockedHeading: { fontFamily: fonts.displayMedium, fontSize: 15, color: L.text, marginBottom: 4 },
+  blockedRow: {
+    flexDirection: 'row', alignItems: 'center', gap: 12, paddingVertical: 12,
+    borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: L.divider,
+  },
+  blockedName: { flex: 1, fontFamily: fonts.bodyRegular, fontSize: 14, color: L.text },
+  unblockText: { fontFamily: fonts.displayMedium, fontSize: 12.5, letterSpacing: 0.6, color: L.red },
 
   // SideDrawer
   drawer: {
@@ -867,4 +972,5 @@ const st = StyleSheet.create({
   statusDivider: { height: StyleSheet.hairlineWidth, backgroundColor: DK.divider, alignSelf: 'stretch' },
   statusRow: { flexDirection: 'row', alignItems: 'center', gap: 14, paddingVertical: 17 },
   statusRadio: { width: 14, height: 14, borderRadius: 7, borderWidth: 1.5 },
+  statusError: { fontFamily: fonts.bodyRegular, fontSize: 12.5, color: '#ED1C24', marginTop: 14 },
 });

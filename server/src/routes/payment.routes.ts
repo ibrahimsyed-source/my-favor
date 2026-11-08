@@ -39,11 +39,25 @@ paymentRouter.post(
   validate({ body: cardSchema }),
   asyncHandler(async (req, res) => {
     const input = req.body as z.infer<typeof cardSchema>;
-    const count = await prisma.paymentMethod.count({ where: { userId: req.user!.id } });
-    const card = await prisma.paymentMethod.create({
-      data: { ...input, userId: req.user!.id, isDefault: count === 0 },
+    const userId = req.user!.id;
+    // Duplicate guard: the same physical card (brand + last4 + expiry) added
+    // again — e.g. from a second device — returns the existing row (200)
+    // instead of creating a server-side dupe.
+    const existing = await prisma.paymentMethod.findFirst({
+      where: {
+        userId,
+        brand: input.brand,
+        last4: input.last4,
+        expMonth: input.expMonth,
+        expYear: input.expYear,
+      },
     });
-    res.status(201).json({ card: publicCard(card) });
+    if (existing) return res.json({ card: publicCard(existing) });
+    const count = await prisma.paymentMethod.count({ where: { userId } });
+    const card = await prisma.paymentMethod.create({
+      data: { ...input, userId, isDefault: count === 0 },
+    });
+    return res.status(201).json({ card: publicCard(card) });
   }),
 );
 

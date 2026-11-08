@@ -5,7 +5,7 @@ import {
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
-import { useTheme, tokens } from '../theme';
+import { useTheme, tokens, fonts } from '../theme';
 
 // ---------------------------------------------------------------------------
 // Screen: safe-area wrapper with optional scroll + keyboard handling.
@@ -147,7 +147,7 @@ export const Field: React.FC<{
       <View style={[styles.field, { backgroundColor: theme.inputBg }]}>
         {icon && <Ionicons name={icon} size={18} color={theme.textTertiary} style={{ marginRight: 8 }} />}
         <TextInput
-          style={[{ flex: 1, color: theme.text, fontSize: 16, paddingVertical: multiline ? 8 : 0 }, multiline && { height: 100, textAlignVertical: 'top' }]}
+          style={[{ flex: 1, color: theme.text, fontFamily: fonts.bodyRegular, fontSize: 16, paddingVertical: multiline ? 8 : 0 }, multiline && { height: 100, textAlignVertical: 'top' }]}
           value={value}
           onChangeText={onChangeText}
           placeholder={placeholder}
@@ -312,29 +312,6 @@ export const StaticMap: React.FC<{
 };
 
 // ---------------------------------------------------------------------------
-// Row helper (label + value list items)
-// ---------------------------------------------------------------------------
-export const Row: React.FC<{
-  icon?: keyof typeof Ionicons.glyphMap;
-  title: string;
-  subtitle?: string;
-  right?: React.ReactNode;
-  onPress?: () => void;
-}> = ({ icon, title, subtitle, right, onPress }) => {
-  const { theme } = useTheme();
-  return (
-    <TouchableOpacity disabled={!onPress} onPress={onPress} activeOpacity={0.7} style={[styles.row, { borderBottomColor: theme.divider }]}>
-      {icon && <Ionicons name={icon} size={22} color={theme.textSecondary} style={{ marginRight: 14 }} />}
-      <View style={{ flex: 1 }}>
-        <Txt variant="label">{title}</Txt>
-        {subtitle && <Txt variant="caption" color={theme.textSecondary}>{subtitle}</Txt>}
-      </View>
-      {right ?? (onPress && <Ionicons name="chevron-forward" size={18} color={theme.textTertiary} />)}
-    </TouchableOpacity>
-  );
-};
-
-// ---------------------------------------------------------------------------
 // InfoModal — centered white card over a dimmed scrim (Figma "Card Added" /
 // "No Favor Pal Available" alerts). Optional action button; tap-scrim closes.
 // ---------------------------------------------------------------------------
@@ -391,11 +368,11 @@ export const ConfirmModal: React.FC<{
 };
 
 const styles = StyleSheet.create({
-  btn: { height: 54, borderRadius: tokens.radius.sm, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 20 },
+  // v.2 CTA convention: 48h / radius-8 (matches every screen-local CTA).
+  btn: { height: 48, borderRadius: tokens.radius.sm, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 20 },
   modalScrim: { flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', alignItems: 'center', justifyContent: 'center', paddingHorizontal: 28 },
   modalCard: { width: '100%', borderRadius: 18, paddingVertical: 32, paddingHorizontal: 28 },
   field: { flexDirection: 'row', alignItems: 'center', borderRadius: tokens.radius.md, paddingHorizontal: 16, minHeight: 56 },
   card: { borderRadius: tokens.radius.lg, padding: tokens.spacing.base, borderWidth: StyleSheet.hairlineWidth },
   topbar: { height: 52, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 16, borderBottomWidth: StyleSheet.hairlineWidth },
-  row: { flexDirection: 'row', alignItems: 'center', paddingVertical: 16, borderBottomWidth: StyleSheet.hairlineWidth },
 });

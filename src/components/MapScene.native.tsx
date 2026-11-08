@@ -1,4 +1,4 @@
-import React, { useEffect, useRef } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { StyleSheet, Text, View } from 'react-native';
 import MapView, { Circle, Marker } from 'react-native-maps';
 import { Ionicons } from '@expo/vector-icons';
@@ -25,18 +25,28 @@ const EPS = 1e-4;
 const SceneMarker: React.FC<{ m: MapSceneMarker; index: number }> = ({ m, index }) => {
   const coordinate = { latitude: m.lat, longitude: m.lng };
   const key = `${m.kind ?? 'pin'}-${index}`;
+  // Let the custom child rasterize, then stop tracking view changes — Android
+  // re-renders custom marker children every frame otherwise (same pattern as
+  // LiveMap.native's GlidingPalMarker). Re-arm briefly when the rendered
+  // content changes so the frozen bitmap refreshes.
+  const [tracks, setTracks] = useState(true);
+  useEffect(() => {
+    setTracks(true);
+    const t = setTimeout(() => setTracks(false), 1000);
+    return () => clearTimeout(t);
+  }, [m.kind, m.price, m.avatarUri, m.avatarName]);
   switch (m.kind) {
     case 'pal':
       // Live pal position — the My Favor logo badge (same marker the tracking
       // screen's LiveMap uses), not a stock pin.
       return (
-        <Marker key={key} coordinate={coordinate} anchor={{ x: 0.5, y: 0.5 }} onPress={m.onPress}>
+        <Marker key={key} coordinate={coordinate} anchor={{ x: 0.5, y: 0.5 }} onPress={m.onPress} tracksViewChanges={tracks}>
           <PalMarkerBadge size={40} />
         </Marker>
       );
     case 'price':
       return (
-        <Marker key={key} coordinate={coordinate} anchor={{ x: 0.5, y: 1 }} onPress={m.onPress}>
+        <Marker key={key} coordinate={coordinate} anchor={{ x: 0.5, y: 1 }} onPress={m.onPress} tracksViewChanges={tracks}>
           <View style={{ alignItems: 'center' }}>
             <View style={st.priceTag}>
               <Text style={st.priceText}>${Math.round(m.price ?? 0)}</Text>
@@ -47,7 +57,7 @@ const SceneMarker: React.FC<{ m: MapSceneMarker; index: number }> = ({ m, index 
       );
     case 'avatar':
       return (
-        <Marker key={key} coordinate={coordinate} anchor={{ x: 0.5, y: 0.5 }} onPress={m.onPress}>
+        <Marker key={key} coordinate={coordinate} anchor={{ x: 0.5, y: 0.5 }} onPress={m.onPress} tracksViewChanges={tracks}>
           <View style={st.avatarRing}>
             <Avatar uri={m.avatarUri} size={33} name={m.avatarName ?? '?'} />
           </View>
@@ -55,7 +65,7 @@ const SceneMarker: React.FC<{ m: MapSceneMarker; index: number }> = ({ m, index 
       );
     case 'car':
       return (
-        <Marker key={key} coordinate={coordinate} anchor={{ x: 0.5, y: 0.5 }} onPress={m.onPress}>
+        <Marker key={key} coordinate={coordinate} anchor={{ x: 0.5, y: 0.5 }} onPress={m.onPress} tracksViewChanges={tracks}>
           <View style={st.carBubble}>
             <Ionicons name="car" size={20} color={WHITE} />
           </View>
@@ -63,7 +73,7 @@ const SceneMarker: React.FC<{ m: MapSceneMarker; index: number }> = ({ m, index 
       );
     case 'person':
       return (
-        <Marker key={key} coordinate={coordinate} anchor={{ x: 0.5, y: 0.95 }} onPress={m.onPress}>
+        <Marker key={key} coordinate={coordinate} anchor={{ x: 0.5, y: 0.95 }} onPress={m.onPress} tracksViewChanges={tracks}>
           <View style={{ width: 46, height: 46 }}>
             <Ionicons name="location" size={46} color={RED} />
             <Ionicons name="person" size={16} color={WHITE} style={{ position: 'absolute', top: 8, left: 15 }} />
@@ -72,7 +82,7 @@ const SceneMarker: React.FC<{ m: MapSceneMarker; index: number }> = ({ m, index 
       );
     default: // 'pin'
       return (
-        <Marker key={key} coordinate={coordinate} anchor={{ x: 0.5, y: 0.95 }} onPress={m.onPress}>
+        <Marker key={key} coordinate={coordinate} anchor={{ x: 0.5, y: 0.95 }} onPress={m.onPress} tracksViewChanges={tracks}>
           <Ionicons name="location" size={42} color={RED} />
         </Marker>
       );

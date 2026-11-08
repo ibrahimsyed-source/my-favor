@@ -2,7 +2,7 @@ import React, { createContext, useContext, useMemo, useState, useCallback, useEf
 import { Platform } from 'react-native';
 import {
   User, Favor, FavorOffer, PaymentCard, Transaction, Thread, Message, AppNotification,
-  Role, UserStatus, FavorTier, GeoPoint, FavorStatus, computeFees, computePayout,
+  Role, UserStatus, FavorTier, GeoPoint, FavorStatus,
 } from '../types';
 import { setSession, clearSession, getStoredRefresh, getStoredUser, setStoredUser, ApiError, setOnSessionExpired, setOnAccountSuspended } from '../api/client';
 import { startLocationBroadcast } from '../lib/location';
@@ -10,6 +10,7 @@ import { registerForPushNotificationsAsync } from '../lib/notifications';
 import {
   signupApi, verifyOtpApi, loginApi, logoutApi, deleteAccountApi, changePasswordApi,
   getConfigApi, getMeApi, updateProfileApi, setRoleApi, verifyPalApi, setStatusApi, getPalsApi, getPalApi,
+  updatePushTokenApi,
   createFavorApi, getFavorsApi, getActiveFavorApi, getFavorApi, getIncomingApi,
   acceptFavorApi, declineFavorApi, abandonFavorApi, assignPalApi, advanceFavorApi, updateFavorLocationApi, finishFavorApi, cancelFavorApi, rateFavorApi, rateMemberApi,
   acceptOfferApi,
@@ -17,7 +18,7 @@ import {
   getPaymentsConfigApi, createSetupCheckoutApi, syncCardsApi, connectOnboardApi, connectStatusApi,
   getThreadsApi, getMessagesApi, sendMessageApi, createThreadApi,
   getNotificationsApi, markNotificationReadApi, markAllNotificationsReadApi,
-  reportUserApi, blockUserApi, getBlockedApi,
+  reportUserApi, blockUserApi, unblockUserApi, getBlockedApi,
 } from '../api/endpoints';
 
 // ---------------------------------------------------------------------------
@@ -93,12 +94,18 @@ interface StoreValue {
   verifyOtp: (code: string) => Promise<boolean>;
   submitVetting: (data: { legalFirstName: string; legalLastName: string; dateOfBirth: string; consent: boolean }) => Promise<'approved' | 'rejected' | 'error'>;
   login: (email: string, password: string) => Promise<'ok' | 'unverified' | 'invalid' | 'error' | 'suspended'>;
-  logout: () => void;
-  deleteAccount: () => Promise<void>;
+  // Fully sequenced sign-out: unregister the push token (best-effort), revoke
+  // the refresh token, clear storage, THEN reset state — so a quick re-login
+  // can never have its fresh session wiped by a trailing cleanup.
+  logout: () => Promise<void>;
+  // Honest result: only clears the session/state when the server confirmed the
+  // deletion — false means the account is still live (surface an error).
+  deleteAccount: () => Promise<boolean>;
   updateProfile: (patch: Partial<User>) => Promise<void>;
   changePassword: (current: string, next: string) => Promise<boolean>;
-  setRole: (role: Role) => void;
-  setStatus: (status: UserStatus) => void;
+  // Optimistic with revert: false means the switch didn't stick server-side.
+  setRole: (role: Role) => Promise<boolean>;
+  setStatus: (status: UserStatus) => Promise<boolean>;
 
   // favors
   pals: User[];
@@ -118,13 +125,24 @@ interface StoreValue {
   palCanceled: boolean;
   clearPalCanceled: () => void;
   memberCanceled: boolean;
+  // True when the pal denied location permission while assigned to a live favor
+  // — the pal screens explain why the member can't see them approaching.
+  locationDenied: boolean;
   clearMemberCanceled: () => void;
   palById: (id?: string) => User | undefined;
   history: Favor[];
-  requestFavor: () => Promise<Favor>;
-  advanceFavor: (status: FavorStatus) => void;
-  cancelFavor: () => void;
-  rateFavor: (rating: number, feedback: string, tip?: number) => void;
+  // One active request per member: pre-gated on an ACTIVE activeMemberFavor
+  // (code 'active_exists' — screens surface a "VIEW CURRENT FAVOR" modal).
+  // A missing confirmed location also returns ok:false with its own reason.
+  requestFavor: () => Promise<{ ok: true; favor: Favor } | { ok: false; reason: string; code?: 'active_exists' }>;
+  // Optimistic, but on API failure REVERTS the pal slot to the prior status
+  // and returns false so the screen can surface the failed advance.
+  advanceFavor: (status: FavorStatus) => Promise<boolean>;
+  // Awaits the server BEFORE mutating state; success returns the server's
+  // authoritative cancellation fee/refund. Failure leaves state untouched.
+  cancelFavor: () => Promise<{ ok: boolean; fee?: number; refund?: number; reason?: string }>;
+  // Awaits; success clears the slot + refreshes history; failure leaves state.
+  rateFavor: (rating: number, feedback: string, tip?: number) => Promise<boolean>;
   // pal side
   incomingFavors: Favor[];
   refreshIncoming: () => Promise<void>;
@@ -139,18 +157,23 @@ interface StoreValue {
   // Re-pull the active favor from the server (e.g. a pal learning their offer
   // was accepted while they had nothing active to poll on).
   refreshActive: () => Promise<Favor | null>;
-  declineFavor: (favorId: string) => void;
+  // On API failure the favor is restored into incomingFavors and false returned.
+  declineFavor: (favorId: string) => Promise<boolean>;
   abandonFavor: () => Promise<boolean>;
   assignPal: (palId: string) => Promise<boolean>;
-  finishFavorAsPal: () => number;
+  // Awaits POST /finish. Success returns the server's payout + ledgerStatus
+  // ('incomplete' = recorded but not yet collectable); failure reconciles to
+  // server truth and returns ok:false with the server's message.
+  finishFavorAsPal: () => Promise<{ ok: boolean; payout?: number; ledgerStatus?: 'completed' | 'incomplete'; reason?: string }>;
   // Pal rates the member for a finished favor. Pass the favor id from the
   // navigation params (survives app restarts); null falls back to the favor
   // finished this session. Resolves false when nothing was persisted.
   rateMember: (favorId: string | null, rating: number, feedback: string) => Promise<boolean>;
-  // moderation
+  // moderation — all await the server; false means nothing was persisted.
   blockedUsers: string[];
-  reportUser: (userId: string, reason?: string) => void;
-  blockUser: (userId: string) => void;
+  reportUser: (userId: string, reason?: string) => Promise<boolean>;
+  blockUser: (userId: string) => Promise<boolean>;
+  unblockUser: (userId: string) => Promise<boolean>;
 
   // payments
   cards: PaymentCard[];
@@ -170,8 +193,16 @@ interface StoreValue {
   // messaging
   threads: Thread[];
   messagesFor: (threadId: string) => Message[];
+  // Optimistic insert; a failed send stays in the thread flagged `failed: true`
+  // ("Not delivered — tap to retry") instead of silently vanishing.
   sendMessage: (threadId: string, text: string) => void;
+  // Re-send a message whose send failed (clears the flag while in flight).
+  retrySendMessage: (messageId: string) => void;
   refreshMessages: (threadId: string) => Promise<void>;
+  // Page further back through a thread's history ("Load earlier messages"):
+  // fetches the page before the oldest loaded message and merges it in.
+  // Resolves true when a page arrived (more history may exist).
+  loadEarlierMessages: (threadId: string) => Promise<boolean>;
   refreshThreads: () => Promise<void>;
   openThreadWith: (userId: string) => Promise<string | null>; // get/create a thread, returns its id
 
@@ -215,6 +246,7 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
   const [palFavor, setPalFavor] = useState<Favor | null>(null);
   const [palCanceled, setPalCanceled] = useState(false);
   const [memberCanceled, setMemberCanceled] = useState(false);
+  const [locationDenied, setLocationDenied] = useState(false);
   const [history, setHistory] = useState<Favor[]>([]);
   const [incomingFavors, setIncomingFavors] = useState<Favor[]>([]);
   const [cards, setCards] = useState<PaymentCard[]>([]);
@@ -242,8 +274,13 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
   // canceled" and rewind the match.
   const lastFavorWriteRef = useRef(0);
   // Remember the favor a pal just finished, so the post-completion screen can
-  // submit the pal's rating of the member for the right favor.
+  // submit the pal's rating of the member for the right favor — and so the poll
+  // never mistakes OUR OWN in-flight finish for a member cancellation.
   const lastFinishedRef = useRef<string | null>(null);
+  // Session epoch, bumped by resetState. Every bulk loader captures it at start
+  // and discards its results if it changed — an in-flight loader for a logged-
+  // out account can never repopulate (or clobber) the next session's state.
+  const sessionEpochRef = useRef(0);
 
   const mergePal = useCallback((p: User) => {
     setPals((list) => (list.find((x) => x.id === p.id) ? list : [...list, p]));
@@ -253,6 +290,7 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
   const loadAll = useCallback(async (u: User) => {
     // Every account can both request and fulfill favors, so the open-favors
     // board is loaded for everyone (the API excludes the caller's own favors).
+    const epoch = sessionEpochRef.current;
     const [favors, active, cardList, txns, earn, thr, notes, palList, blocked, incoming, payCfg] =
       await Promise.allSettled([
         getFavorsApi(), getActiveFavorApi(), getCardsApi(), getTransactionsApi(), getEarningsApi(),
@@ -260,6 +298,7 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
         getIncomingApi(),
         getPaymentsConfigApi(),
       ]);
+    if (epoch !== sessionEpochRef.current) return; // session changed mid-flight — stale data
 
     if (favors.status === 'fulfilled') setHistory(favors.value.favors);
     if (active.status === 'fulfilled') {
@@ -284,6 +323,9 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
   }, []);
 
   const resetState = useCallback(() => {
+    sessionEpochRef.current += 1; // invalidate every in-flight loader for the old session
+    lastFavorWriteRef.current = 0;
+    lastFinishedRef.current = null;
     setUser(null); setPendingDest(null); setDraftFavor(null);
     setMemberFavor(null); setPalFavor(null); setPalCanceled(false); setMemberCanceled(false);
     setHistory([]); setIncomingFavors([]); setCards([]); setTransactions([]); setEarnings([]);
@@ -361,20 +403,26 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     const id = setInterval(async () => {
       try {
         const startedAt = Date.now();
+        const epoch = sessionEpochRef.current;
         const res = await getActiveFavorApi();
         // A response whose request started before the last confirmed local write
         // is a stale snapshot of the world — skip it; the next tick is fresh.
-        if (startedAt <= lastFavorWriteRef.current) return;
+        // Likewise discard a tick that outlived its session (logout mid-flight).
+        if (startedAt <= lastFavorWriteRef.current || epoch !== sessionEpochRef.current) return;
         const { member: mf, pal: pf } = splitActive(res, uid);
 
         // -- member slot (my own request) --
         const curM = memberFavorRef.current;
         if (!mf) {
-          if (curM) {
+          // A completed-but-unrated favor is parked locally until rated — the
+          // server's active set never includes it, so an empty slot must not
+          // clobber it (the rating prompt would vanish).
+          if (curM && curM.status !== 'completed') {
             // Left the active set: the pal completed it (surface the final record
             // so tracking can prompt a rating) or it ended some other way.
             try {
               const { favor: final } = await getFavorApi(curM.id);
+              if (epoch !== sessionEpochRef.current) return;
               setMemberFavor(final && final.status === 'completed' ? final : null);
             } catch { setMemberFavor(null); }
           }
@@ -409,10 +457,12 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
           // The favor left my pal slot without MY doing (my own finish/abandon
           // clears it locally first): the member cancelled. Clear the slot and
           // raise the notice so the in-progress screens show a canceled state
-          // instead of ghost "I'M HERE"/"CANCEL" buttons.
+          // instead of ghost "I'M HERE"/"CANCEL" buttons. NOT a cancellation
+          // when WE finished it — a tick racing our own in-flight /finish must
+          // not flash "the member canceled" over a success screen.
           if (curP) {
             setPalFavor(null);
-            setMemberCanceled(true);
+            if (curP.id !== lastFinishedRef.current) setMemberCanceled(true);
           }
         } else if (
           curP && curP.id === pf.id &&
@@ -443,11 +493,17 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     if (!palBroadcastFavorId) return;
     let stop: (() => void) | undefined;
     let cancelled = false;
-    void startLocationBroadcast((lat, lng) => {
-      // Fire-and-forget; a rejected update (favor ended, permission lost) just
-      // means the next tick won't post — the member's poll handles staleness.
-      void updateFavorLocationApi(palBroadcastFavorId, lat, lng).catch(() => undefined);
-    }).then((s) => {
+    setLocationDenied(false);
+    void startLocationBroadcast(
+      (lat, lng) => {
+        // Fire-and-forget; a rejected update (favor ended, permission lost) just
+        // means the next tick won't post — the member's poll handles staleness.
+        void updateFavorLocationApi(palBroadcastFavorId, lat, lng).catch(() => undefined);
+      },
+      // Permission denied: surface it so the pal screens can explain why the
+      // member can't see them approaching (instead of a silent dead map).
+      () => { if (!cancelled) setLocationDenied(true); },
+    ).then((s) => {
       if (cancelled) s();
       else stop = s;
     });
@@ -545,19 +601,32 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     }
   }, [loadAll]);
 
-  const logout = useCallback(() => {
-    void (async () => {
-      const refresh = await getStoredRefresh();
-      if (refresh) await logoutApi(refresh).catch(() => undefined);
-      await clearSession();
-    })();
+  const logout = useCallback(async () => {
+    // Unregister the device's push token FIRST (best-effort, needs the session):
+    // otherwise this account's pushes — including private message previews —
+    // keep landing on a device its owner no longer controls.
+    await updatePushTokenApi(null).catch(() => undefined);
+    const refresh = await getStoredRefresh();
+    if (refresh) await logoutApi(refresh).catch(() => undefined);
+    // AWAIT the storage wipe before resetting state (which flips the navigator
+    // to Login) — a quick re-login can then never race a trailing clearSession
+    // that would delete ITS freshly-stored tokens.
+    await clearSession();
     resetState();
   }, [resetState]);
 
-  const deleteAccount = useCallback(async () => {
-    await deleteAccountApi().catch(() => undefined);
+  const deleteAccount = useCallback(async (): Promise<boolean> => {
+    // Only sign out once the server CONFIRMED the deletion — wiping the session
+    // on a failed call would fake the "account deleted" outcome while the
+    // account is still fully live.
+    try {
+      await deleteAccountApi();
+    } catch {
+      return false;
+    }
     await clearSession();
     resetState();
+    return true;
   }, [resetState]);
 
   const updateProfile = useCallback(async (patch: Partial<User>) => {
@@ -571,8 +640,7 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       // The server revokes every session on a password change but returns a
       // fresh pair for THIS device — persist it, otherwise this device keeps its
       // now-revoked refresh token and 401s into a zombie session ~15m later.
-      const res = (await changePasswordApi(current, next)) as
-        { ok: boolean; accessToken?: string; refreshToken?: string };
+      const res = await changePasswordApi(current, next);
       if (res.accessToken && res.refreshToken) {
         await setSession({ accessToken: res.accessToken, refreshToken: res.refreshToken });
       }
@@ -582,23 +650,54 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     }
   }, []);
 
-  const setRole = useCallback((role: Role) => {
+  const setRole = useCallback(async (role: Role): Promise<boolean> => {
+    const prev = user?.role;
     setUser((u) => (u ? { ...u, role } : u)); // optimistic
-    void setRoleApi(role)
-      .then(({ user: u }) => { setUser(u); return loadAll(u); })
-      .catch(() => undefined);
-  }, [loadAll]);
+    try {
+      const { user: u } = await setRoleApi(role);
+      setUser(u);
+      await setStoredUser(u); // persist, so a cold start restores the right role
+      await loadAll(u);
+      return true;
+    } catch {
+      // Revert so the dashboard can't diverge from the server's role.
+      if (prev) setUser((u) => (u ? { ...u, role: prev } : u));
+      return false;
+    }
+  }, [user, loadAll]);
 
-  const setStatus = useCallback((status: UserStatus) => {
+  const setStatus = useCallback(async (status: UserStatus): Promise<boolean> => {
+    const prev = user?.status;
     setUser((u) => (u ? { ...u, status } : u)); // optimistic
-    void setStatusApi(status).catch(() => undefined);
-  }, []);
+    try {
+      const { user: u } = await setStatusApi(status);
+      setUser(u);
+      await setStoredUser(u);
+      return true;
+    } catch {
+      if (prev) setUser((u) => (u ? { ...u, status: prev } : u));
+      return false;
+    }
+  }, [user]);
 
   // ---- favors ----
   const setDraft = useCallback((patch: Partial<Favor>) => setDraftFavor((d) => ({ ...d, ...patch })), []);
   const clearDraft = useCallback(() => setDraftFavor(null), []);
 
-  const requestFavor = useCallback(async () => {
+  const requestFavor = useCallback(async (): Promise<
+    { ok: true; favor: Favor } | { ok: false; reason: string; code?: 'active_exists' }
+  > => {
+    // One active request per member (the UI has exactly one member slot): a
+    // still-active favor must be finished or cancelled first. A parked
+    // completed-unrated favor doesn't count — it's just awaiting a rating.
+    const cur = memberFavorRef.current;
+    if (cur && ACTIVE.includes(cur.status)) {
+      return {
+        ok: false,
+        reason: 'Finish or cancel your current favor before requesting another.',
+        code: 'active_exists',
+      };
+    }
     const d = draftFavor ?? {};
     const tier = (d.tier as FavorTier) ?? 'tiny';
     // A real confirmed location is REQUIRED — a favor silently pinned to a demo
@@ -606,85 +705,96 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     // request flow guarantees one via ConfirmAddress before this is callable.
     const location = d.location as GeoPoint | undefined;
     if (!location || typeof location.lat !== 'number') {
-      throw new Error('location_required');
+      return { ok: false, reason: 'Please confirm the favor location before requesting.' };
     }
-    const { favor } = await createFavorApi({
-      tier,
-      ...(d.price != null ? { price: d.price } : {}),
-      description: d.description ?? '',
-      images: d.images ?? [],
-      location,
-      ...(d.scheduledFor != null ? { scheduledFor: d.scheduledFor } : {}),
-      ...(d.hours != null ? { hours: d.hours } : {}),
-    });
-    setMemberFavor(favor);
-    lastFavorWriteRef.current = Date.now();
-    setDraftFavor(null); // clear the draft so the next favor starts fresh
-    void getFavorsApi().then(({ favors }) => setHistory(favors)).catch(() => undefined);
-    return favor;
+    try {
+      const { favor } = await createFavorApi({
+        tier,
+        ...(d.price != null ? { price: d.price } : {}),
+        description: d.description ?? '',
+        images: d.images ?? [],
+        location,
+        ...(d.scheduledFor != null ? { scheduledFor: d.scheduledFor } : {}),
+        ...(d.hours != null ? { hours: d.hours } : {}),
+      });
+      setMemberFavor(favor);
+      setPalCanceled(false); // a stale "your pal canceled" notice never applies to a new favor
+      lastFavorWriteRef.current = Date.now();
+      setDraftFavor(null); // clear the draft so the next favor starts fresh
+      void getFavorsApi().then(({ favors }) => setHistory(favors)).catch(() => undefined);
+      return { ok: true, favor };
+    } catch (e: any) {
+      // The server enforces the same one-active-favor rule with a 409.
+      if (e?.status === 409) return { ok: false, reason: e?.message || 'Finish or cancel your current favor before requesting another.', code: 'active_exists' };
+      return { ok: false, reason: e?.message || 'Could not request this favor. Please try again.' };
+    }
   }, [draftFavor]);
 
-  const advanceFavor = useCallback((status: FavorStatus) => {
+  const advanceFavor = useCallback(async (status: FavorStatus): Promise<boolean> => {
     const id = palFavor?.id;
-    if (!id) return; // no favor to advance (e.g. the member just cancelled it)
+    const prevStatus = palFavor?.status;
+    if (!id || !prevStatus) return false; // no favor to advance (e.g. the member just cancelled it)
     setPalFavor((f) => (f ? { ...f, status } : f)); // optimistic
-    if (['enroute', 'arrived', 'in_progress'].includes(status)) {
-      void advanceFavorApi(id, status)
-        .then(({ favor }) => { setPalFavor(favor); lastFavorWriteRef.current = Date.now(); })
-        .catch(() => undefined);
+    if (!['enroute', 'arrived', 'in_progress'].includes(status)) return true; // local-only stage
+    try {
+      const { favor } = await advanceFavorApi(id, status);
+      setPalFavor(favor);
+      lastFavorWriteRef.current = Date.now();
+      return true;
+    } catch {
+      // Revert to the prior status — leaving the UI ahead of the server would
+      // strand the member unnotified and make the eventual finish 409.
+      setPalFavor((f) => (f && f.id === id ? { ...f, status: prevStatus } : f));
+      return false;
     }
   }, [palFavor]);
 
-  const cancelFavor = useCallback(() => {
+  const cancelFavor = useCallback(async (): Promise<{ ok: boolean; fee?: number; refund?: number; reason?: string }> => {
     const id = memberFavor?.id;
-    const uid = user?.id ?? '';
-    setMemberFavor((f) => {
-      if (f) setHistory((h) => [{ ...f, status: 'cancelled' }, ...h]);
-      return null;
-    });
-    setPalCanceled(false);
-    lastFavorWriteRef.current = Date.now();
-    if (id) {
-      void cancelFavorApi(id)
-        .then(() => { lastFavorWriteRef.current = Date.now(); return Promise.all([getFavorsApi(), getTransactionsApi()]); })
+    if (!id) return { ok: false, reason: 'No active favor to cancel.' };
+    // Server-confirmed BEFORE any state change: the quoted fee can be stale (the
+    // pal may have advanced in the poll gap), so the modal must confirm the
+    // server's authoritative number — and a failed cancel leaves state untouched
+    // (the favor is still live; a pal may be en route).
+    try {
+      const { favor, cancellation } = await cancelFavorApi(id);
+      lastFavorWriteRef.current = Date.now();
+      setMemberFavor(null);
+      setPalCanceled(false);
+      setHistory((h) => [favor, ...h.filter((x) => x.id !== favor.id)]);
+      void Promise.all([getFavorsApi(), getTransactionsApi()])
         .then(([f, t]) => { setHistory(f.favors); setTransactions(t.transactions); })
-        .catch(() => {
-          // Cancel failed server-side: the favor is still live (a pal may be en
-          // route). Restore server truth so member and pal don't desync.
-          void Promise.all([getActiveFavorApi(), getFavorsApi()])
-            .then(([a, f]) => { setMemberFavor(splitActive(a, uid).member); setHistory(f.favors); })
-            .catch(() => undefined);
-        });
+        .catch(() => undefined);
+      return { ok: true, fee: cancellation.fee, refund: cancellation.refund };
+    } catch (e: any) {
+      return { ok: false, reason: e?.message || 'Could not cancel this favor. Please try again.' };
     }
-  }, [memberFavor, user]);
+  }, [memberFavor]);
 
-  const rateFavor = useCallback((rating: number, feedback: string, tip?: number) => {
-    const id = memberFavor?.id;
-    const uid = user?.id ?? '';
-    setMemberFavor((f) => {
-      if (f) setHistory((h) => [{ ...f, status: 'completed', rating, feedback, tip }, ...h]);
-      return null;
-    });
-    lastFavorWriteRef.current = Date.now();
-    if (id) {
-      void rateFavorApi(id, { rating, feedback: feedback ?? '', ...(tip ? { tip } : {}) })
-        .then(() => getFavorsApi())
-        .then(({ favors }) => setHistory(favors))
-        .catch(() => {
-          // Rating/tip failed server-side: restore server truth so the favor
-          // isn't silently stranded as "completed" with an uncharged tip.
-          void Promise.all([getActiveFavorApi(), getFavorsApi()])
-            .then(([a, f]) => { setMemberFavor(splitActive(a, uid).member); setHistory(f.favors); })
-            .catch(() => undefined);
-        });
+  const rateFavor = useCallback(async (rating: number, feedback: string, tip?: number): Promise<boolean> => {
+    const f = memberFavor;
+    if (!f) return false;
+    // Server-confirmed: a failed rating/tip must leave the favor parked so the
+    // user can retry, not silently strand it as "rated" with an uncharged tip.
+    try {
+      const { favor } = await rateFavorApi(f.id, { rating, feedback: feedback ?? '', ...(tip ? { tip } : {}) });
+      lastFavorWriteRef.current = Date.now();
+      setMemberFavor(null);
+      setHistory((h) => [favor, ...h.filter((x) => x.id !== favor.id)]);
+      void getFavorsApi().then(({ favors }) => setHistory(favors)).catch(() => undefined);
+      return true;
+    } catch {
+      return false;
     }
-  }, [memberFavor, user]);
+  }, [memberFavor]);
 
   // Re-fetch the open-favors feed (pull-to-refresh / focus on the browse list).
   const refreshIncoming = useCallback(async () => {
     if (!user) return;
+    const epoch = sessionEpochRef.current;
     try {
       const { favors } = await getIncomingApi();
+      if (epoch !== sessionEpochRef.current) return;
       setIncomingFavors(favors);
     } catch {
       /* ignore transient errors */
@@ -752,9 +862,21 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
 
   const refreshActive = useCallback(async (): Promise<Favor | null> => {
     try {
+      const startedAt = Date.now();
+      const epoch = sessionEpochRef.current;
       const res = await getActiveFavorApi();
+      // Same stale-snapshot rules as the 4s poll: a response whose request
+      // started before the last confirmed local write (or that outlived its
+      // session) must not clobber fresh state — e.g. a favor confirmed while
+      // this GET was in flight.
+      if (startedAt <= lastFavorWriteRef.current || epoch !== sessionEpochRef.current) {
+        return palFavorRef.current ?? memberFavorRef.current;
+      }
       const { member, pal } = splitActive(res, user?.id ?? '');
-      setMemberFavor(member);
+      // Preserve a completed-but-unrated member favor: it's parked locally to
+      // drive the rating prompt and the server's active set never includes it.
+      const curM = memberFavorRef.current;
+      setMemberFavor(!member && curM?.status === 'completed' ? curM : member);
       setPalFavor(pal);
       // Callers use this to learn about a remotely-started job (e.g. an offer
       // the member accepted) — the pal-side favor is the interesting one.
@@ -764,10 +886,19 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     }
   }, [user]);
 
-  const declineFavor = useCallback((favorId: string) => {
-    setIncomingFavors((list) => list.filter((x) => x.id !== favorId));
-    void declineFavorApi(favorId).catch(() => undefined);
-  }, []);
+  const declineFavor = useCallback(async (favorId: string): Promise<boolean> => {
+    const prev = incomingFavors.find((x) => x.id === favorId);
+    setIncomingFavors((list) => list.filter((x) => x.id !== favorId)); // optimistic
+    try {
+      await declineFavorApi(favorId);
+      return true;
+    } catch {
+      // Nothing was persisted — restore the favor so the dismissal isn't
+      // silently dropped (the next feed refresh would resurrect it anyway).
+      if (prev) setIncomingFavors((list) => (list.find((x) => x.id === favorId) ? list : [prev, ...list]));
+      return false;
+    }
+  }, [incomingFavors]);
 
   // A pal steps back from an accepted favor: it returns to the open board and
   // the member's request lives on (never stranded). Clears the pal's active slot.
@@ -801,34 +932,45 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     }
   }, [memberFavor]);
 
-  const finishFavorAsPal = useCallback(() => {
+  const finishFavorAsPal = useCallback(async (): Promise<{ ok: boolean; payout?: number; ledgerStatus?: 'completed' | 'incomplete'; reason?: string }> => {
     const f = palFavor;
     const uid = user?.id ?? '';
-    const { payout } = computePayout(f?.price ?? 20, f?.tip ?? 0);
-    if (f) {
-      const optimistic: Transaction = {
+    if (!f) return { ok: false, reason: 'No active favor to finish.' };
+    // Stamp BEFORE the request fires: any poll tick that starts while /finish is
+    // in flight is discarded as stale, so it can't resurrect the slot mid-finish.
+    // lastFinishedRef marks this as OUR finish so an empty pal slot in a racing
+    // tick is never misread as "the member canceled".
+    lastFavorWriteRef.current = Date.now();
+    lastFinishedRef.current = f.id;
+    try {
+      const { payout, ledgerStatus } = await finishFavorApi(f.id);
+      lastFavorWriteRef.current = Date.now();
+      setPalFavor(null);
+      // Local echo of the ledgers until the refresh lands (replaced wholesale).
+      const echo: Transaction = {
         id: `pending_${f.id}`, favorId: f.id,
         title: (f.description && f.description.slice(0, 40)) || 'Favor',
-        amount: payout, status: 'completed', date: f.createdAt, kind: 'earning',
+        amount: payout, status: ledgerStatus === 'incomplete' ? 'incomplete' : 'completed',
+        date: Date.now(), kind: 'earning',
       };
-      setEarnings((e) => [optimistic, ...e]);
-      setHistory((h) => [{ ...f, palId: user?.id, status: 'completed' }, ...h]);
-      lastFinishedRef.current = f.id;
-      void finishFavorApi(f.id)
-        .then(() => { lastFavorWriteRef.current = Date.now(); return Promise.all([getEarningsApi(), getFavorsApi()]); })
+      setEarnings((e) => [echo, ...e]);
+      setHistory((h) => [{ ...f, palId: uid, status: 'completed' }, ...h]);
+      void Promise.all([getEarningsApi(), getFavorsApi()])
         .then(([e, hist]) => { setEarnings(e.earnings); setHistory(hist.favors); })
-        .catch(() => {
-          // The favor is still in_progress server-side; reconcile to server truth
-          // so the phantom earning/history clear and the favor can be re-finished.
-          lastFinishedRef.current = null;
-          void Promise.all([getActiveFavorApi(), getEarningsApi(), getFavorsApi()])
-            .then(([a, e, hist]) => { setPalFavor(splitActive(a, uid).pal); setEarnings(e.earnings); setHistory(hist.favors); })
-            .catch(() => undefined);
-        });
+        .catch(() => undefined);
+      return { ok: true, payout, ledgerStatus };
+    } catch (e: any) {
+      // The finish didn't happen (409 not-completable / network): reconcile to
+      // server truth so the slot reflects reality and the favor can be retried.
+      lastFinishedRef.current = null;
+      try {
+        const [a, earn, hist] = await Promise.all([getActiveFavorApi(), getEarningsApi(), getFavorsApi()]);
+        setPalFavor(splitActive(a, uid).pal);
+        setEarnings(earn.earnings);
+        setHistory(hist.favors);
+      } catch { /* keep local state; the poll reconciles */ }
+      return { ok: false, reason: e?.message || 'Could not complete the favor. Please try again.' };
     }
-    setPalFavor(null);
-    lastFavorWriteRef.current = Date.now();
-    return payout;
   }, [palFavor, user]);
 
   // Pal rates the member they just helped (persists to the finished favor).
@@ -846,18 +988,40 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
   }, []);
 
   // ---- moderation ----
-  const reportUser = useCallback((userId: string, reason?: string) => {
+  const reportUser = useCallback(async (userId: string, reason?: string): Promise<boolean> => {
+    // Server-confirmed: the "Report received" confirmation only appears once the
+    // report actually exists. (local_ rows survive refreshNotifications.)
+    try {
+      await reportUserApi(userId, reason);
+    } catch {
+      return false;
+    }
     setNotifications((n) => [
       { id: `local_${userId}_${Date.now()}_${localSeq++}`, type: 'general', title: 'Report received',
         body: 'Thanks — our Trust & Safety team will review this shortly.', date: Date.now(), read: false },
       ...n,
     ]);
-    void reportUserApi(userId, reason).catch(() => undefined);
+    return true;
   }, []);
 
-  const blockUser = useCallback((userId: string) => {
+  const blockUser = useCallback(async (userId: string): Promise<boolean> => {
+    try {
+      await blockUserApi(userId);
+    } catch {
+      return false;
+    }
     setBlockedUsers((b) => (b.includes(userId) ? b : [...b, userId]));
-    void blockUserApi(userId).catch(() => undefined);
+    return true;
+  }, []);
+
+  const unblockUser = useCallback(async (userId: string): Promise<boolean> => {
+    try {
+      await unblockUserApi(userId);
+    } catch {
+      return false;
+    }
+    setBlockedUsers((b) => b.filter((x) => x !== userId));
+    return true;
   }, []);
 
   // ---- payments ----
@@ -870,8 +1034,16 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
   }, []);
 
   const removeCard = useCallback((id: string) => {
-    setCards((c) => c.filter((x) => x.id !== id)); // optimistic
-    void removeCardApi(id).catch(() => undefined);
+    let removed: PaymentCard | undefined;
+    setCards((c) => {
+      removed = c.find((x) => x.id === id);
+      return c.filter((x) => x.id !== id);
+    });
+    // A failed DELETE must not hide a card that still exists server-side (it
+    // would silently resurrect on the next sync) — restore it.
+    void removeCardApi(id).catch(() => {
+      if (removed) setCards((c) => (c.find((x) => x.id === id) ? c : [...c, removed!]));
+    });
   }, []);
 
   // Cash out the available balance; refresh the ledger so the summary updates.
@@ -936,7 +1108,7 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
   const messagesFor = useCallback((threadId: string) => messages.filter((m) => m.threadId === threadId), [messages]);
 
   const sendMessage = useCallback((threadId: string, text: string) => {
-    const optimistic: Message = { id: `pending_${Date.now()}`, threadId, fromMe: true, text, createdAt: Date.now() };
+    const optimistic: Message = { id: `pending_${Date.now()}_${localSeq++}`, threadId, fromMe: true, text, createdAt: Date.now() };
     setMessages((m) => [...m, optimistic]);
     setThreads((t) => t.map((th) => (th.id === threadId ? { ...th, lastMessage: text, unread: 0 } : th)));
     void sendMessageApi(threadId, text)
@@ -948,31 +1120,81 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
         return replaced.filter((x) => (seen.has(x.id) ? false : (seen.add(x.id), true)));
       }))
       .catch(() => {
-        // Send failed (offline / server error): remove the optimistic bubble so a
-        // message that never reached the other side doesn't read as delivered.
-        setMessages((m) => m.filter((x) => x.id !== optimistic.id));
+        // Send failed (offline / server error): keep the bubble but flag it, so
+        // the user SEES the failure and can tap to retry — never silently drop
+        // their text.
+        setMessages((m) => m.map((x) => (x.id === optimistic.id ? { ...x, failed: true } : x)));
       });
   }, []);
 
+  // Re-send a message whose send failed. The bubble keeps its id (the flag just
+  // toggles while in flight) so the screen's list stays stable.
+  const retrySendMessage = useCallback((messageId: string) => {
+    const msg = messages.find((x) => x.id === messageId && x.failed);
+    if (!msg) return;
+    setMessages((m) => m.map((x) => (x.id === messageId ? { ...x, failed: false } : x)));
+    void sendMessageApi(msg.threadId, msg.text)
+      .then(({ message }) => setMessages((m) => {
+        const replaced = m.map((x) => (x.id === messageId ? message : x));
+        const seen = new Set<string>();
+        return replaced.filter((x) => (seen.has(x.id) ? false : (seen.add(x.id), true)));
+      }))
+      .catch(() => {
+        setMessages((m) => m.map((x) => (x.id === messageId ? { ...x, failed: true } : x)));
+      });
+  }, [messages]);
+
   // Live-ish messaging: re-fetch a thread's messages (polled while it's open).
-  // Keep any still-in-flight optimistic (pending_) sends so a poll mid-send
-  // doesn't make the user's just-sent bubble vanish.
+  // Keep any still-in-flight optimistic (pending_) sends — failed ones included
+  // — so a poll mid-send doesn't make the user's just-sent bubble vanish.
   const refreshMessages = useCallback(async (threadId: string) => {
+    const epoch = sessionEpochRef.current;
     try {
       const { messages: m } = await getMessagesApi(threadId);
+      if (epoch !== sessionEpochRef.current) return;
       setMessages((prev) => {
         const others = prev.filter((x) => x.threadId !== threadId);
         const pending = prev.filter((x) => x.threadId === threadId && x.id.startsWith('pending_'));
-        return [...others, ...m, ...pending];
+        // The server returns only the NEWEST page — keep any older history the
+        // user already paged in (loadEarlierMessages) instead of wiping it.
+        const ids = new Set(m.map((x) => x.id));
+        const older = prev.filter((x) => x.threadId === threadId && !x.id.startsWith('pending_') && !ids.has(x.id));
+        return [...others, ...older, ...m, ...pending];
       });
     } catch {
       /* ignore */
     }
   }, []);
 
+  // Page further back through a thread's history: fetch the page BEFORE the
+  // oldest loaded message and prepend it. True = a page arrived (there may be
+  // more); false = no older history (or the fetch failed).
+  const loadEarlierMessages = useCallback(async (threadId: string): Promise<boolean> => {
+    const loaded = messages.filter((x) => x.threadId === threadId && !x.id.startsWith('pending_'));
+    const oldest = loaded[0];
+    if (!oldest) return false;
+    const epoch = sessionEpochRef.current;
+    try {
+      const { messages: page } = await getMessagesApi(threadId, oldest.id);
+      if (epoch !== sessionEpochRef.current || page.length === 0) return false;
+      setMessages((prev) => {
+        const ids = new Set(prev.map((x) => x.id));
+        const fresh = page.filter((x) => !ids.has(x.id));
+        const rest = prev.filter((x) => x.threadId !== threadId);
+        const current = prev.filter((x) => x.threadId === threadId);
+        return [...rest, ...fresh, ...current];
+      });
+      return true;
+    } catch {
+      return false;
+    }
+  }, [messages]);
+
   const refreshThreads = useCallback(async () => {
+    const epoch = sessionEpochRef.current;
     try {
       const { threads: t } = await getThreadsApi();
+      if (epoch !== sessionEpochRef.current) return;
       setThreads(t);
     } catch {
       /* ignore */
@@ -993,7 +1215,8 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
   // ---- notifications ----
   const markNotificationRead = useCallback((id: string) => {
     setNotifications((n) => n.map((x) => (x.id === id ? { ...x, read: true } : x)));
-    void markNotificationReadApi(id).catch(() => undefined);
+    // local_ rows are client-only — the server has no row to mark.
+    if (!id.startsWith('local_')) void markNotificationReadApi(id).catch(() => undefined);
   }, []);
 
   const markAllNotificationsRead = useCallback(() => {
@@ -1002,9 +1225,13 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
   }, []);
 
   const refreshNotifications = useCallback(async () => {
+    const epoch = sessionEpochRef.current;
     try {
       const { notifications: n } = await getNotificationsApi();
-      setNotifications(n);
+      if (epoch !== sessionEpochRef.current) return;
+      // Merge, don't replace: client-only local_ rows (e.g. "Report received")
+      // have no server counterpart and must survive every refresh.
+      setNotifications((prev) => [...prev.filter((x) => x.id.startsWith('local_')), ...n]);
     } catch {
       /* ignore */
     }
@@ -1024,7 +1251,12 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     const id = setInterval(() => {
       void refreshNotifications();
       void refreshThreads();
-      if (!memberFavorRef.current && !palFavorRef.current) void refreshActive();
+      // Gate on ACTIVE status, not mere non-null: a completed-but-unrated member
+      // favor parked for the rating prompt must not block discovering a remote
+      // booking (the 4s poll doesn't run for it either).
+      const mActive = !!memberFavorRef.current && ACTIVE.includes(memberFavorRef.current.status);
+      const pActive = !!palFavorRef.current && ACTIVE.includes(palFavorRef.current.status);
+      if (!mActive && !pActive) void refreshActive();
     }, 20000);
     return () => clearInterval(id);
   }, [user, refreshNotifications, refreshThreads, refreshActive]);
@@ -1040,23 +1272,23 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       pals, draftFavor, setDraft, clearDraft,
       activeMemberFavor: memberFavor, activePalFavor: palFavor,
       activePal: palById(memberFavor?.palId) ?? null, palById, history,
-      palCanceled, clearPalCanceled, memberCanceled, clearMemberCanceled,
+      palCanceled, clearPalCanceled, memberCanceled, clearMemberCanceled, locationDenied,
       requestFavor, advanceFavor, cancelFavor, rateFavor, incomingFavors, refreshIncoming, acceptFavor,
       acceptOffer, refreshActive,
       declineFavor, abandonFavor, assignPal, finishFavorAsPal, rateMember,
-      blockedUsers, reportUser, blockUser,
+      blockedUsers, reportUser, blockUser, unblockUser,
       cards, addCard, removeCard, transactions, earnings, cashOut,
       paymentsLive, startAddCard, syncCards, connectOnboard, connectStatus,
-      threads, messagesFor, sendMessage, refreshMessages, refreshThreads, openThreadWith,
+      threads, messagesFor, sendMessage, retrySendMessage, refreshMessages, loadEarlierMessages, refreshThreads, openThreadWith,
       notifications, markNotificationRead, markAllNotificationsRead, refreshNotifications,
     }),
     [user, restoring, maintenance, updateRequired, suspended, recheckConfig, signup, verifyOtp, submitVetting, login, logout, deleteAccount, updateProfile, changePassword, setRole, setStatus,
-      pals, draftFavor, setDraft, clearDraft, memberFavor, palFavor, palCanceled, clearPalCanceled, memberCanceled, clearMemberCanceled, palById, history, requestFavor, advanceFavor, cancelFavor,
+      pals, draftFavor, setDraft, clearDraft, memberFavor, palFavor, palCanceled, clearPalCanceled, memberCanceled, clearMemberCanceled, locationDenied, palById, history, requestFavor, advanceFavor, cancelFavor,
       rateFavor, incomingFavors, refreshIncoming, acceptFavor, acceptOffer, refreshActive, declineFavor, abandonFavor, assignPal, finishFavorAsPal, rateMember, blockedUsers, reportUser,
-      blockUser, cards, addCard, removeCard, transactions, earnings, cashOut,
+      blockUser, unblockUser, cards, addCard, removeCard, transactions, earnings, cashOut,
       paymentsLive, startAddCard, syncCards, connectOnboard, connectStatus,
-      threads, messagesFor, sendMessage,
-      refreshMessages, refreshThreads, openThreadWith, notifications, markNotificationRead, markAllNotificationsRead, refreshNotifications]
+      threads, messagesFor, sendMessage, retrySendMessage,
+      refreshMessages, loadEarlierMessages, refreshThreads, openThreadWith, notifications, markNotificationRead, markAllNotificationsRead, refreshNotifications]
   );
 
   return <StoreContext.Provider value={value}>{children}</StoreContext.Provider>;

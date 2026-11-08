@@ -202,6 +202,31 @@ export function SignupLogin({ navigation }: any) {
 // ---------------------------------------------------------------------------
 type Phase = 'todo' | 'pending' | 'done';
 
+// MM/DD/YYYY → Date, rejecting impossible dates (13/05/1990, 02/30/2000, …):
+// new Date(y, m, d) rolls overflow values forward, so round-tripping the parts
+// detects them.
+function parseDob(value: string): Date | null {
+  const m = /^(\d{2})\/(\d{2})\/(\d{4})$/.exec(value);
+  if (!m) return null;
+  const [mm, dd, yyyy] = [Number(m[1]), Number(m[2]), Number(m[3])];
+  const d = new Date(yyyy, mm - 1, dd);
+  return d.getFullYear() === yyyy && d.getMonth() === mm - 1 && d.getDate() === dd ? d : null;
+}
+
+// Inline DOB problem (format / impossible date / under 18), or '' when fine.
+// Catching these client-side keeps a date typo from reading as a failed
+// background check — the rejection screen is reserved for true rejections.
+function dobProblem(value: string): string {
+  const d = parseDob(value);
+  if (!d) return 'Enter your date of birth as MM/DD/YYYY.';
+  const now = new Date();
+  if (d.getTime() > now.getTime()) return 'Date of birth can’t be in the future.';
+  let age = now.getFullYear() - d.getFullYear();
+  if (now.getMonth() < d.getMonth() || (now.getMonth() === d.getMonth() && now.getDate() < d.getDate())) age -= 1;
+  if (age < 18) return 'You must be 18 or older to become a Favor Pal.';
+  return '';
+}
+
 export function Vetting({ navigation }: any) {
   const { theme } = useTheme();
   const s = useStore();
@@ -211,6 +236,24 @@ export function Vetting({ navigation }: any) {
   const [middleName, setMiddleName] = useState('');
   const [lastName, setLastName] = useState('');
   const [dob, setDob] = useState('');
+  const [dobError, setDobError] = useState('');
+
+  // MM/DD/YYYY input mask: digits only, slashes inserted automatically — but
+  // not re-forced while deleting, so backspace can travel across them.
+  const onDobChange = (t: string) => {
+    let next = t;
+    if (t.length >= dob.length) {
+      const d = t.replace(/\D/g, '').slice(0, 8);
+      next = d.length > 4
+        ? `${d.slice(0, 2)}/${d.slice(2, 4)}/${d.slice(4)}`
+        : d.length > 2
+        ? `${d.slice(0, 2)}/${d.slice(2)}`
+        : d;
+    }
+    setDob(next);
+    // Surface format/age problems as soon as the date is complete.
+    setDobError(next.length === 10 ? dobProblem(next) : '');
+  };
 
   // Driver Requirements checklist (5 items required) + background-check consent.
   const [phases, setPhases] = useState<Record<string, Phase>>({
@@ -306,6 +349,10 @@ export function Vetting({ navigation }: any) {
 
   const submit = async () => {
     if (submitting) return;
+    // Validate the DOB before anything leaves the device — a malformed date
+    // would otherwise read server-side as a failed background check.
+    const problem = dobProblem(dob.trim());
+    if (problem) { setDobError(problem); return; }
     setSubmitting(true);
     setSubmitError('');
     // Submit the vetting application to the server, which records the identity
@@ -322,7 +369,8 @@ export function Vetting({ navigation }: any) {
       s.setRole('pal');
       setSubmitted(true);
     } else if (result === 'rejected') {
-      // Background check didn't clear (e.g. under 18) — show the rejection screen.
+      // A true server-side rejection (background check didn't clear) — format
+      // and age mistakes are caught inline above and never reach this screen.
       navigation.navigate('PalApplicationRejected');
     } else {
       setSubmitError('We couldn’t submit your application. Please check your details and try again.');
@@ -345,7 +393,6 @@ export function Vetting({ navigation }: any) {
           </Txt>
           <Button
             title="Back to dashboard"
-            uppercase={false}
             onPress={() => navigation.navigate('Tabs')}
             style={{ alignSelf: 'stretch', marginTop: 32 }}
           />
@@ -389,7 +436,12 @@ export function Vetting({ navigation }: any) {
         <Field label="Legal middle name" value={middleName} onChangeText={setMiddleName} placeholder="Middle name (optional)" autoCapitalize="words" />
         <Field label="Legal last name" value={lastName} onChangeText={setLastName} placeholder="Last name" autoCapitalize="words" />
 
-        <Field label="Date of birth" value={dob} onChangeText={setDob} placeholder="MM/DD/YYYY" keyboardType="numbers-and-punctuation" maxLength={10} />
+        <Field label="Date of birth" value={dob} onChangeText={onDobChange} placeholder="MM/DD/YYYY" keyboardType="number-pad" maxLength={10} />
+        {dobError ? (
+          <Txt variant="caption" color={theme.danger} style={{ marginTop: -8, marginBottom: 12 }}>
+            {dobError}
+          </Txt>
+        ) : null}
 
         {/* ---- Driver Requirements ---- */}
         <Txt variant="h4" style={{ marginTop: 8 }}>Driver Requirements</Txt>
@@ -480,7 +532,6 @@ export function Vetting({ navigation }: any) {
         ) : null}
         <Button
           title="Finish applying"
-          uppercase={false}
           disabled={!canSubmit || submitting}
           loading={submitting}
           onPress={submit}

@@ -73,6 +73,9 @@ export interface Favor {
   palId?: string;
   tier: FavorTier;
   price: number; // base price
+  // The price the member originally listed the favor at. Set at create; an
+  // abandoned favor reopens at this number (not the current negotiated price).
+  listPrice?: number;
   description: string;
   images: string[];
   location: GeoPoint;
@@ -163,6 +166,10 @@ export interface Message {
   fromMe: boolean;
   text: string;
   createdAt: number;
+  // Client-only: the send failed (offline/server error). The bubble stays in the
+  // thread with a "Not delivered — tap to retry" affordance; retrySendMessage
+  // clears the flag and re-sends. Never present on server-persisted messages.
+  failed?: boolean;
 }
 
 export interface Thread {

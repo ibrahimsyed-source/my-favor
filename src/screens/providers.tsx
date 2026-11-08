@@ -1,7 +1,7 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import {
   View, ScrollView, StyleSheet, TouchableOpacity, Pressable, Modal, Image,
-  useWindowDimensions,
+  useWindowDimensions, ActivityIndicator,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
@@ -10,7 +10,7 @@ import { Txt, Button, Avatar } from '../components';
 import { MapScene, MAP_SCENE_SUPPORTED } from '../components/MapScene';
 import { GEOCODE_FALLBACK } from '../lib/geocode';
 import { useStore } from '../store';
-import { getPalReviewsApi } from '../api/endpoints';
+import { getPalReviewsApi, getPalsApi } from '../api/endpoints';
 import { Review } from '../types';
 
 // ---------------------------------------------------------------------------
@@ -64,6 +64,42 @@ const fmtShort = (ms: number) => {
 const palArea = (p: { city?: string; state?: string }) =>
   p.city ? `${p.city}${p.state ? `, ${p.state}` : ''}` : 'Nearby';
 
+// The display fields the discovery screens read. GET /profile/pals returns a
+// reduced pal shape, so default the stats (mirrors the store's own widening).
+type DirPal = {
+  id: string; firstName: string; lastName: string; avatar?: string; bio?: string;
+  city?: string; state?: string; rating: number; totalFavors: number;
+  yearsActive: number; reliability: number; positiveReviews: number;
+};
+const asDirPal = (p: any): DirPal => ({
+  id: p.id ?? '',
+  firstName: p.firstName ?? '',
+  lastName: p.lastName ?? '',
+  avatar: p.avatar,
+  bio: p.bio,
+  city: p.city,
+  state: p.state,
+  rating: p.rating ?? 0,
+  totalFavors: p.totalFavors ?? 0,
+  yearsActive: p.yearsActive ?? 0,
+  reliability: p.reliability ?? 0,
+  positiveReviews: p.positiveReviews ?? 0,
+});
+
+// Floating back control over the map — both discovery screens hide the stack
+// header, so without it the only exits were the OS back gestures.
+const MapBackButton: React.FC<{ onPress: () => void; top: number }> = ({ onPress, top }) => (
+  <TouchableOpacity
+    onPress={onPress}
+    style={[styles.mapBack, { top }]}
+    accessibilityRole="button"
+    accessibilityLabel="Go back"
+    hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+  >
+    <Ionicons name="arrow-back" size={22} color={INK} />
+  </TouchableOpacity>
+);
+
 // Full-bleed map backdrop. Native: a REAL map of the favor location, dimmed
 // like the v.2 frames (the design's gaussian blur has no RN equivalent — the
 // scrim alone stands in for it, same trade as BeAFavorPalModal's backdrop).
@@ -105,7 +141,7 @@ const BeAFavorPalModal: React.FC<{
   onClose: () => void;
   onSwitch: () => void;
 }> = ({ visible, onClose, onSwitch }) => (
-  <Modal visible={visible} transparent animationType="fade" onRequestClose={onClose}>
+  <Modal visible={visible} transparent animationType="fade" onRequestClose={onClose} accessibilityViewIsModal>
     <Pressable style={styles.modalBackdrop} onPress={onClose} accessibilityLabel="Dismiss">
       <Pressable style={styles.modalCard} onPress={() => undefined}>
         <Txt style={styles.modalTitle}>Be A Favor Pal</Txt>
@@ -141,6 +177,28 @@ export const ProviderResults = ({ navigation }: any) => {
   const insets = useSafeAreaInsets();
   const [fontsLoaded] = useFonts({ Poppins_400Regular, Poppins_400Regular_Italic });
   const [showPalModal, setShowPalModal] = useState(false);
+  // The store's `pals` is only loaded at login/role-switch, so the directory
+  // refreshes on every focus — with honest loading/empty/error states instead
+  // of a permanently blank row when the login-time fetch failed.
+  const [list, setList] = useState<DirPal[]>(pals);
+  const [dirState, setDirState] = useState<'loading' | 'ready' | 'error'>(pals.length ? 'ready' : 'loading');
+
+  const refresh = useCallback(async () => {
+    // A previously-loaded list keeps showing while the refresh runs silently.
+    setDirState((cur) => (cur === 'ready' ? cur : 'loading'));
+    try {
+      const { pals: fresh } = await getPalsApi();
+      setList(fresh.map(asDirPal));
+      setDirState('ready');
+    } catch {
+      setDirState((cur) => (cur === 'ready' ? cur : 'error'));
+    }
+  }, []);
+
+  useEffect(() => {
+    const unsub = navigation.addListener('focus', () => { void refresh(); });
+    return unsub;
+  }, [navigation, refresh]);
 
   if (!fontsLoaded) return <View style={{ flex: 1, backgroundColor: '#FFFFFF' }} />;
 
@@ -171,6 +229,8 @@ export const ProviderResults = ({ navigation }: any) => {
         />
       )}
 
+      <MapBackButton onPress={() => navigation.goBack()} top={insets.top + 12} />
+
       {/* Bottom sheet */}
       <View style={[styles.sheet, { paddingBottom: Math.max(insets.bottom, 34) + 23 }]}>
         <View style={styles.handle} />
@@ -178,32 +238,58 @@ export const ProviderResults = ({ navigation }: any) => {
           {'Click on a Favor Pal near you\nto do your favor!'}
         </Txt>
         <View style={styles.divider} />
-        <ScrollView
-          horizontal
-          showsHorizontalScrollIndicator={false}
-          contentContainerStyle={styles.cardRow}
-        >
-          {pals.map((pal, i) => (
-            <TouchableOpacity
-              key={pal.id}
-              activeOpacity={0.85}
-              style={styles.palCard}
-              accessibilityRole="button"
-              accessibilityLabel={`${pal.firstName} ${pal.lastName}, ${pal.rating.toFixed(1)} stars, ${palArea(pal)}. View details`}
-              onPress={() => navigation.navigate('ProviderDetail', { palId: pal.id })}
-            >
-              <Avatar uri={pal.avatar} size={80} name={pal.firstName} />
-              <Txt numberOfLines={1} style={styles.palName}>
-                {pal.firstName} {pal.lastName}
-              </Txt>
-              <View style={styles.rateRow}>
-                <Ionicons name="star" size={18} color={STAR} />
-                <Txt style={styles.rateText}>{pal.rating > 0 ? pal.rating.toFixed(1) : 'New'}</Txt>
-              </View>
-              <Txt style={styles.palDistance}>{palArea(pal)}</Txt>
-            </TouchableOpacity>
-          ))}
-        </ScrollView>
+        {dirState === 'loading' && list.length === 0 ? (
+          <View style={styles.dirStateWrap}>
+            <ActivityIndicator color={INK} />
+          </View>
+        ) : dirState === 'error' && list.length === 0 ? (
+          <View style={styles.dirStateWrap}>
+            <Txt style={styles.dirStateText}>
+              We couldn’t load Favor Pals. Please check your connection and try again.
+            </Txt>
+            <Button
+              title="TRY AGAIN"
+              variant="primary"
+              onPress={() => { void refresh(); }}
+              style={{ marginTop: 16, alignSelf: 'center', paddingHorizontal: 40 }}
+            />
+          </View>
+        ) : list.length === 0 ? (
+          <View style={styles.dirStateWrap}>
+            <Txt style={styles.dirStateText}>
+              No Favor Pals are available right now. Check back soon!
+            </Txt>
+          </View>
+        ) : (
+          <ScrollView
+            horizontal
+            showsHorizontalScrollIndicator={false}
+            contentContainerStyle={styles.cardRow}
+          >
+            {list.map((pal) => (
+              <TouchableOpacity
+                key={pal.id}
+                activeOpacity={0.85}
+                style={styles.palCard}
+                accessibilityRole="button"
+                accessibilityLabel={`${pal.firstName} ${pal.lastName}, ${pal.rating > 0 ? `${pal.rating.toFixed(1)} stars` : 'New'}, ${palArea(pal)}. View details`}
+                // Pass the freshly-fetched record too: a pal vetted after login
+                // isn't in the store's list, and Detail must not 404 on them.
+                onPress={() => navigation.navigate('ProviderDetail', { palId: pal.id, pal })}
+              >
+                <Avatar uri={pal.avatar} size={80} name={pal.firstName} />
+                <Txt numberOfLines={1} style={styles.palName}>
+                  {pal.firstName} {pal.lastName}
+                </Txt>
+                <View style={styles.rateRow}>
+                  <Ionicons name="star" size={18} color={STAR} />
+                  <Txt style={styles.rateText}>{pal.rating > 0 ? pal.rating.toFixed(1) : 'New'}</Txt>
+                </View>
+                <Txt style={styles.palDistance}>{palArea(pal)}</Txt>
+              </TouchableOpacity>
+            ))}
+          </ScrollView>
+        )}
       </View>
 
       <BeAFavorPalModal
@@ -226,7 +312,8 @@ const FavorPalProfile: React.FC<{
   reviews: Review[];
   onBack: () => void;
   onBook: () => void;
-}> = ({ pal, reviews, onBack, onBook }) => {
+  booking?: boolean;
+}> = ({ pal, reviews, onBack, onBook, booking }) => {
   const insets = useSafeAreaInsets();
   return (
     <View style={{ flex: 1, backgroundColor: '#FFFFFF', paddingTop: insets.top }}>
@@ -310,6 +397,7 @@ const FavorPalProfile: React.FC<{
           title="BOOK NOW"
           variant="primary"
           onPress={onBook}
+          loading={booking}
           style={{ marginHorizontal: 24, marginTop: 24 }}
         />
       </ScrollView>
@@ -322,17 +410,27 @@ const FavorPalProfile: React.FC<{
 // the pal header, stats, bio and the latest review quote.
 // ---------------------------------------------------------------------------
 export const ProviderDetail = ({ navigation, route }: any) => {
-  const { pals, assignPal } = useStore();
+  const { pals, assignPal, activeMemberFavor, blockedUsers } = useStore();
   const { width } = useWindowDimensions();
   const insets = useSafeAreaInsets();
   const [fontsLoaded] = useFonts({ Poppins_400Regular, Poppins_400Regular_Italic });
   // Strictly the routed pal — the old `?? pals[0]` silently showed (and could
-  // BOOK) the wrong person when the id wasn't in the directory.
-  const pal = pals.find((p) => p.id === route?.params?.palId);
+  // BOOK) the wrong person when the id wasn't in the directory. The snapshot
+  // ProviderResults passes covers pals fetched after login (same id, so it is
+  // never a different person).
+  const routedId = route?.params?.palId;
+  const snapshot: DirPal | undefined =
+    route?.params?.pal && route.params.pal.id === routedId ? route.params.pal : undefined;
+  const pal = pals.find((p) => p.id === routedId) ?? snapshot;
 
   // Real reviews members have left for this pal (fetched from the backend).
+  // Every hook lives ABOVE the early returns below — a render that crosses
+  // them (pal dropping out of the directory, fonts flipping) must not change
+  // the hook count and crash the whole app.
   const [palRevs, setPalRevs] = useState<Review[]>([]);
   const [showProfile, setShowProfile] = useState(false);
+  const [bookError, setBookError] = useState('');
+  const [booking, setBooking] = useState(false);
   const palId = pal?.id;
   useEffect(() => {
     if (!palId) return;
@@ -357,14 +455,34 @@ export const ProviderDetail = ({ navigation, route }: any) => {
 
   // Bind the chosen pal to the active favor (core of the tracking flow), then
   // track. Server-confirmed: only navigate once the booking actually landed.
-  const [bookError, setBookError] = useState('');
+  // The failure copy is derived from what actually blocks the booking — never
+  // "post a favor first" at a member who has one.
+  const BOOKABLE = ['requested'];
+  const ACTIVE_STATUSES = ['requested', 'matched', 'enroute', 'arrived', 'in_progress'];
   const book = async () => {
-    setShowProfile(false);
+    if (booking) return; // in-flight guard — a second tap must not re-book
+    const fail = (msg: string) => { setShowProfile(false); setBookError(msg); };
+    if (blockedUsers.includes(pal.id)) {
+      fail('You’ve blocked this pal. Unblock them from Settings if you’d like to book them.');
+      return;
+    }
+    const f = activeMemberFavor;
+    if (!f || !ACTIVE_STATUSES.includes(f.status)) {
+      fail('You need an open favor request to book a pal — post a favor first, then book them from here.');
+      return;
+    }
+    if (!BOOKABLE.includes(f.status)) {
+      fail('Your current favor already has a pal. Finish or cancel it before booking someone else.');
+      return;
+    }
+    setBooking(true);
     const ok = await assignPal(pal.id);
+    setBooking(false);
+    setShowProfile(false);
     if (ok) navigation.navigate('FavorTracking');
     else {
       setBookError(
-        'Booking failed. You need an open favor request to book a pal — post a favor first, then book them from here.',
+        'The booking didn’t go through — your favor may have just been matched, or this pal may no longer be available. Please try again.',
       );
     }
   };
@@ -372,6 +490,8 @@ export const ProviderDetail = ({ navigation, route }: any) => {
   return (
     <View style={{ flex: 1, backgroundColor: '#FFFFFF' }}>
       <MapBackdrop />
+
+      <MapBackButton onPress={() => navigation.goBack()} top={insets.top + 12} />
 
       {/* Bottom sheet — top edge at 320/896 of the frame */}
       <View style={[styles.detailSheet, { top: 320 * s }]}>
@@ -444,17 +564,19 @@ export const ProviderDetail = ({ navigation, route }: any) => {
         visible={showProfile}
         animationType="slide"
         onRequestClose={() => setShowProfile(false)}
+        accessibilityViewIsModal
       >
         <FavorPalProfile
           pal={pal}
           reviews={palRevs}
           onBack={() => setShowProfile(false)}
           onBook={book}
+          booking={booking}
         />
       </Modal>
 
-      {/* Booking failed (usually: no open favor request to attach the pal to). */}
-      <Modal visible={!!bookError} transparent animationType="fade" onRequestClose={() => setBookError('')}>
+      {/* Booking failed — copy set by book() names the actual blocker. */}
+      <Modal visible={!!bookError} transparent animationType="fade" onRequestClose={() => setBookError('')} accessibilityViewIsModal>
         <View style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', alignItems: 'center', justifyContent: 'center', padding: 24 }}>
           <View style={{ backgroundColor: '#FFFFFF', borderRadius: 16, padding: 24, width: '100%', maxWidth: 351 }}>
             <Txt style={{ fontSize: 17, textAlign: 'center' }}>Couldn't book this pal</Txt>
@@ -517,6 +639,21 @@ const styles = StyleSheet.create({
     backgroundColor: HAIRLINE,
     marginHorizontal: 23,
   },
+  mapBack: {
+    position: 'absolute',
+    left: 16,
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    backgroundColor: '#FFFFFF',
+    alignItems: 'center',
+    justifyContent: 'center',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.2,
+    shadowRadius: 6,
+    elevation: 6,
+  },
 
   // ---- Provider Results ----------------------------------------------------
   resultsTitle: {
@@ -564,6 +701,19 @@ const styles = StyleSheet.create({
     color: GRAY,
     textAlign: 'center',
     marginTop: 4,
+  },
+  dirStateWrap: {
+    paddingHorizontal: 32,
+    paddingTop: 28,
+    paddingBottom: 4,
+    alignItems: 'center',
+  },
+  dirStateText: {
+    fontFamily: P_REG,
+    fontSize: 14,
+    lineHeight: 21,
+    color: GRAY,
+    textAlign: 'center',
   },
 
   // ---- Provider Detail -----------------------------------------------------

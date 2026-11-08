@@ -43,6 +43,11 @@ const PIN_AVATAR = require('../../assets/img/request/pin-avatar.png');
 type TierKey = keyof typeof FAVOR_TIERS;
 const TIER_KEYS: TierKey[] = ['tiny', 'small', 'big', 'huge'];
 
+// TIERS image sizes/offsets are calibrated for the request flow's 75px mask;
+// scale them to this screen's 64px tileImgBox so the art stays centred exactly
+// like SelectFavor instead of cropping toward the top-left.
+const TILE_ART_SCALE = 64 / 75;
+
 // (The frame's six decorative "nearby pal" pins are gone on purpose: no pal
 // position data exists outside an active favor's GPS stream, so the member map
 // shows only REAL things — their own position and radius.)
@@ -553,12 +558,19 @@ function MemberHome({ navigation }: any) {
                 <View style={styles.tileImgBox}>
                   <Image
                     source={t.img}
-                    style={{ position: 'absolute', left: t.dx, top: t.dy, width: t.w, height: t.h, opacity: 0.9 }}
+                    style={{
+                      position: 'absolute',
+                      left: t.dx * TILE_ART_SCALE,
+                      top: t.dy * TILE_ART_SCALE,
+                      width: t.w * TILE_ART_SCALE,
+                      height: t.h * TILE_ART_SCALE,
+                      opacity: 0.9,
+                    }}
                     resizeMode="stretch"
                   />
                 </View>
                 <Text style={styles.tileName}>{FAVOR_TIERS[key].label.replace(' Favor', '')}</Text>
-                <Text style={styles.tilePrice}>${FAVOR_TIERS[key].price}</Text>
+                <Text style={styles.tilePrice}>${FAVOR_TIERS[key].price.toFixed(2)}</Text>
               </TouchableOpacity>
             );
           })}
@@ -697,15 +709,19 @@ const styles = StyleSheet.create({
   h1: { fontFamily: P600, fontSize: 24, lineHeight: 34, color: WHITE, marginTop: 26 },
   lead: { fontFamily: P400, fontSize: 13, lineHeight: 19, color: SUB_DARK, marginTop: 6, paddingRight: 30 },
 
-  // Tier tiles
+  // Tier tiles — flexed (not a fixed 4×82 sum) so the row fits 320–430pt
+  // screens: tiles share the width equally, capped at the frame's 82pt, with
+  // columnGap as the minimum gutter on narrow devices.
   tileRow: {
     flexDirection: 'row',
     justifyContent: 'space-between',
+    columnGap: 6,
     paddingHorizontal: 23,
     marginTop: 22,
   },
   tile: {
-    width: 82,
+    flex: 1,
+    maxWidth: 82,
     borderRadius: 8,
     backgroundColor: WHITE,
     alignItems: 'center',

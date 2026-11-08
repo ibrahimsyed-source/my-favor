@@ -6,7 +6,9 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { useFonts, Poppins_400Regular } from '@expo-google-fonts/poppins';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useStore } from '../store';
+import { getEarningsApi } from '../api/endpoints';
 import { Favor, Transaction } from '../types';
 
 // ---------------------------------------------------------------------------
@@ -104,37 +106,70 @@ function groupByMonth(items: Transaction[]) {
 // ---------------------------------------------------------------------------
 // Lightweight payout-account state, shared across the three screens in this
 // file (the global store is owned by another module and must not be touched).
-// A pal starts NOT connected — they only become payout-ready after saving valid
-// bank details in BankInfo — instead of the old screen pre-claiming a fake
-// "Stripe *1234" as connected on first visit.
+// Keyed by the signed-in user's id and persisted to AsyncStorage, so a saved
+// bank (a) survives app relaunches and (b) never leaks to another account on
+// the same device (switching users swaps to THEIR saved account, or the
+// disconnected default). A pal starts NOT connected — they only become
+// payout-ready after saving valid bank details in BankInfo.
 // ---------------------------------------------------------------------------
 const PAYOUT_LAST4 = '6789'; // matches the bank-info account (…789) the seed earnings paid to
 const bankLabel = (last4: string) => `Bank ****${last4}`;
 
 type AccountType = 'Savings' | 'Checking';
 type PayoutAccount = { connected: boolean; last4: string; accountType: AccountType };
-let _payout: PayoutAccount = { connected: false, last4: PAYOUT_LAST4, accountType: 'Savings' };
+const DEFAULT_PAYOUT: PayoutAccount = { connected: false, last4: PAYOUT_LAST4, accountType: 'Savings' };
+let _payout: PayoutAccount = DEFAULT_PAYOUT;
+let _payoutUserId: string | null = null;
 const _payoutSubs = new Set<() => void>();
+const notifyPayoutSubs = () => _payoutSubs.forEach((fn) => fn());
+const payoutKey = (userId: string) => `myfavor:payout:${userId}`;
+
+function persistPayout() {
+  if (!_payoutUserId) return;
+  void AsyncStorage.setItem(payoutKey(_payoutUserId), JSON.stringify(_payout)).catch(() => undefined);
+}
+
+// Swap the in-memory state to `userId`'s saved account (or the disconnected
+// default while loading / when they never saved one / after sign-out).
+function loadPayoutFor(userId: string | null) {
+  _payoutUserId = userId;
+  _payout = DEFAULT_PAYOUT;
+  notifyPayoutSubs();
+  if (!userId) return;
+  void AsyncStorage.getItem(payoutKey(userId))
+    .then((raw) => {
+      if (!raw || _payoutUserId !== userId) return; // user switched mid-load
+      _payout = { ...DEFAULT_PAYOUT, ...(JSON.parse(raw) as Partial<PayoutAccount>) };
+      notifyPayoutSubs();
+    })
+    .catch(() => undefined);
+}
 
 function connectPayout(last4: string) {
   _payout = { ..._payout, connected: true, last4 };
-  _payoutSubs.forEach((fn) => fn());
+  persistPayout();
+  notifyPayoutSubs();
 }
 
 // v.2 Accounts frame carries a Savings ◉ / Checking ○ radio group — shared so
 // the choice made on Accounts and on the Bank Information form stay in sync.
 function setAccountType(t: AccountType) {
   _payout = { ..._payout, accountType: t };
-  _payoutSubs.forEach((fn) => fn());
+  persistPayout();
+  notifyPayoutSubs();
 }
 
-function usePayoutAccount(): PayoutAccount {
+function usePayoutAccount(userId?: string): PayoutAccount {
   const [, setTick] = useState(0);
   useEffect(() => {
     const fn = () => setTick((t) => t + 1);
     _payoutSubs.add(fn);
     return () => { _payoutSubs.delete(fn); };
   }, []);
+  useEffect(() => {
+    const uid = userId ?? null;
+    if (_payoutUserId !== uid) loadPayoutFor(uid);
+  }, [userId]);
   return _payout;
 }
 
@@ -227,7 +262,7 @@ function DarkInfoModal({
   visible, title, message, buttonLabel, onClose,
 }: { visible: boolean; title: string; message: string; buttonLabel: string; onClose: () => void }) {
   return (
-    <Modal visible={visible} transparent animationType="fade" onRequestClose={onClose}>
+    <Modal visible={visible} transparent animationType="fade" onRequestClose={onClose} accessibilityViewIsModal>
       <View style={dark.scrim}>
         <View style={dark.modalCard}>
           <Text style={dark.modalTitle}>{title}</Text>
@@ -260,6 +295,16 @@ function DarkField({
   );
 }
 
+// Honest per-row status chips (app addition — no v2 frame): 'incomplete' rows
+// are earned but not collectable yet, 'processing' rows are cash outs in
+// transit, 'paid_out' rows already landed. Settled 'completed' rows carry no
+// chip — they're the normal state the Available balance sums.
+const EARN_CHIP: Partial<Record<Transaction['status'], { label: string; bg: string; fg: string }>> = {
+  incomplete: { label: 'Not collected yet', bg: STAR, fg: '#0D0A0A' },
+  processing: { label: 'Processing', bg: 'rgba(255,255,255,0.16)', fg: D.text },
+  paid_out: { label: 'Paid out', bg: D.success, fg: D.text },
+};
+
 // ---------------------------------------------------------------------------
 // 1. Earnings — "Earning History" (dark, v.2): month section headers, rows of
 //    white pay-badge + date + gray sub-line + $amount + chevron. The payout
@@ -267,14 +312,21 @@ function DarkField({
 //    app addition — no v2 frame — restyled to the navy-card language.
 // ---------------------------------------------------------------------------
 export function Earnings({ navigation }: any) {
-  const { earnings, cashOut, paymentsLive, connectStatus } = useStore();
-  const payout = usePayoutAccount();
+  const { user, earnings, cashOut, paymentsLive, connectStatus } = useStore();
+  const payout = usePayoutAccount(user?.id);
   const fontsReady = usePoppinsRegular();
-  const groups = groupByMonth(earnings);
   const [cashing, setCashing] = useState(false);
   const [cashedOut, setCashedOut] = useState<number | null>(null);
   const [cashError, setCashError] = useState('');
   const [conn, setConn] = useState<{ onboarded: boolean; payoutsEnabled: boolean } | null>(null);
+  // Server-truth override after a failed cash out: the store ledger can carry an
+  // optimistic finish echo promising money the server refuses, so on failure we
+  // re-derive the ledger (and the CASH OUT button) from the server; any store
+  // ledger update clears the override.
+  const [serverEarnings, setServerEarnings] = useState<Transaction[] | null>(null);
+  useEffect(() => { setServerEarnings(null); }, [earnings]);
+  const ledger = serverEarnings ?? earnings;
+  const groups = groupByMonth(ledger);
 
   // Reflect the real payout-account connection state (mirrors StripeOnboarding):
   // a pal is only payout-ready once a bank / Connect account is actually linked.
@@ -288,7 +340,7 @@ export function Earnings({ navigation }: any) {
 
   const connected = paymentsLive ? !!conn?.payoutsEnabled : payout.connected;
 
-  const available = sumAmt(earnings.filter((e) => e.status === 'completed'));
+  const available = sumAmt(ledger.filter((e) => e.status === 'completed'));
 
   const onCashOut = async () => {
     if (cashing || available <= 0 || !connected) return;
@@ -299,17 +351,28 @@ export function Earnings({ navigation }: any) {
       setCashedOut(amount);
     } catch (e: any) {
       setCashError(e?.message || 'Could not cash out right now. Please try again.');
+      // Re-derive the button from server truth: the refused amount came from an
+      // optimistic row the server doesn't (yet) consider collectable.
+      try {
+        const { earnings: fresh } = await getEarningsApi();
+        setServerEarnings(fresh);
+      } catch { /* keep the local ledger; the next store refresh reconciles */ }
     } finally {
       setCashing(false);
     }
   };
-  const pendingItems = earnings.filter((e) => e.status === 'in_progress');
+  // 'incomplete' = earned but not collectable yet (the member's charge hasn't
+  // settled); 'processing' = a cash out in transit to the bank. The server never
+  // writes 'in_progress' on a transaction — that's a FAVOR status.
+  const pendingItems = ledger.filter((e) => e.status === 'incomplete');
   const pending = sumAmt(pendingItems);
-  const total = sumAmt(earnings);
-  const nextPayoutMs = pendingItems.length
-    ? Math.max(...pendingItems.map((e) => e.date)) + 3 * DAY
+  const total = sumAmt(ledger);
+  const processingItems = ledger.filter((e) => e.status === 'processing');
+  const nextPayoutMs = processingItems.length
+    ? Math.max(...processingItems.map((e) => e.date)) + 3 * DAY
     : null;
-  const destLabel = bankLabel(payout.last4);
+  // Live mode pays out to the pal's Stripe Connect account — never the mock bank.
+  const destLabel = paymentsLive ? 'your connected bank' : bankLabel(payout.last4);
 
   if (!fontsReady) return <View style={{ flex: 1, backgroundColor: D.bg }} />; // flash-guard
 
@@ -410,25 +473,33 @@ export function Earnings({ navigation }: any) {
           <View key={g.key} style={{ marginTop: 32 }}>
             <Text style={dark.monthHeader}>{g.key}</Text>
             <View style={{ height: 1, backgroundColor: D.divider, marginTop: 14 }} />
-            {g.items.map((item) => (
-              <TouchableOpacity
-                key={item.id}
-                activeOpacity={0.7}
-                onPress={() => navigation.navigate('EarningDetail', { txId: item.id })}
-                style={dark.earnRow}
-                accessibilityRole="button"
-                accessibilityLabel={`${fmtDate(item.date)}, Favor payout, ${money(item.amount)}. View earning details`}
-              >
-                <PayBadge />
-                <View style={{ flex: 1, marginLeft: 16 }}>
-                  <Text style={dark.earnDate}>{fmtDate(item.date)}</Text>
-                  {/* v.2 sub-line is the payment method; earnings carry none, so "Favor payout" */}
-                  <Text style={dark.earnSub}>Favor payout</Text>
-                </View>
-                <Text style={dark.earnAmount}>{money(item.amount)}</Text>
-                <Ionicons name="chevron-forward" size={20} color={D.text} style={{ marginTop: 3 }} />
-              </TouchableOpacity>
-            ))}
+            {g.items.map((item) => {
+              const chip = EARN_CHIP[item.status];
+              return (
+                <TouchableOpacity
+                  key={item.id}
+                  activeOpacity={0.7}
+                  onPress={() => navigation.navigate('EarningDetail', { txId: item.id })}
+                  style={dark.earnRow}
+                  accessibilityRole="button"
+                  accessibilityLabel={`${fmtDate(item.date)}, ${item.title}, ${money(item.amount)}${chip ? `, ${chip.label}` : ''}. View earning details`}
+                >
+                  <PayBadge />
+                  <View style={{ flex: 1, marginLeft: 16 }}>
+                    <Text style={dark.earnDate}>{fmtDate(item.date)}</Text>
+                    {/* v.2 sub-line is the payment method; we show WHICH favor paid out */}
+                    <Text style={dark.earnSub} numberOfLines={1}>{item.title}</Text>
+                    {chip ? (
+                      <View style={[dark.earnChip, { backgroundColor: chip.bg }]}>
+                        <Text style={[dark.earnChipTxt, { color: chip.fg }]}>{chip.label}</Text>
+                      </View>
+                    ) : null}
+                  </View>
+                  <Text style={dark.earnAmount}>{money(item.amount)}</Text>
+                  <Ionicons name="chevron-forward" size={20} color={D.text} style={{ marginTop: 3 }} />
+                </TouchableOpacity>
+              );
+            })}
           </View>
         ))}
       </ScrollView>
@@ -448,10 +519,18 @@ export function EarningDetail({ navigation, route }: any) {
   const fontsReady = usePoppinsRegular();
 
   const txId: string | undefined = route?.params?.txId;
-  const tx: Transaction | undefined = earnings.find((t) => t.id === txId) ?? earnings[0];
+  // The optimistic finish echo (`pending_<favorId>`) is replaced wholesale when
+  // the server refresh lands, so re-resolve it by favor id to keep an open
+  // detail alive through the id swap. Anything else missing renders a
+  // not-found state — NEVER earnings[0], which is a different payout's receipt.
+  const tx: Transaction | undefined =
+    earnings.find((t) => t.id === txId) ??
+    (txId?.startsWith('pending_')
+      ? earnings.find((t) => t.favorId === txId.slice('pending_'.length))
+      : undefined);
   const favor: Favor | undefined =
     history.find((f) => f.id === tx?.favorId) ??
-    (activePalFavor?.id === tx?.favorId ? activePalFavor : undefined);
+    (activePalFavor && activePalFavor.id === tx?.favorId ? activePalFavor : undefined);
 
   const ts = tx?.date ?? favor?.scheduledFor ?? favor?.createdAt ?? Date.now();
   const amount = tx?.amount ?? favor?.total ?? 0;
@@ -461,6 +540,21 @@ export function EarningDetail({ navigation, route }: any) {
   const Divider = () => <View style={dark.detailDivider} />;
 
   if (!fontsReady) return <View style={{ flex: 1, backgroundColor: D.bg }} />; // flash-guard
+
+  if (!tx) {
+    return (
+      <SafeAreaView style={{ flex: 1, backgroundColor: D.bg }} edges={['top']}>
+        <DarkTopBar title="Earning Detail" onBack={navigation.canGoBack() ? navigation.goBack : undefined} />
+        <View style={dark.notFound}>
+          <Ionicons name="receipt-outline" size={40} color={D.gray} />
+          <Text style={dark.notFoundTitle}>Earning not found</Text>
+          <Text style={dark.notFoundBody}>
+            We couldn't find this payout. Go back to Earning History and refresh.
+          </Text>
+        </View>
+      </SafeAreaView>
+    );
+  }
 
   return (
     <SafeAreaView style={{ flex: 1, backgroundColor: D.bg }} edges={['top']}>
@@ -506,7 +600,7 @@ export function EarningDetail({ navigation, route }: any) {
           <View style={dark.memberAvatar}>
             <Ionicons name="person" size={22} color={D.text} />
           </View>
-          <Text style={[dark.memberName, { marginLeft: 14 }]}>{memberName}</Text>
+          <Text style={[dark.memberName, { marginLeft: 14, flexShrink: 1 }]} numberOfLines={1}>{memberName}</Text>
         </View>
 
         <Divider />
@@ -555,9 +649,9 @@ export function EarningDetail({ navigation, route }: any) {
 //    a fake account.
 // ---------------------------------------------------------------------------
 export function StripeOnboarding({ navigation }: any) {
-  const payout = usePayoutAccount();
+  const { user, paymentsLive, connectOnboard, connectStatus } = useStore();
+  const payout = usePayoutAccount(user?.id);
   const fontsReady = usePoppinsRegular();
-  const { paymentsLive, connectOnboard, connectStatus } = useStore();
   const [conn, setConn] = useState<{ onboarded: boolean; payoutsEnabled: boolean } | null>(null);
   const [opening, setOpening] = useState(false);
 
@@ -691,7 +785,7 @@ export function StripeOnboarding({ navigation }: any) {
 // ---------------------------------------------------------------------------
 export function BankInfo({ navigation }: any) {
   const { user } = useStore();
-  const payout = usePayoutAccount();
+  const payout = usePayoutAccount(user?.id);
   const fontsReady = usePoppinsRegular();
   const [accountName, setAccountName] = useState(user ? `${user.firstName} ${user.lastName}` : 'Anton Vanko');
   const [bankName, setBankName] = useState('Bank of America');
@@ -850,6 +944,19 @@ const dark = StyleSheet.create({
   earnDate: { fontFamily: P_MEDIUM, fontSize: 19, lineHeight: 26, color: D.text },
   earnSub: { fontFamily: P_REGULAR, fontSize: 16, color: D.gray, marginTop: 6 },
   earnAmount: { fontFamily: P_MEDIUM, fontSize: 19, lineHeight: 26, color: D.text, marginRight: 12 },
+  earnChip: {
+    alignSelf: 'flex-start',
+    borderRadius: 999,
+    paddingHorizontal: 10,
+    height: 22,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginTop: 8,
+  },
+  earnChipTxt: { fontFamily: P_MEDIUM, fontSize: 11 },
+  notFound: { alignItems: 'center', paddingHorizontal: 32, marginTop: 64 },
+  notFoundTitle: { fontFamily: P_MEDIUM, fontSize: 18, color: D.text, marginTop: 14 },
+  notFoundBody: { fontFamily: P_REGULAR, fontSize: 14, lineHeight: 20, color: D.gray, textAlign: 'center', marginTop: 8 },
   radioRing: {
     width: 24,
     height: 24,

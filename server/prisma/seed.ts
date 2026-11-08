@@ -1,4 +1,4 @@
-import { PrismaClient } from '@prisma/client';
+﻿import { PrismaClient } from '@prisma/client';
 import bcrypt from 'bcryptjs';
 
 // Seed a few verified accounts so the app has something to show and so there's a
@@ -35,7 +35,7 @@ async function main() {
 
   // Dedicated App Review demo account (referenced in store-metadata/apple/
   // review_notes.txt). Pre-verified so the reviewer logs in with just
-  // email + password — no OTP. Change the password before submission with:
+  // email + password â€” no OTP. Change the password before submission with:
   //   REVIEWER_PASSWORD=<strong password> npx tsx prisma/seed.ts
   const reviewerPassword = process.env.REVIEWER_PASSWORD || DEMO_PASSWORD;
   const reviewer = await prisma.user.upsert({
@@ -66,7 +66,7 @@ async function main() {
     const base = 50;
     const favor = await prisma.favor.create({
       data: {
-        memberId: member.id, palId: pal1.id, tier: 'small', price: base,
+        memberId: member.id, palId: pal1.id, tier: 'small', price: base, listPrice: base,
         description: 'Pick up groceries from the store', images: '[]',
         locationLat: 30.2672, locationLng: -97.7431, locationAddress: '500 Congress Ave, Austin, TX',
         status: 'completed', serviceFee: 1.45, transactionFee: 0.3, total: 51.75, rating: 5, feedback: 'Great job!',
@@ -83,7 +83,7 @@ async function main() {
 
   // OPEN (unassigned) requests so the "Browse Favors" board has content for
   // everyone. Since any account can browse and fulfill favors (but never their
-  // own), we post from MULTIPLE accounts — alex sees jordan's & sam's, and they
+  // own), we post from MULTIPLE accounts â€” alex sees jordan's & sam's, and they
   // see alex's. Idempotent by description, so re-running adds any new ones.
   const fees = (base: number) => ({
     serviceFee: Math.round(base * 0.029 * 100) / 100,
@@ -93,7 +93,7 @@ async function main() {
   const open = [
     { by: pal1.id, tier: 'tiny', price: 25, description: 'Walk my dog around the block before noon', address: '600 Congress Ave, Austin, TX', lat: 30.270, lng: -97.742 },
     { by: pal2.id, tier: 'small', price: 45, description: 'Pick up a prescription from the pharmacy', address: '1500 S Congress Ave, Austin, TX', lat: 30.249, lng: -97.751 },
-    { by: pal1.id, tier: 'big', price: 90, description: 'Assemble a bookshelf — tools provided', address: '900 E 5th St, Austin, TX', lat: 30.262, lng: -97.730 },
+    { by: pal1.id, tier: 'big', price: 90, description: 'Assemble a bookshelf â€” tools provided', address: '900 E 5th St, Austin, TX', lat: 30.262, lng: -97.730 },
     { by: member.id, tier: 'tiny', price: 20, description: 'Drop off a package at the UPS store', address: '200 E 6th St, Austin, TX', lat: 30.267, lng: -97.741 },
     { by: member.id, tier: 'small', price: 50, description: 'Pick up my dry cleaning before 5pm', address: '1100 S Lamar Blvd, Austin, TX', lat: 30.255, lng: -97.763 },
     { by: member.id, tier: 'big', price: 100, description: 'Help me move a couch to my new apartment downstairs', address: '500 W 2nd St, Austin, TX', lat: 30.265, lng: -97.749 },
@@ -104,7 +104,7 @@ async function main() {
     const f = fees(o.price);
     await prisma.favor.create({
       data: {
-        memberId: o.by, tier: o.tier, price: o.price, description: o.description, images: '[]',
+        memberId: o.by, tier: o.tier, price: o.price, listPrice: o.price, description: o.description, images: '[]',
         locationLat: o.lat, locationLng: o.lng, locationAddress: o.address, status: 'requested',
         serviceFee: f.serviceFee, transactionFee: f.transactionFee, total: f.total,
         events: { create: { status: 'requested' } },

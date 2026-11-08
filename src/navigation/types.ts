@@ -5,9 +5,11 @@ export type RootStackParamList = {
   // --- Auth --- (app opens on Login; onboarding carousel removed)
   Login: undefined;
   Signup: undefined;
-  OtpVerify: { context?: 'signup' | 'reset' } | undefined;
+  // destination = the email the code was sent to; password rides along on the
+  // signup path so verify can auto-login.
+  OtpVerify: { destination: string; password?: string; context?: 'signup' | 'reset'; error?: string };
   ForgotPassword: undefined;
-  NewPassword: undefined;
+  NewPassword: { email: string; code: string };
 
   // --- App shell ---
   Tabs: undefined;
@@ -21,7 +23,15 @@ export type RootStackParamList = {
   SelectPayment: undefined;
   Searching: undefined;
   ProviderResults: undefined;
-  ProviderDetail: { palId: string };
+  ProviderDetail: {
+    palId: string;
+    // Optional snapshot from the directory list so the detail renders instantly
+    // while (or if) the by-id fetch lags.
+    pal?: {
+      id: string; firstName: string; lastName: string; avatar?: string; bio?: string;
+      city?: string; state?: string; rating: number; totalFavors: number;
+    };
+  };
   MemberProfile: { userId: string };
   FavorTracking: undefined;
   OrderComplete: undefined;
@@ -31,8 +41,10 @@ export type RootStackParamList = {
   PalFavorDetail: { favorId: string };
   PalFavorInProgress: undefined;
   Navigation: undefined;
-  PalFavorComplete: undefined;
-  PalFavorSuccess: { payout?: number } | undefined;
+  // favorId is load-bearing on both: Complete's rate-the-member submit posts
+  // against it (store's lastFinishedRef is only a fallback).
+  PalFavorComplete: { favorId?: string } | undefined;
+  PalFavorSuccess: { payout?: number; favorId?: string; ledgerStatus?: 'completed' | 'incomplete' } | undefined;
   Earnings: undefined;
   EarningDetail: { txId: string };
   StripeOnboarding: undefined;
@@ -47,9 +59,8 @@ export type RootStackParamList = {
   Settings: undefined;
   SetStatus: undefined;
   Payment: undefined;
-  AddCard: undefined;
+  AddCard: { cardId?: string } | undefined; // cardId → edit an existing card
   History: undefined; // favor history — opened from the side menu
-  FavorHistory: undefined;
   FavorHistoryDetail: { favorId: string };
   Help: undefined;
   Notifications: undefined;

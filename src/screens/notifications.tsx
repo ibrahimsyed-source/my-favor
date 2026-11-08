@@ -1,9 +1,11 @@
-import React, { useCallback, useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { View, FlatList, TouchableOpacity, Modal, StyleSheet, Text } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import { TopBar } from '../components';
 import { EmptyState, ErrorState, LoadingState } from '../components/states';
 import { getNotificationsApi } from '../api/endpoints';
+import { registerForPushNotificationsAsync } from '../lib/notifications';
 import { tokens, palette } from '../theme';
 import { useStore } from '../store';
 import { AppNotification } from '../types';
@@ -53,14 +55,19 @@ function timeAgo(ms: number, now: number) {
 }
 
 // The v.2 flow shows the OS permission primer once (right after signup in the
-// mocks) — mirror that with a once-per-session flag, not once-per-focus.
-let permPromptShownThisSession = false;
+// mocks) — mirror that once per INSTALL via a persisted flag, and have OK run
+// the real permission request so the dialog's choice is honest, not decorative.
+const PERM_PROMPT_KEY = 'myfavor.pushPermPromptShown';
+
+// Statuses where a pal is assigned and the favor is physically underway — the
+// states a 'match'/'arrived' notification can be about.
+const POST_MATCH = ['matched', 'enroute', 'arrived', 'in_progress'];
 
 // Notifications — v.2 inbox. Every item renders as the frames' white alert
 // card; the newest unread one also pops as the full-screen alert over the
 // dimmed list, exactly like the Match/Cancellation Alert Notification frames.
 export function Notifications({ navigation }: any) {
-  const { notifications, markNotificationRead, markAllNotificationsRead, refreshNotifications, activeMemberFavor, activePalFavor, user } = useStore();
+  const { notifications, markNotificationRead, markAllNotificationsRead, refreshNotifications, activeMemberFavor, activePalFavor } = useStore();
   // Anchor relative timestamps to the real clock so a day-old item reads "1d",
   // not "5m" relative to the newest notification.
   const now = Date.now();
@@ -78,33 +85,56 @@ export function Notifications({ navigation }: any) {
     setLoaded(true);
   }, [refreshNotifications]);
 
-  // v.2 "Notifications  Modal" (#125:8532) — push-permission dialog.
-  const [permVisible, setPermVisible] = useState(!permPromptShownThisSession);
+  // v.2 "Notifications  Modal" (#125:8532) — push-permission dialog, shown once
+  // per install (AsyncStorage flag). OK fires the REAL OS permission request
+  // (no-op when already granted / simulator / web); Don't Allow just declines.
+  const [permVisible, setPermVisible] = useState(false);
   useEffect(() => {
-    permPromptShownThisSession = true;
+    let alive = true;
+    AsyncStorage.getItem(PERM_PROMPT_KEY)
+      .then((seen) => { if (alive && !seen) setPermVisible(true); })
+      .catch(() => undefined);
+    return () => { alive = false; };
   }, []);
+  const closePermPrompt = (allow: boolean) => {
+    setPermVisible(false);
+    void AsyncStorage.setItem(PERM_PROMPT_KEY, '1').catch(() => undefined);
+    if (allow) void registerForPushNotificationsAsync();
+  };
 
-  // Newest unread pops as the alert-notification modal (once per visit).
+  // Newest unread pops as the alert-notification modal. Alerted ids are
+  // remembered for the session (not a mount-lifetime latch) so the persistent
+  // Activity tab RE-ARMS whenever a NEW unread arrives; a dismissed-but-still-
+  // unread item never re-pops.
   const [alertId, setAlertId] = useState<string | null>(null);
-  const [alertDone, setAlertDone] = useState(false);
+  const alertedIds = useRef<Set<string>>(new Set());
   useEffect(() => {
-    if (alertDone || alertId) return;
+    if (alertId) return; // one alert at a time
     const newest = notifications.filter((n) => !n.read).sort((a, b) => b.date - a.date)[0];
-    if (newest) setAlertId(newest.id);
-  }, [notifications, alertDone, alertId]);
-  const alertItem = !alertDone && alertId ? notifications.find((n) => n.id === alertId && !n.read) : undefined;
-  const dismissAlert = () => setAlertDone(true);
+    if (newest && !alertedIds.current.has(newest.id)) {
+      alertedIds.current.add(newest.id);
+      setAlertId(newest.id);
+    }
+  }, [notifications, alertId]);
+  const alertItem = alertId ? notifications.find((n) => n.id === alertId && !n.read) : undefined;
+  const dismissAlert = () => setAlertId(null);
 
   // Mark read, then deep-link to the related favor when one is implied by type.
   const handlePress = (item: AppNotification) => {
     markNotificationRead(item.id);
     switch (item.type) {
       case 'match':
-      case 'arrived':
-        // Role-aware: the pal slot (a job I'm fulfilling) routes to the pal's
-        // live screens; otherwise my own request routes to tracking. ('match'
-        // also reaches a pal whose price offer was accepted remotely.)
-        if (activePalFavor) {
+      case 'arrived': {
+        // Prefer the slot the type IMPLIES. Server-side, 'arrived' only ever
+        // goes to the favor's member, and 'match' is member-side too except the
+        // "your offer was accepted" push to a pal — so a member favor in a
+        // post-match status wins; the pal slot routes only when IT is the one
+        // in a matching live status. Known limit: notification rows carry no
+        // favorId, so with BOTH slots post-match a pal-side 'match' still lands
+        // on the member's tracking — unresolvable without a server change.
+        const memberLive = !!activeMemberFavor && POST_MATCH.includes(activeMemberFavor.status);
+        if (memberLive) navigation.navigate('FavorTracking');
+        else if (activePalFavor && POST_MATCH.includes(activePalFavor.status)) {
           navigation.navigate(
             activePalFavor.status === 'arrived' || activePalFavor.status === 'in_progress'
               ? 'PalFavorInProgress'
@@ -113,17 +143,26 @@ export function Notifications({ navigation }: any) {
         } else if (activeMemberFavor) navigation.navigate('FavorTracking');
         else navigation.navigate('History');
         break;
+      }
       case 'cancellation':
       case 'no_pal':
         navigation.navigate('History');
         break;
       case 'offer':
-        // Member with an open request → review offers on Searching. A pal's
-        // counter/decline news → back to the board (the favor detail shows
-        // their offer state); members with nothing open → History.
-        if (activeMemberFavor?.status === 'requested') navigation.navigate('Searching');
-        else if (user?.role === 'pal') navigation.navigate('BrowseFavors');
-        else navigation.navigate('History');
+        // Offer news is two-sided and rows carry no favorId, so disambiguate by
+        // the strongest local signal: my own open request that actually HOLDS
+        // offers → review them on Searching (member-side 'offer' news always
+        // leaves an offer row on my request). Otherwise the news is pal-side
+        // (my offer was countered/declined) → the board, where the favor detail
+        // shows my offer state; it's registered for every user, so this never
+        // dead-ends on the role toggle. Known limit: an open request with
+        // offers masks pal-side news when both negotiations are live.
+        if (
+          activeMemberFavor?.status === 'requested' &&
+          (activeMemberFavor.offers ?? []).length > 0
+        ) {
+          navigation.navigate('Searching');
+        } else navigation.navigate('BrowseFavors');
         break;
       default:
         break; // 'general' — no destination, mark-read only
@@ -202,7 +241,13 @@ export function Notifications({ navigation }: any) {
       )}
 
       {/* v.2 "Notifications  Modal" #125:8532 — “My Favor” push-permission dialog. */}
-      <Modal visible={permVisible} transparent animationType="fade" onRequestClose={() => setPermVisible(false)}>
+      <Modal
+        visible={permVisible}
+        transparent
+        animationType="fade"
+        onRequestClose={() => closePermPrompt(false)}
+        accessibilityViewIsModal
+      >
         <View style={styles.scrim}>
           <View style={styles.permCard}>
             <Text style={styles.permTitle}>“My Favor” would like to send you notifications</Text>
@@ -213,7 +258,7 @@ export function Notifications({ navigation }: any) {
             <View style={{ flexDirection: 'row' }}>
               <TouchableOpacity
                 style={styles.permBtn}
-                onPress={() => setPermVisible(false)}
+                onPress={() => closePermPrompt(false)}
                 accessibilityRole="button"
                 accessibilityLabel="Don't allow notifications"
               >
@@ -222,7 +267,7 @@ export function Notifications({ navigation }: any) {
               <View style={styles.permLineV} />
               <TouchableOpacity
                 style={styles.permBtn}
-                onPress={() => setPermVisible(false)}
+                onPress={() => closePermPrompt(true)}
                 accessibilityRole="button"
                 accessibilityLabel="Allow notifications"
               >
@@ -241,6 +286,7 @@ export function Notifications({ navigation }: any) {
         transparent
         animationType="fade"
         onRequestClose={dismissAlert}
+        accessibilityViewIsModal
       >
         <TouchableOpacity activeOpacity={1} onPress={dismissAlert} style={styles.scrim}>
           <TouchableOpacity activeOpacity={1} style={styles.alertCard}>

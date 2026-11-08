@@ -1,7 +1,7 @@
 import React, { useEffect, useRef, useState } from 'react';
 import {
   View, Text, Image, TextInput, TouchableOpacity, ScrollView, StyleSheet, Modal,
-  ActivityIndicator, Linking,
+  ActivityIndicator, Linking, BackHandler,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { Screen } from '../components';
@@ -20,14 +20,13 @@ import { fonts, palette } from '../theme';
 //   Payment info                    #1357:17815 (logo, "Payment Information" form)
 //   Payment - Card Form Expanded    #1449:17701 (full form incl. City/State/Zip/Country, SUBMIT)
 //   Payment - Card Add Success      #1449:17785 ("Success" modal, CLOSE)
-//   Card Added                      #125:7999   ("Card Added" modal, OKAY)
 //   Card Already Exist              #125:8044   ("Saving Failed" modal, CLOSE)
 //
 // All v.2 payment surfaces are LIGHT (white bg, near-black text, black CTA,
 // #EFEFEF fields) and set in Poppins. The frame states are folded into the two
 // exported screens via internal state:
 //   Payment: 'list' (empty/filled from store) → 'choose' → 'verify' → 'code' → AddCard
-//   AddCard: Payment Information form → Success / Card Added / Saving Failed modals
+//   AddCard: Payment Information form → Success / Saving Failed modals
 // Store logic (addCard/removeCard, hosted-Stripe gating via paymentsLive) is
 // unchanged — only presentation follows the v.2 frames.
 // ---------------------------------------------------------------------------
@@ -96,7 +95,7 @@ function V2Modal({
   onClose: () => void;
 }) {
   return (
-    <Modal visible={visible} transparent animationType="fade" onRequestClose={onClose}>
+    <Modal visible={visible} transparent animationType="fade" onRequestClose={onClose} accessibilityViewIsModal>
       <View style={s.scrim}>
         <View style={s.modalCard}>
           <Text style={s.modalTitle}>{title}</Text>
@@ -123,7 +122,7 @@ function V2Confirm({
   onCancel: () => void;
 }) {
   return (
-    <Modal visible={visible} transparent animationType="fade" onRequestClose={onCancel}>
+    <Modal visible={visible} transparent animationType="fade" onRequestClose={onCancel} accessibilityViewIsModal>
       <View style={s.scrim}>
         <View style={s.modalCard}>
           <Text style={s.modalTitle}>{title}</Text>
@@ -185,12 +184,33 @@ export function Payment({ navigation }: any) {
   const [stage, setStage] = useState<'list' | 'choose' | 'verify' | 'code'>('list');
   const [pendingDeleteId, setPendingDeleteId] = useState<string | null>(null);
   const [code, setCode] = useState<string[]>(['', '', '', '']);
+  const [codeError, setCodeError] = useState<string | null>(null);
   const codeRefs = useRef<Array<TextInput | null>>([]);
 
   const cardLabel = (c: { brand: string; last4: string }) =>
     `${c.brand.charAt(0).toUpperCase() + c.brand.slice(1)} *${c.last4}`; // "Visa *4242"
 
   const pendingCard = cards.find((c) => c.id === pendingDeleteId);
+
+  // The add-card chain lives in component state, so the Android hardware back
+  // button must step BACK A STAGE (code → verify → choose → list) instead of
+  // popping the whole Payment screen and losing the user's place.
+  useEffect(() => {
+    if (stage === 'list') return;
+    const sub = BackHandler.addEventListener('hardwareBackPress', () => {
+      setCodeError(null);
+      if (stage === 'code') {
+        setCode(['', '', '', '']);
+        setStage('verify');
+      } else if (stage === 'verify') {
+        setStage('choose');
+      } else {
+        setStage('list');
+      }
+      return true;
+    });
+    return () => sub.remove();
+  }, [stage]);
 
   const handleCode = (i: number, t: string) => {
     const d = t.replace(/\D/g, '').slice(-1);
@@ -199,18 +219,26 @@ export function Payment({ navigation }: any) {
       next[i] = d;
       return next;
     });
+    if (codeError) setCodeError(null);
     if (d && i < 3) codeRefs.current[i + 1]?.focus();
   };
 
   const verifyCode = () => {
-    if (code.join('').length < 4) return; // mock 2FA: any 4 digits pass
+    if (code.join('').length < 4) {
+      // A visible no-op reads as a broken button — tell them what's missing.
+      setCodeError('Enter all 4 digits of the code.');
+      return;
+    }
+    // mock 2FA: any 4 digits pass
     setStage('list');
     setCode(['', '', '', '']);
+    setCodeError(null);
     navigation.navigate('AddCard');
   };
 
   const resendCode = () => {
     setCode(['', '', '', '']);
+    setCodeError(null);
     codeRefs.current[0]?.focus();
   };
 
@@ -348,7 +376,13 @@ export function Payment({ navigation }: any) {
           <TouchableOpacity onPress={resendCode} hitSlop={8} accessibilityRole="button" accessibilityLabel="Resend code">
             <Text style={s.resendLink}>Resend</Text>
           </TouchableOpacity>
-          <V2Button title="VERIFY" onPress={verifyCode} style={{ marginTop: 40, marginBottom: 32 }} />
+          {codeError ? (
+            <View accessibilityLiveRegion="polite" style={[s.errorRow, { marginTop: 24, marginBottom: 0 }]}>
+              <Ionicons name="alert-circle" size={18} color={palette.brand} style={{ marginRight: 6 }} />
+              <Text style={s.errorText}>{codeError}</Text>
+            </View>
+          ) : null}
+          <V2Button title="VERIFY" onPress={verifyCode} style={{ marginTop: codeError ? 16 : 40, marginBottom: 32 }} />
         </ScrollView>
       )}
 
@@ -373,18 +407,14 @@ export function Payment({ navigation }: any) {
 // Card Form Expanded #1449:17701): logo, centered heading, Name / Card Number /
 // Expiration+CVC / Address 1+2 / City+State / Zip+Country, black SUBMIT.
 // Success → "Success" modal (#1449:17785); duplicate → "Saving Failed"
-// (#125:8044); edit-save → "Card Added" (#125:7999).
-//
-// Opened from a saved card with route.params.cardId it prefills that card
-// (we only persist brand/last4/exp, so the PAN shows masked). Store logic —
-// addCard/removeCard, validation, and the hosted-Stripe path when payments are
-// live — is preserved from the previous build.
+// (#125:8044). Add-only: no navigation ever passes a cardId (the card list
+// offers remove, not edit), so the former masked-prefill edit branch was
+// unreachable and has been removed. Store logic — addCard, validation, and
+// the hosted-Stripe path when payments are live — is preserved.
 // ---------------------------------------------------------------------------
-export function AddCard({ navigation, route }: any) {
-  const { addCard, removeCard, cards, paymentsLive, startAddCard, syncCards } = useStore();
+export function AddCard({ navigation }: any) {
+  const { addCard, cards, paymentsLive, startAddCard, syncCards } = useStore();
   const [openingCheckout, setOpeningCheckout] = useState(false);
-
-  const editCard = route?.params?.cardId ? cards.find((c: any) => c.id === route.params.cardId) : undefined;
 
   // When real payments are live, cards are added on Stripe's hosted page; pull in
   // any newly-saved card whenever this screen regains focus (after returning).
@@ -405,17 +435,11 @@ export function AddCard({ navigation, route }: any) {
     }
   };
 
-  // Stored expYear is 2-digit (e.g. 30); render a full 4-digit year for editing.
-  const editExpYear = editCard ? (editCard.expYear >= 100 ? editCard.expYear : 2000 + editCard.expYear) : 0;
-
   // The demo strings in the v.2 frames ("Anton Vanko", "4111 1111 1111 1111",
-  // "01/2025"…) are placeholders, so a fresh add starts EMPTY; an edit prefills
-  // real values from the saved card.
+  // "01/2025"…) are placeholders, so the form starts EMPTY.
   const [name, setName] = useState('');
-  const [cardNumber, setCardNumber] = useState(editCard ? `•••• •••• •••• ${editCard.last4}` : '');
-  const [expiration, setExpiration] = useState(
-    editCard ? `${String(editCard.expMonth).padStart(2, '0')}/${editExpYear}` : ''
-  );
+  const [cardNumber, setCardNumber] = useState('');
+  const [expiration, setExpiration] = useState('');
   const [cvc, setCvc] = useState('');
   const [address1, setAddress1] = useState('');
   const [address2, setAddress2] = useState('');
@@ -424,9 +448,8 @@ export function AddCard({ navigation, route }: any) {
   const [zip, setZip] = useState('');
   const [country, setCountry] = useState('');
   const [saving, setSaving] = useState(false);
-  // Which v.2 dialog is showing: added → "Success", updated → "Card Added",
-  // exists → "Saving Failed".
-  const [result, setResult] = useState<null | 'added' | 'updated' | 'exists'>(null);
+  // Which v.2 dialog is showing: added → "Success", exists → "Saving Failed".
+  const [result, setResult] = useState<null | 'added' | 'exists'>(null);
   const [error, setError] = useState<string | null>(null);
 
   // Clear the validation error as soon as the user edits a validated field.
@@ -466,22 +489,11 @@ export function AddCard({ navigation, route }: any) {
 
   const handleSubmit = async () => {
     const digits = cardNumber.replace(/\D/g, '');
-    // On an edit the number is shown masked (we never stored the full PAN/CVC),
-    // so leaving it unchanged keeps the saved card's identity without re-entry.
-    const keepSaved = !!editCard && digits.length < 12;
-
-    let last4: string;
-    let brand: string;
-    if (editCard && digits.length < 12) {
-      last4 = editCard.last4;
-      brand = editCard.brand;
-    } else {
-      // A new PAN must be a plausible card number (length + Luhn), not garbage.
-      if (digits.length < 12 || digits.length > 19) return setError('Enter a valid card number.');
-      if (!luhnValid(digits)) return setError("That card number doesn't look right.");
-      last4 = digits.slice(-4);
-      brand = brandFromDigits(digits);
-    }
+    // The PAN must be a plausible card number (length + Luhn), not garbage.
+    if (digits.length < 12 || digits.length > 19) return setError('Enter a valid card number.');
+    if (!luhnValid(digits)) return setError("That card number doesn't look right.");
+    const last4 = digits.slice(-4);
+    const brand = brandFromDigits(digits);
 
     // Expiration must be MM/YY (or MM/YYYY), a real month, and not in the past.
     const [mmRaw, yyRaw] = expiration.split('/');
@@ -497,33 +509,27 @@ export function AddCard({ navigation, route }: any) {
     }
     const expMonth = mm;
     // Send the full 4-digit year — the API requires expYear >= 2024. (The store
-    // and display tolerate a legacy 2-digit value too; see editExpYear above.)
+    // and display tolerate a legacy 2-digit value too.)
     const expYear = fullYear;
 
-    // CVC is required whenever a (new) card number is entered; 3–4 digits.
-    if (!keepSaved) {
-      const cvcDigits = cvc.replace(/\D/g, '');
-      if (cvcDigits.length < 3 || cvcDigits.length > 4) return setError('Enter the 3 or 4 digit CVC.');
-    }
+    // CVC is required; 3–4 digits.
+    const cvcDigits = cvc.replace(/\D/g, '');
+    if (cvcDigits.length < 3 || cvcDigits.length > 4) return setError('Enter the 3 or 4 digit CVC.');
 
     // "Card Already Exist" frame #125:8044 — saving a card that's already in
     // the wallet fails instead of duplicating it.
     const duplicate = cards.some(
-      (c: any) => c.last4 === last4 && c.expMonth === expMonth && c.expYear === expYear && (!editCard || c.id !== editCard.id)
+      (c: any) => c.last4 === last4 && c.expMonth === expMonth && c.expYear === expYear
     );
     if (duplicate) return setResult('exists');
 
     setError(null);
     setSaving(true);
-    // The store has no in-place updateCard, so editing = replace. Persist the
-    // new card FIRST; only drop the old record once the save succeeds, so a
-    // failed request never strands the user with no card. A thrown ApiError
-    // (e.g. validation/network) must reset the button and surface a message —
-    // without this catch the spinner would spin forever.
+    // A thrown ApiError (e.g. validation/network) must reset the button and
+    // surface a message — without this catch the spinner would spin forever.
     try {
       await addCard({ brand, last4, expMonth, expYear });
-      if (editCard) removeCard(editCard.id);
-      setResult(editCard ? 'updated' : 'added');
+      setResult('added');
     } catch (e) {
       setError((e as Error)?.message || 'Could not save your card. Please try again.');
     } finally {
@@ -536,10 +542,10 @@ export function AddCard({ navigation, route }: any) {
     navigation.goBack();
   };
 
-  // Live payments: cards are entered on Stripe's hosted page (PCI-compliant), not
-  // in our form. Adding a new card routes there; editing isn't applicable.
+  // Live payments: cards are entered on Stripe's hosted page (PCI-compliant),
+  // not in our form.
   // (App-specific screen — no v.2 frame exists; styled to the v.2 language.)
-  if (paymentsLive && !editCard) {
+  if (paymentsLive) {
     return (
       <Screen padded={false}>
         <V2TopBar title="Add Payment Method" onBack={() => navigation.goBack()} />
@@ -642,14 +648,6 @@ export function AddCard({ navigation, route }: any) {
         title="Success"
         message={'You have successfully added a\ncard payment!'}
         buttonLabel="CLOSE"
-        onClose={closeAndBack}
-      />
-      {/* Card Added #125:7999 — shown for the edit/save path */}
-      <V2Modal
-        visible={result === 'updated'}
-        title="Card Added"
-        message={'You have successfully added your\nBank / Card information'}
-        buttonLabel="OKAY"
         onClose={closeAndBack}
       />
       {/* Card Already Exist #125:8044 */}

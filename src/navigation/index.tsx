@@ -1,12 +1,15 @@
-import React from 'react';
+import React, { useContext, useEffect, useRef } from 'react';
 import { View, Text, TouchableOpacity, ActivityIndicator, StyleSheet } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { NavigationContainerRefContext } from '@react-navigation/native';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
 import { createBottomTabNavigator, BottomTabBarProps } from '@react-navigation/bottom-tabs';
 import { Ionicons } from '@expo/vector-icons';
 import { RootStackParamList, TabParamList } from './types';
 import { useStore } from '../store';
 import { useTheme } from '../theme';
+import { addNotificationResponseListener } from '../lib/notifications';
+import type { Favor, User } from '../types';
 
 import * as Onb from '../screens/onboarding';
 import * as AuthF from '../screens/authflow';
@@ -163,9 +166,95 @@ function Tabs() {
 // stack (like the restoring splash) so nothing else can be reached while gated.
 const GATE_NAV = { canGoBack: () => false, goBack: () => {}, navigate: () => {}, reset: () => {} };
 
+// ---------------------------------------------------------------------------
+// Push-tap deep-linking. The server attaches routing hints to every push —
+// {type:'message', threadId} / {type:'new_favor', favorId} / favor-lifecycle
+// types ('match', 'arrived', 'offer', 'cancellation', 'no_pal') — and a tap
+// routes by type using the same two-slot rules as the Activity screen's
+// handlePress (notifications.tsx): prefer the pal slot (the physical job in
+// flight), then the member's own request, else History.
+// ---------------------------------------------------------------------------
+type NotificationSlots = {
+  activeMemberFavor: Favor | null;
+  activePalFavor: Favor | null;
+  user: User | null;
+};
+
+export function routeForNotificationTap(
+  data: Record<string, unknown>,
+  { activeMemberFavor, activePalFavor, user }: NotificationSlots,
+): { name: keyof RootStackParamList; params?: object } | null {
+  switch (data.type) {
+    case 'message':
+      return typeof data.threadId === 'string'
+        ? { name: 'MessageThread', params: { threadId: data.threadId } }
+        : { name: 'Messages' };
+    case 'new_favor':
+      return typeof data.favorId === 'string'
+        ? { name: 'PalFavorDetail', params: { favorId: data.favorId } }
+        : { name: 'BrowseFavors' };
+    case 'match':
+    case 'arrived':
+      if (activePalFavor) {
+        return {
+          name:
+            activePalFavor.status === 'arrived' || activePalFavor.status === 'in_progress'
+              ? 'PalFavorInProgress'
+              : 'Navigation',
+        };
+      }
+      if (activeMemberFavor) return { name: 'FavorTracking' };
+      return { name: 'History' };
+    case 'cancellation':
+    case 'no_pal':
+      return { name: 'History' };
+    case 'offer':
+      // Member with an open request → review offers on Searching. A pal's
+      // counter/decline news → back to the board; otherwise History.
+      if (activeMemberFavor?.status === 'requested') return { name: 'Searching' };
+      if (user?.role === 'pal') return { name: 'BrowseFavors' };
+      return { name: 'History' };
+    default:
+      return null; // 'general' / unknown — opening the app is enough
+  }
+}
+
 export default function RootNavigator() {
-  const { isAuthenticated, restoring, maintenance, updateRequired, suspended, recheckConfig, logout } = useStore();
+  const {
+    isAuthenticated, restoring, maintenance, updateRequired, suspended, recheckConfig, logout,
+    activeMemberFavor, activePalFavor, user,
+  } = useStore();
   const { theme } = useTheme();
+  const nav = useContext(NavigationContainerRefContext);
+
+  // Notification taps deep-link via the container ref. The listener subscribes
+  // once per signed-in session; each tap reads the live favor slots at tap time
+  // through a ref so the routing never acts on stale closures.
+  const slotsRef = useRef<NotificationSlots>({ activeMemberFavor, activePalFavor, user });
+  slotsRef.current = { activeMemberFavor, activePalFavor, user };
+  useEffect(() => {
+    if (!isAuthenticated || !nav) return;
+    return addNotificationResponseListener((data) => {
+      if (!nav.isReady()) return;
+      const dest = routeForNotificationTap(data, slotsRef.current);
+      if (dest) (nav as any).navigate(dest.name, dest.params);
+    });
+  }, [isAuthenticated, nav]);
+
+  // SessionExpired / AccountSuspended end in reset({routes:[{name:'Login'}]}),
+  // but 'Login' is only registered in the UNauth group — route that intent
+  // through logout() so the navigator itself swaps stacks (same contract as the
+  // suspended gate's GATE_NAV below). Any other reset passes through untouched.
+  const withLoginReset = (navigation: any) => ({
+    ...navigation,
+    reset: (state: { routes?: { name: string }[] }) => {
+      if (state?.routes?.some((r) => r.name === 'Login')) {
+        void logout();
+        return;
+      }
+      navigation.reset(state);
+    },
+  });
 
   // While restoring a saved session on cold start, show a splash instead of
   // flashing the login/onboarding screens before the cached user loads.
@@ -274,13 +363,21 @@ export default function RootNavigator() {
           <Stack.Screen name="Maintenance" component={Sys.MaintenanceScreen} />
           <Stack.Screen name="UpdateRequired" component={Sys.UpdateRequiredScreen} />
           <Stack.Screen name="NotFound" component={Sys.NotFoundScreen} />
-          <Stack.Screen name="SessionExpired" component={Scenario.SessionExpired} />
+          <Stack.Screen name="SessionExpired">
+            {({ navigation, route }: any) => (
+              <Scenario.SessionExpired navigation={withLoginReset(navigation)} route={route} />
+            )}
+          </Stack.Screen>
           {/* Flow / permission dead-ends (authed only) */}
           <Stack.Screen name="PermissionDenied" component={Scenario.PermissionDenied} />
           <Stack.Screen name="PaymentFailed" component={Scenario.PaymentFailed} />
           <Stack.Screen name="NoPaymentMethod" component={Scenario.NoPaymentMethod} />
           <Stack.Screen name="FavorUnavailable" component={Scenario.FavorUnavailable} />
-          <Stack.Screen name="AccountSuspended" component={Scenario.AccountSuspended} />
+          <Stack.Screen name="AccountSuspended">
+            {({ navigation, route }: any) => (
+              <Scenario.AccountSuspended navigation={withLoginReset(navigation)} route={route} />
+            )}
+          </Stack.Screen>
           <Stack.Screen name="PalApplicationRejected" component={Scenario.PalApplicationRejected} />
         </Stack.Group>
       )}

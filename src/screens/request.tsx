@@ -21,7 +21,6 @@ import { MapPicker } from '../components/MapPicker';
 //   Favor Description #125:10981                              -> FavorDescription
 //   Favor Description - Negotiate #130:10114                  -> Negotiate
 //   Confirm Address #125:11243                                -> ConfirmAddress
-//   Reblast #149:9998                                         -> Reblast
 // All colours / copy / spacing below are read from the node data.
 // ---------------------------------------------------------------------------
 const INK = '#0D0A0A';         // headings, buttons, pills
@@ -30,7 +29,6 @@ const FIELD = '#EEEEEE';       // input fills / dividers
 const HAIRLINE = '#D7D7D7';    // topbar divider
 const PLACEHOLDER = '#9E9E9E'; // textbox placeholder
 const RED = '#D40000';         // map pins / request tab accent
-const STAR = '#FFBD00';        // rating star
 const MAP_BASE = '#D8D8D8';    // map backdrop under the bitmap
 const WHITE = '#FFFFFF';
 
@@ -57,7 +55,6 @@ export const TIERS: Record<TierKey, { img: any; w: number; h: number; dx: number
 
 const MAP_IMG = require('../../assets/img/request/map-light.png');
 const PIN_AVATAR = require('../../assets/img/request/pin-avatar.png');
-const PAL_PHOTO = require('../../assets/img/request/pal-photo.png');
 
 // ---------------------------------------------------------------------------
 // Shared chrome (local — the shared TopBar/Button use a different design language)
@@ -277,7 +274,7 @@ export function FavorDescription({ navigation }: any) {
           <View style={{ flexDirection: 'row', alignItems: 'flex-end', marginLeft: 24 }}>
             <View>
               <Text style={styles.tierTitle}>{tierShort}</Text>
-              <Text style={styles.tierTitle}>${price}</Text>
+              <Text style={styles.tierTitle}>${price.toFixed(2)}</Text>
             </View>
             <View style={{ marginLeft: 12 }}>
               <SelectPill selected />
@@ -319,6 +316,12 @@ const PriceSlider = React.memo(function PriceSlider({
   const price = hours * HOURLY_RATE;
   const frac = hours / MAX_HOURS;
   const thumbLeft = frac * Math.max(0, trackW - THUMB);
+  // Moving "{n}hrs" readout: clamp its 60px box inside the row, and hide
+  // whichever fixed end label ('0' / '24hrs') it would overprint — at 24hrs the
+  // two '24hrs' strings otherwise render doubled on top of each other.
+  const readoutLeft = Math.min(Math.max(0, thumbLeft + THUMB / 2 - 30), Math.max(0, trackW - 60));
+  const hideMinLabel = readoutLeft < 24;
+  const hideMaxLabel = readoutLeft + 60 > trackW - 56;
 
   const handleValue = (v: number) => {
     const r = Math.round(v);
@@ -359,13 +362,13 @@ const PriceSlider = React.memo(function PriceSlider({
       </View>
 
       <View style={{ height: 28, marginTop: 5 }}>
-        <Text style={styles.sliderLabel}>0</Text>
+        {hideMinLabel ? null : <Text style={styles.sliderLabel}>0</Text>}
         <Text
           style={[
             styles.sliderLabel,
             {
               position: 'absolute',
-              left: thumbLeft + THUMB / 2 - 30,
+              left: readoutLeft,
               width: 60,
               textAlign: 'center',
             },
@@ -373,7 +376,9 @@ const PriceSlider = React.memo(function PriceSlider({
         >
           {hours}hrs
         </Text>
-        <Text style={[styles.sliderLabel, { position: 'absolute', right: 0 }]}>24hrs</Text>
+        {hideMaxLabel ? null : (
+          <Text style={[styles.sliderLabel, { position: 'absolute', right: 0 }]}>24hrs</Text>
+        )}
       </View>
     </View>
   );
@@ -426,7 +431,7 @@ export function Negotiate({ navigation }: any) {
 }
 
 // ---------------------------------------------------------------------------
-// Shared map backdrop (Confirm Address #125:11243 / Reblast #149:9998):
+// Web map backdrop (Confirm Address #125:11243):
 // light map bitmap positioned exactly like the frame (1605.79x1038 @ -861,-142
 // of a 414x896 viewport), 4 red pals pins, radial vignette, red user pin.
 // ---------------------------------------------------------------------------
@@ -509,6 +514,9 @@ export function ConfirmAddress({ navigation }: any) {
   );
   const [suggestions, setSuggestions] = useState<AddressSuggestion[]>([]);
   const [geocoding, setGeocoding] = useState(false);
+  // Confirm pressed but the typed text couldn't be resolved to coordinates —
+  // shown inline; any new input/pick/pan clears it.
+  const [geoError, setGeoError] = useState(false);
   // Coordinates that match the CURRENT address text (from a picked suggestion
   // or a map pan). Typing clears them — Confirm then forward-geocodes the text.
   const [coord, setCoord] = useState<{ lat: number; lng: number } | null>(
@@ -553,6 +561,7 @@ export function ConfirmAddress({ navigation }: any) {
     supersedeLookups();
     setAddress(t);
     setCoord(null); // edited text no longer matches any picked/panned point
+    setGeoError(false);
     const q = t.trim();
     if (q.length < 3) {
       setSuggestions([]);
@@ -574,6 +583,7 @@ export function ConfirmAddress({ navigation }: any) {
     const epoch = geoEpoch.current;
     setSuggestions([]);
     setAddress(sug.description);
+    setGeoError(false);
     Keyboard.dismiss();
     try {
       const { location } = await resolvePlaceApi(sug.id);
@@ -595,6 +605,7 @@ export function ConfirmAddress({ navigation }: any) {
     setCoord(c);
     setMapCenter(c); // keep the prop in sync so a later same-coords pick still glides
     setSuggestions([]);
+    setGeoError(false);
     setReversePending(true);
     reverseTimer.current = setTimeout(async () => {
       let label: string | null = null;
@@ -621,32 +632,44 @@ export function ConfirmAddress({ navigation }: any) {
   useEffect(() => {
     if (triedGps.current || Platform.OS === 'web' || s.draftFavor?.location) return;
     triedGps.current = true;
-    let cancelled = false;
+    // Same supersede rule as every other lookup: the fix is often seconds late
+    // (permission prompt + GPS), so it only applies while the epoch it was born
+    // under is still current — typing, picking a suggestion, panning, or
+    // confirming meanwhile makes it a no-op instead of clobbering that input.
+    // (Unmount bumps the epoch too, via the supersedeLookups cleanup above.)
+    const epoch = geoEpoch.current;
     void getCurrentLocation().then((c) => {
-      if (c && !cancelled) onCenterChange(c);
+      if (c && epoch === geoEpoch.current) onCenterChange(c);
     });
-    return () => {
-      cancelled = true;
-    };
   }, [onCenterChange, s.draftFavor?.location]);
 
   const canConfirm = address.trim().length > 0 && !reversePending;
   const onConfirm = useCallback(async () => {
     if (!canConfirm || geocoding) return;
+    // Confirm is terminal: supersede any in-flight suggestion lookup so a late
+    // response can't pop a dropdown under the tap (or greet the member as stale
+    // UI when they back into this still-mounted screen).
+    supersedeLookups();
+    setSuggestions([]);
     setGeocoding(true);
     const trimmed = address.trim();
     // A picked suggestion / panned pin already carries exact coordinates; only
-    // free-typed text needs the server geocode (which falls back to the demo
-    // point if the server has no key).
-    const { lat, lng } = coord ?? (await geocodeAddress(trimmed));
-    s.setDraft({ location: { lat, lng, address: trimmed } });
+    // free-typed text needs the server geocode.
+    const resolved = coord ?? (await geocodeAddress(trimmed));
     setGeocoding(false);
+    if (!resolved) {
+      // Unresolvable text (typo, no match, lookup failure): block the confirm
+      // with an inline error — never silently substitute coordinates.
+      setGeoError(true);
+      return;
+    }
+    s.setDraft({ location: { lat: resolved.lat, lng: resolved.lng, address: trimmed } });
     // Entered from Home's "Where to?" (no tier picked yet) → continue into the
     // normal flow (size → description → price) instead of skipping straight to a
     // summary with nothing in it. Draft already has tier+description → summary.
     const d = s.draftFavor;
     navigation.navigate(!d?.tier ? 'SelectFavor' : !d.description ? 'FavorDescription' : 'FavorSummary');
-  }, [address, canConfirm, coord, geocoding, navigation, s]);
+  }, [address, canConfirm, coord, geocoding, navigation, s, supersedeLookups]);
 
   if (!fontsLoaded) return <View style={{ flex: 1, backgroundColor: WHITE }} />;
 
@@ -710,6 +733,11 @@ export function ConfirmAddress({ navigation }: any) {
             ))}
           </View>
         ) : null}
+        {geoError ? (
+          <Text style={styles.geoError} accessibilityLiveRegion="polite">
+            We could not find that address
+          </Text>
+        ) : null}
         <BlackButton title={geocoding || reversePending ? 'Locating…' : 'Confirm Address'} disabled={!canConfirm || geocoding} onPress={() => void onConfirm()} style={{ marginTop: 16 }} />
       </View>
 
@@ -733,104 +761,6 @@ export function ConfirmAddress({ navigation }: any) {
         </View>
         {/* white home-indicator line, part of the frame's bar */}
         <View style={styles.tabIndicator} />
-      </View>
-    </View>
-  );
-}
-
-// ---------------------------------------------------------------------------
-// 5. Reblast — "Reblast" #149:9998
-//    Map + pal sheet (Fabrizio card / How I can help? / BOOK NOW) dimmed under
-//    a scrim, with the "We are still looking for a Favor Pal near you" modal.
-// ---------------------------------------------------------------------------
-export function Reblast({ navigation }: any) {
-  const s = useStore();
-  const fontsLoaded = usePoppinsRegular();
-  const insets = useSafeAreaInsets();
-  const { width } = useWindowDimensions();
-  const pal = s.pals?.[0]; // Fabrizio L. — matches the frame's copy
-
-  const onCancel = () => {
-    // Give up on the reblast: cancel the outstanding request and go home.
-    s.cancelFavor();
-    navigation.navigate('Tabs');
-  };
-
-  if (!fontsLoaded) return <View style={{ flex: 1, backgroundColor: WHITE }} />;
-
-  return (
-    <View style={{ flex: 1, backgroundColor: WHITE }}>
-      <MapBackdrop userAvatar={s.user?.avatar} />
-
-      {/* Map chrome behind the scrim: menu button + "Switch to be a favor pal" */}
-      <View style={[styles.mapMenuBtn, { top: insets.top + 14 }]}>
-        <Ionicons name="menu" size={22} color={INK} />
-      </View>
-      <View style={[styles.switchPill, { top: insets.top + 14 }]}>
-        <Text style={styles.switchPillText}>Switch to be a favor pal</Text>
-        <View style={styles.switchTrack}>
-          <View style={styles.switchKnob} />
-        </View>
-      </View>
-
-      {/* Found-pal bottom sheet (under the scrim) */}
-      <View style={[styles.palSheet, { paddingBottom: Math.max(insets.bottom, 16) }]}>
-        <View style={styles.sheetHandle} />
-
-        <View style={{ paddingHorizontal: 24 }}>
-          <View style={{ flexDirection: 'row', marginTop: 24 }}>
-            <Image source={pal?.avatar ? { uri: pal.avatar } : PAL_PHOTO} style={styles.palPhoto} />
-            <View style={{ flex: 1, marginLeft: 24 }}>
-              <View style={{ flexDirection: 'row', alignItems: 'center' }}>
-                <Text style={[styles.tierTitle, { flex: 1 }]}>
-                  {pal ? `${pal.firstName} ${pal.lastName}` : 'Fabrizio L.'}
-                </Text>
-                <Ionicons name="star" size={24} color={STAR} />
-                <Text style={[styles.tierTitle, { marginLeft: 8 }]}>{pal?.rating ?? 4.9}</Text>
-              </View>
-              <Text style={[styles.smallSub, { marginTop: 8 }]}>3 Miles away</Text>
-              <View style={{ flexDirection: 'row', alignItems: 'center', marginTop: 8 }}>
-                <Ionicons name="medal-outline" size={24} color={INK} />
-                <Text style={[styles.smallSub, { marginLeft: 8 }]}>{pal?.reliability ?? 92}% Reliable</Text>
-              </View>
-              <View style={{ flexDirection: 'row', alignItems: 'center', marginTop: 1 }}>
-                <Ionicons name="medal-outline" size={24} color={INK} />
-                <Text style={[styles.smallSub, { marginLeft: 8 }]}>
-                  {pal?.positiveReviews ?? 100}% Positive Reviews
-                </Text>
-              </View>
-            </View>
-          </View>
-
-          <View style={styles.sheetDivider} />
-
-          <Text style={styles.helpHeading}>How I can help?</Text>
-          <Text style={styles.helpBody}>
-            Experienced with repairing doors , closets, fixing electronics, cabinets & pictures.  Professional &
-            congenial inventor, designer and part-time tinkerer, a lifetime of experience of assembling and
-            disassembling with own tools.
-          </Text>
-          <Text style={styles.helpQuote}>
-            {'“Fabrizio did a terrific job repairing a broken doorknob. Our condo association will definitely hire him in the future whenever repairs are needed!”\n– Karen U., 15 March 2021'}
-          </Text>
-        </View>
-
-        <View style={{ paddingHorizontal: 23, marginTop: 32 }}>
-          {/* Static under the scrim in this state, exactly like the frame */}
-          <View style={styles.blackBtn}>
-            <Text style={styles.blackBtnText}>BOOK NOW</Text>
-          </View>
-        </View>
-      </View>
-
-      {/* Scrim + "still looking" modal */}
-      <View style={styles.scrim} />
-      <View style={styles.modalWrap} pointerEvents="box-none">
-        <View style={[styles.modalCard, { width: Math.min(351, width - 64) }]}>
-          <Text style={styles.modalTitle}>{'We are still looking for\na Favor Pal near you'}</Text>
-          <Text style={styles.modalSub}>Taking too long?</Text>
-          <BlackButton title="Cancel Favor" onPress={onCancel} style={{ marginTop: 14, marginHorizontal: 24 }} />
-        </View>
       </View>
     </View>
   );
@@ -1096,6 +1026,14 @@ const styles = StyleSheet.create({
     fontSize: 13,
     color: INK,
   },
+  // Inline confirm failure under the address field.
+  geoError: {
+    marginTop: 8,
+    fontFamily: 'Poppins_400Regular',
+    fontSize: 13,
+    lineHeight: 19,
+    color: RED,
+  },
   tabBar: {
     position: 'absolute',
     left: 0,
@@ -1140,164 +1078,5 @@ const styles = StyleSheet.create({
     borderRadius: 2.5,
     backgroundColor: WHITE,
     marginTop: 8,
-  },
-  // reblast chrome
-  mapMenuBtn: {
-    position: 'absolute',
-    left: 25,
-    width: 40,
-    height: 40,
-    borderRadius: 12,
-    backgroundColor: WHITE,
-    alignItems: 'center',
-    justifyContent: 'center',
-    shadowColor: '#000000',
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.25,
-    shadowRadius: 16,
-    elevation: 6,
-  },
-  switchPill: {
-    position: 'absolute',
-    right: 23,
-    width: 244,
-    height: 40,
-    borderRadius: 20,
-    backgroundColor: WHITE,
-    flexDirection: 'row',
-    alignItems: 'center',
-    shadowColor: '#000000',
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.25,
-    shadowRadius: 16,
-    elevation: 6,
-  },
-  switchPillText: {
-    marginLeft: 24,
-    flex: 1,
-    fontFamily: 'Poppins_400Regular',
-    fontSize: 12,
-    lineHeight: 18,
-    color: INK,
-  },
-  switchTrack: {
-    width: 38,
-    height: 22,
-    borderRadius: 11,
-    backgroundColor: '#E5E5EA',
-    justifyContent: 'center',
-    marginRight: 24,
-  },
-  switchKnob: {
-    width: 18,
-    height: 18,
-    borderRadius: 9,
-    backgroundColor: WHITE,
-    marginLeft: 2,
-    shadowColor: '#000000',
-    shadowOffset: { width: 0, height: 1 },
-    shadowOpacity: 0.2,
-    shadowRadius: 2,
-    elevation: 2,
-  },
-  // reblast pal sheet
-  palSheet: {
-    position: 'absolute',
-    left: 0,
-    right: 0,
-    bottom: 0,
-    backgroundColor: WHITE,
-    borderTopLeftRadius: 16,
-    borderTopRightRadius: 16,
-    shadowColor: '#000000',
-    shadowOffset: { width: 0, height: -8 },
-    shadowOpacity: 0.25,
-    shadowRadius: 16,
-    elevation: 16,
-  },
-  sheetHandle: {
-    alignSelf: 'center',
-    marginTop: 23,
-    width: 80,
-    height: 5,
-    borderRadius: 2,
-    backgroundColor: INK,
-  },
-  palPhoto: {
-    width: 75,
-    height: 75,
-    borderRadius: 40,
-    backgroundColor: FIELD,
-  },
-  smallSub: {
-    fontFamily: 'Poppins_400Regular',
-    fontSize: 12,
-    lineHeight: 18,
-    color: SUB,
-  },
-  sheetDivider: {
-    marginTop: 16,
-    height: 1,
-    backgroundColor: FIELD,
-  },
-  helpHeading: {
-    marginTop: 18,
-    fontFamily: 'Poppins_500Medium',
-    fontSize: 14,
-    lineHeight: 21,
-    color: INK,
-  },
-  helpBody: {
-    marginTop: 8,
-    fontFamily: 'Poppins_400Regular',
-    fontSize: 14,
-    lineHeight: 21.56,
-    color: SUB,
-  },
-  helpQuote: {
-    marginTop: 24,
-    fontFamily: 'Poppins_400Regular_Italic',
-    fontSize: 14,
-    lineHeight: 21.56,
-    color: SUB,
-  },
-  // reblast modal
-  scrim: {
-    position: 'absolute',
-    top: 0,
-    left: 0,
-    right: 0,
-    bottom: 0,
-    backgroundColor: 'rgba(0, 0, 0, 0.5)',
-  },
-  modalWrap: {
-    position: 'absolute',
-    top: 0,
-    left: 0,
-    right: 0,
-    bottom: 0,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  modalCard: {
-    backgroundColor: WHITE,
-    borderRadius: 16,
-    paddingBottom: 24,
-  },
-  modalTitle: {
-    marginTop: 57,
-    fontFamily: 'Poppins_500Medium',
-    fontSize: 24,
-    lineHeight: 36,
-    color: INK,
-    textAlign: 'center',
-  },
-  modalSub: {
-    marginTop: 53,
-    fontFamily: 'Poppins_500Medium',
-    fontSize: 16,
-    lineHeight: 24,
-    color: INK,
-    textAlign: 'center',
   },
 });

@@ -155,7 +155,15 @@ profileRouter.get(
     const pals = await prisma.user.findMany({
       // Only verified, vetted pals are matchable — palVerified gates the
       // background check the same way `verified` gates email confirmation.
-      where: { role: 'pal', verified: true, palVerified: true, id: { notIn: [...excluded] } },
+      // Presence is honored: invisible/offline pals are hidden from the
+      // directory (they can still browse and accept on their own initiative).
+      where: {
+        role: 'pal',
+        verified: true,
+        palVerified: true,
+        status: { notIn: ['invisible', 'offline'] },
+        id: { notIn: [...excluded] },
+      },
       orderBy: { rating: 'desc' },
       take: 50,
     });
