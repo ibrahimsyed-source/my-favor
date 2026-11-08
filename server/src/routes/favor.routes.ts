@@ -195,6 +195,19 @@ favorRouter.post(
   asyncHandler(async (req, res) => {
     const input = req.body as z.infer<typeof createSchema>;
 
+    // A schedule must be a real near-term future moment: 2 minutes of grace for
+    // client clock skew / submit latency, and a 90-day horizon so a fat-fingered
+    // year can't park a favor into the far future.
+    if (input.scheduledFor != null) {
+      const now = Date.now();
+      if (input.scheduledFor <= now - 2 * 60 * 1000) {
+        throw badRequest('scheduledFor must be in the future');
+      }
+      if (input.scheduledFor > now + 90 * 24 * 60 * 60 * 1000) {
+        throw badRequest('scheduledFor is too far out');
+      }
+    }
+
     // One active request per member: the client UI has exactly one member-favor
     // slot, so a second concurrent request could never be tracked or cancelled.
     // (Also bounds the notification fan-out per member.)

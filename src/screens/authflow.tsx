@@ -1,15 +1,15 @@
 import React, { useEffect, useRef, useState } from 'react';
 import {
   View, Text, TextInput, TouchableOpacity, ScrollView, Image, StyleSheet, ViewStyle,
-  KeyboardAvoidingView, Platform,
+  KeyboardAvoidingView, Platform, ActivityIndicator,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
-import * as ImagePicker from 'expo-image-picker';
 import { Screen, TopBar, Txt, Button } from '../components';
 import { useTheme, tokens, fonts } from '../theme';
 import { useStore } from '../store';
 import { verifyOtpApi, resendOtpApi, forgotPasswordApi, resetPasswordApi } from '../api/endpoints';
+import { pickImageLocal, uploadPickedImage, PickedImage } from '../lib/upload';
 
 // ---------------------------------------------------------------------------
 // User App v.2 auth flow.
@@ -498,7 +498,12 @@ export const Signup = ({ navigation, route }: any) => {
   // Role chosen on the preceding Welcome screen (member vs pal), carried through
   // so the account is created with the role the user actually picked.
   const role = route?.params?.role;
-  const [avatar, setAvatar] = useState<string | undefined>(undefined);
+  // The picked image stays LOCAL until a session exists: the upload route is
+  // authed and Signup runs pre-auth, so uploading at pick time can only 401.
+  // The local uri drives the preview; the bytes ride to OtpVerify and upload
+  // right after the session is established.
+  const [avatar, setAvatar] = useState<PickedImage | undefined>(undefined);
+  const [avatarBusy, setAvatarBusy] = useState(false);
   const [firstName, setFirstName] = useState('');
   const [lastName, setLastName] = useState('');
   const [email, setEmail] = useState('');
@@ -509,16 +514,18 @@ export const Signup = ({ navigation, route }: any) => {
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState('');
 
-  // Avatar upload — same picker pattern as EditProfile. The picked image only
-  // previews locally (the signup API has no avatar field yet).
+  // Avatar: local pick only (no network pre-auth). Failures surface in the
+  // form's inline error so there is never a silent drop.
   const pickAvatar = async () => {
+    if (avatarBusy) return;
+    setAvatarBusy(true);
     try {
-      const perm = await ImagePicker.requestMediaLibraryPermissionsAsync();
-      if (!perm.granted) { navigation.navigate('PermissionDenied', { kind: 'photos' }); return; }
-      const res = await ImagePicker.launchImageLibraryAsync({ allowsEditing: true, quality: 0.8 });
-      if (!res.canceled && res.assets && res.assets[0]) setAvatar(res.assets[0].uri);
-    } catch {
-      /* picker unavailable — non-fatal */
+      const res = await pickImageLocal();
+      if (res === null) return; // user cancelled the picker
+      if (res.ok) { setAvatar(res.image); setError(''); }
+      else setError(res.reason);
+    } finally {
+      setAvatarBusy(false);
     }
   };
 
@@ -555,16 +562,18 @@ export const Signup = ({ navigation, route }: any) => {
     setSubmitting(true);
     setError('');
     try {
+      // The signup API itself has no avatar field — the LOCAL image rides along
+      // to OtpVerify, which uploads + PATCHes it right after the
+      // post-verification login establishes a session (uploads are authed).
       await s.signup({
         firstName, lastName, email, phone, password,
-        ...(avatar ? { avatar } : {}),
         ...(role ? { role } : {}),
         // The terms checkbox combines 18+ eligibility + terms acceptance; the
         // server records both as proof-of-consent (TCPA / age rating).
         ageAffirmed: agreeTerms,
         acceptedTerms: agreeTerms,
       });
-      navigation.navigate('OtpVerify', { destination: email.trim().toLowerCase(), password });
+      navigation.navigate('OtpVerify', { destination: email.trim().toLowerCase(), password, avatar });
     } catch (e: any) {
       // Dismissing the verification modal leaves the account created but
       // unverified, so resubmitting this form 409s "already exists". Re-drive
@@ -574,9 +583,18 @@ export const Signup = ({ navigation, route }: any) => {
       if (e?.status === 409) {
         try {
           const r = await s.login(email.trim(), password);
-          if (r === 'ok') return; // verified account + matching password — signed straight in
+          if (r === 'ok') {
+            // Signed straight in — upload + attach the picked avatar now.
+            // Best-effort: entry must never hang on it.
+            if (avatar) {
+              void uploadPickedImage(avatar, 'avatar')
+                .then((up) => (up.ok ? s.updateProfile({ avatar: up.url }) : undefined))
+                .catch(() => undefined);
+            }
+            return;
+          }
           if (r === 'unverified') {
-            navigation.navigate('OtpVerify', { destination: email.trim().toLowerCase(), password });
+            navigation.navigate('OtpVerify', { destination: email.trim().toLowerCase(), password, avatar });
             return;
           }
         } catch { /* fall through to the signup error */ }
@@ -605,13 +623,16 @@ export const Signup = ({ navigation, route }: any) => {
         contentContainerStyle={{ paddingHorizontal: PX, paddingBottom: tokens.spacing.xxl }}
         keyboardShouldPersistTaps="handled"
       >
-        {/* Avatar upload circle with the red "+" badge (bottom-right). */}
+        {/* Avatar upload circle with the red "+" badge (bottom-right);
+            spinner in the circle while the picked photo uploads. */}
         <View style={{ alignItems: 'center', marginTop: tokens.spacing.lg, marginBottom: tokens.spacing.xl }}>
           <TouchableOpacity
             onPress={pickAvatar}
+            disabled={avatarBusy}
             activeOpacity={0.8}
             accessibilityRole="button"
             accessibilityLabel="Add profile photo"
+            accessibilityState={{ disabled: avatarBusy, busy: avatarBusy }}
             style={{ width: 132, height: 132 }}
           >
             <View
@@ -620,8 +641,10 @@ export const Signup = ({ navigation, route }: any) => {
                 alignItems: 'center', justifyContent: 'center', overflow: 'hidden',
               }}
             >
-              {avatar ? (
-                <Image source={{ uri: avatar }} style={{ width: 132, height: 132 }} />
+              {avatarBusy ? (
+                <ActivityIndicator color="#ABABAB" />
+              ) : avatar ? (
+                <Image source={{ uri: avatar.uri }} style={{ width: 132, height: 132 }} />
               ) : (
                 <Ionicons name="person-outline" size={60} color="#ABABAB" />
               )}
@@ -763,6 +786,17 @@ export const OtpVerify = ({ navigation, route }: any) => {
   // Password from Signup/Login so the Success step can complete the login
   // after verification (held in memory only, never persisted).
   const password: string | undefined = route?.params?.password;
+  // LOCAL image picked on the Signup screen — the signup API has no avatar
+  // field and uploads are authed, so it is uploaded + PATCHed onto the profile
+  // once the login lands.
+  const avatar: PickedImage | undefined = route?.params?.avatar;
+  // Best-effort post-session attach: entering the app never hangs on it.
+  const attachAvatar = () => {
+    if (!avatar) return;
+    void uploadPickedImage(avatar, 'avatar')
+      .then((up) => (up.ok ? s.updateProfile({ avatar: up.url }) : undefined))
+      .catch(() => undefined);
+  };
   const isReset = route?.params?.context === 'reset';
 
   // Live "Code expires in 10:00" countdown (the server's real TTL).
@@ -856,6 +890,8 @@ export const OtpVerify = ({ navigation, route }: any) => {
         // No password on hand (defensive fallback) — verify and enter directly.
         const ok = await s.verifyOtp(full);
         if (!ok) setError('Incorrect or expired code. Please enter the full 4-digit code.');
+        // verifyOtp established the session — upload + attach the avatar now.
+        else attachAvatar();
       }
     } catch (e: any) {
       setError(e?.message || 'Incorrect or expired code. Please try again.');
@@ -876,6 +912,8 @@ export const OtpVerify = ({ navigation, route }: any) => {
     try {
       const r = await s.login(dest, password);
       if (r !== 'ok') navigation.reset({ index: 0, routes: [{ name: 'Login' }] });
+      // Logged in — upload + attach the avatar picked on the Signup screen.
+      else attachAvatar();
     } catch {
       navigation.reset({ index: 0, routes: [{ name: 'Login' }] });
     } finally {

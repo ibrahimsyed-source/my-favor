@@ -92,6 +92,16 @@ export const geocodeServerApi = (q: string) =>
 export const reverseGeocodeApi = (lat: number, lng: number) =>
   apiRequest<{ location: GeoLocation | null }>(`/api/geo/reverse?lat=${lat}&lng=${lng}`, { auth: true });
 
+// --- uploads (server-side Supabase Storage proxy; see server uploads.routes.ts) ---
+export type UploadContentType = 'image/jpeg' | 'image/png' | 'image/webp';
+// `data` is the base64 payload, with or without a data: prefix. Decoded size
+// capped at 6MB (400). Returns the public https URL. 503 when the server has
+// no storage configured (soft degrade — surface the message to the user).
+export const uploadImageApi = (body: { data: string; contentType: UploadContentType; kind: 'favor' | 'avatar' }) =>
+  // 60s: a multi-MB base64 body on a slow uplink legitimately outlives the
+  // default 15s transport timeout.
+  apiRequest<{ url: string }>('/api/uploads/image', { method: 'POST', auth: true, body, timeoutMs: 60000 });
+
 // --- favors ---
 export type CreateFavorInput = {
   tier: string; price?: number; description: string; images?: string[];

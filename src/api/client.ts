@@ -81,7 +81,15 @@ export async function getStoredUser<T = any>(): Promise<T | null> {
   }
 }
 
-type ReqOpts = { method?: string; body?: unknown; auth?: boolean; _retried?: boolean };
+type ReqOpts = {
+  method?: string;
+  body?: unknown;
+  auth?: boolean;
+  _retried?: boolean;
+  // Per-call override for slow-by-nature requests (multi-MB photo uploads);
+  // everything else keeps the tight default so a stalled network fails fast.
+  timeoutMs?: number;
+};
 
 async function raw(path: string, opts: ReqOpts): Promise<Response> {
   const headers: Record<string, string> = { 'content-type': 'application/json' };
@@ -89,7 +97,7 @@ async function raw(path: string, opts: ReqOpts): Promise<Response> {
   // Time out a hung connection so a stalled mobile network can't leave a request
   // (or the app's session bootstrap) pending forever.
   const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
+  const timer = setTimeout(() => controller.abort(), opts.timeoutMs ?? REQUEST_TIMEOUT_MS);
   try {
     return await fetch(`${API_URL}${path}`, {
       method: opts.method ?? 'GET',

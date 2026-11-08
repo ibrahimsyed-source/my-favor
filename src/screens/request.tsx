@@ -1,11 +1,10 @@
 import React, { useState, useRef, useCallback, useEffect } from 'react';
 import {
   View, Text, Image, TextInput, TouchableOpacity, StyleSheet, ScrollView,
-  KeyboardAvoidingView, Platform, useWindowDimensions, Keyboard,
+  KeyboardAvoidingView, Platform, useWindowDimensions, Keyboard, ActivityIndicator,
 } from 'react-native';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
-import Slider from '@react-native-community/slider';
 import Svg, { Defs, RadialGradient, Stop, Circle } from 'react-native-svg';
 import { useFonts, Poppins_400Regular, Poppins_400Regular_Italic } from '@expo-google-fonts/poppins';
 import { useStore } from '../store';
@@ -13,6 +12,7 @@ import { FAVOR_TIERS } from '../types';
 import { geocodeAddress, GEOCODE_FALLBACK } from '../lib/geocode';
 import { getCurrentLocation } from '../lib/location';
 import { suggestAddressesApi, resolvePlaceApi, reverseGeocodeApi, AddressSuggestion } from '../api/endpoints';
+import { pickAndUploadImage } from '../lib/upload';
 import { MapPicker } from '../components/MapPicker';
 
 // ---------------------------------------------------------------------------
@@ -213,7 +213,7 @@ const DESC_PLACEHOLDER =
   'Provide as much detail as possible about your favor!  Let your provider know about what they will be doing, what they will need to bring, special requirements, etc.';
 const DESC_MAX = 250;
 
-// Memoized so parent re-renders (e.g. slider drags) never re-render the TextInput.
+// Memoized so parent re-renders (e.g. price keystrokes) never re-render the TextInput.
 const DescriptionBlock = React.memo(function DescriptionBlock({
   value,
   onChangeText,
@@ -243,10 +243,49 @@ const DescriptionBlock = React.memo(function DescriptionBlock({
 // ---------------------------------------------------------------------------
 // 2. FavorDescription — "Favor Description" #125:10981
 // ---------------------------------------------------------------------------
+const MAX_PHOTOS = 5;
+
 export function FavorDescription({ navigation }: any) {
   const s = useStore();
   const fontsLoaded = usePoppinsRegular();
   const [desc, setDesc] = useState(s.draftFavor?.description ?? '');
+  // Photos are OPTIONAL and live on draft.images as public URLs — each one is
+  // uploaded the moment it's picked (server /api/uploads proxy), so NEXT never
+  // has to wait on a network call. Local state mirrors the draft for rendering.
+  const [photos, setPhotos] = useState<string[]>(s.draftFavor?.images ?? []);
+  const [uploading, setUploading] = useState(false); // one pick+upload at a time
+  const [photoError, setPhotoError] = useState('');
+  // Latest-photos ref so the async upload completion and removes compose
+  // without putting the store write inside a setState updater (a parent-state
+  // write from a functional updater is a setState-during-render hazard).
+  const photosRef = useRef(photos);
+  photosRef.current = photos;
+  const commitPhotos = (next: string[]) => {
+    setPhotos(next);
+    s.setDraft({ images: next });
+  };
+
+  const addPhoto = async () => {
+    if (uploading || photos.length >= MAX_PHOTOS) return;
+    setPhotoError('');
+    setUploading(true);
+    const res = await pickAndUploadImage('favor');
+    setUploading(false);
+    if (res == null) return; // picker cancelled — the busy tile just goes away
+    if (!res.ok) {
+      // Failed upload: the tile is removed (never lands) + inline error.
+      setPhotoError(res.reason);
+      return;
+    }
+    // Read the ref, not the closure: a remove tapped mid-upload already moved it.
+    const cur = photosRef.current;
+    if (cur.length >= MAX_PHOTOS) return;
+    commitPhotos([...cur, res.url]);
+  };
+
+  const removePhoto = (url: string) => {
+    commitPhotos(photosRef.current.filter((u) => u !== url));
+  };
 
   const draftTier = s.draftFavor?.tier;
   const tierKey: TierKey | null = draftTier && draftTier in TIERS ? (draftTier as TierKey) : null;
@@ -287,6 +326,50 @@ export function FavorDescription({ navigation }: any) {
         <View style={{ marginTop: 12 }}>
           <DescriptionBlock value={desc} onChangeText={setDesc} />
         </View>
+
+        {/* Add photos (optional, up to 5) — app addition, no v.2 frame shows it
+            (see FIDELITY_AUDIT divergence note). */}
+        <View style={{ marginTop: 24 }}>
+          <Text style={styles.descLabel}>Add photos</Text>
+          <View style={styles.photoRow}>
+            {photos.map((url) => (
+              <View key={url} style={styles.photoTile}>
+                <Image source={{ uri: url }} style={{ width: '100%', height: '100%' }} />
+                <TouchableOpacity
+                  onPress={() => removePhoto(url)}
+                  hitSlop={8}
+                  style={styles.photoRemove}
+                  accessibilityRole="button"
+                  accessibilityLabel="Remove photo"
+                >
+                  <Ionicons name="close" size={12} color={WHITE} />
+                </TouchableOpacity>
+              </View>
+            ))}
+            {uploading ? (
+              <View
+                style={[styles.photoTile, { alignItems: 'center', justifyContent: 'center' }]}
+                accessibilityLabel="Uploading photo"
+              >
+                <ActivityIndicator color={INK} />
+              </View>
+            ) : null}
+            {!uploading && photos.length < MAX_PHOTOS ? (
+              <TouchableOpacity
+                onPress={() => void addPhoto()}
+                style={styles.photoAdd}
+                accessibilityRole="button"
+                accessibilityLabel="Add a photo"
+              >
+                <Ionicons name="add" size={26} color={INK} />
+              </TouchableOpacity>
+            ) : null}
+          </View>
+          {photoError ? (
+            <Text style={styles.photoError} accessibilityLiveRegion="polite">{photoError}</Text>
+          ) : null}
+          <Text style={styles.photoHint}>Up to 5 photos — optional.</Text>
+        </View>
       </ScrollView>
 
       <Footer>
@@ -298,108 +381,34 @@ export function FavorDescription({ navigation }: any) {
 
 // ---------------------------------------------------------------------------
 // 3. Negotiate — "Favor Description - Negotiate" #130:10114
-//    Track: 10px, radius 34, active #0D0A0A / inactive white w/ 1px ink border.
-//    Thumb: 37px ink circle with the $ price inside. Labels: 0 / {n}hrs / 24hrs.
+//    ⚠️ Deliberate divergence (2026-11-08, owner request — see FIDELITY_AUDIT):
+//    the frame's 0–24hrs time slider is replaced by a typed dollar input. The
+//    member names a price directly (no hours × rate maths); Favor Pals accept
+//    it or send a counter offer.
 // ---------------------------------------------------------------------------
-const HOURLY_RATE = 100; // 2hrs => $200 in the frame
-const THUMB = 37;
-const MAX_HOURS = 24;
-
-const PriceSlider = React.memo(function PriceSlider({
-  onChange,
-}: {
-  onChange: (hours: number, price: number) => void;
-}) {
-  const [hours, setHours] = useState(2);
-  const [trackW, setTrackW] = useState(0);
-
-  const price = hours * HOURLY_RATE;
-  const frac = hours / MAX_HOURS;
-  const thumbLeft = frac * Math.max(0, trackW - THUMB);
-  // Moving "{n}hrs" readout: clamp its 60px box inside the row, and hide
-  // whichever fixed end label ('0' / '24hrs') it would overprint — at 24hrs the
-  // two '24hrs' strings otherwise render doubled on top of each other.
-  const readoutLeft = Math.min(Math.max(0, thumbLeft + THUMB / 2 - 30), Math.max(0, trackW - 60));
-  const hideMinLabel = readoutLeft < 24;
-  const hideMaxLabel = readoutLeft + 60 > trackW - 56;
-
-  const handleValue = (v: number) => {
-    const r = Math.round(v);
-    setHours(r);
-    onChange(r, r * HOURLY_RATE);
-  };
-
-  return (
-    <View style={{ marginTop: 40 }}>
-      <View
-        style={{ height: THUMB, justifyContent: 'center' }}
-        onLayout={(e) => setTrackW(e.nativeEvent.layout.width)}
-      >
-        {/* custom track (white w/ ink border; ink fill up to the thumb) */}
-        <View style={styles.trackBase} />
-        <View style={[styles.trackFill, { width: thumbLeft + THUMB / 2 }]} />
-        <Slider
-          style={{ width: '100%', height: THUMB, position: 'absolute' }}
-          // A favor must cost something, so 1hr ($100) is the floor — this makes
-          // $0 unreachable and the onNext price guard can never dead-end the NEXT
-          // button (which can't dim on price since price lives in a ref).
-          minimumValue={1}
-          maximumValue={MAX_HOURS}
-          step={1}
-          value={hours}
-          onValueChange={handleValue}
-          minimumTrackTintColor="transparent"
-          maximumTrackTintColor="transparent"
-          thumbTintColor="transparent"
-          accessibilityRole="adjustable"
-          accessibilityLabel="Favor duration"
-          accessibilityValue={{ text: `${hours} hours, $${price}` }}
-        />
-        {/* $ thumb bubble */}
-        <View pointerEvents="none" style={[styles.sliderThumb, { left: thumbLeft }]}>
-          <Text style={styles.sliderThumbText}>${price}</Text>
-        </View>
-      </View>
-
-      <View style={{ height: 28, marginTop: 5 }}>
-        {hideMinLabel ? null : <Text style={styles.sliderLabel}>0</Text>}
-        <Text
-          style={[
-            styles.sliderLabel,
-            {
-              position: 'absolute',
-              left: readoutLeft,
-              width: 60,
-              textAlign: 'center',
-            },
-          ]}
-        >
-          {hours}hrs
-        </Text>
-        {hideMaxLabel ? null : (
-          <Text style={[styles.sliderLabel, { position: 'absolute', right: 0 }]}>24hrs</Text>
-        )}
-      </View>
-    </View>
-  );
-});
+const PRICE_MAX = 100000;
 
 export function Negotiate({ navigation }: any) {
   const s = useStore();
   const fontsLoaded = usePoppinsRegular();
   const [desc, setDesc] = useState(s.draftFavor?.description ?? '');
-  // Committed slider value lives in a ref so drags never re-render this screen.
-  const priceRef = useRef({ hours: 2, price: 2 * HOURLY_RATE });
-  const handlePrice = useCallback((hours: number, price: number) => {
-    priceRef.current = { hours, price };
-  }, []);
+  const [priceText, setPriceText] = useState(
+    s.draftFavor?.tier === 'negotiate' && s.draftFavor.price != null ? String(s.draftFavor.price) : ''
+  );
 
-  const canNext = desc.trim().length > 0;
+  // Comma decimals ("12,50") normalized, rounded to cents. STRICT shape first:
+  // parseFloat alone would silently accept "12.5.5" as 12.5 (double-tapped
+  // decimal key) or read "1,000" as $1.00 — the field must only enable NEXT
+  // when the visible text IS the number being charged.
+  const priceShapeOk = /^\d{1,6}([.,]\d{1,2})?$/.test(priceText.trim());
+  const price = Math.round(parseFloat(priceText.trim().replace(',', '.')) * 100) / 100;
+  const priceValid = priceShapeOk && !Number.isNaN(price) && price > 0 && price <= PRICE_MAX;
+
+  const canNext = priceValid && desc.trim().length > 0;
   const onNext = () => {
-    // A favor must cost something — block $0 (slider at 0hrs).
-    if (!canNext || priceRef.current.price <= 0) return;
-    const { hours, price } = priceRef.current;
-    s.setDraft({ tier: 'negotiate', hours, price, description: desc.trim() });
+    if (!canNext) return;
+    // NO hours on the draft: negotiate favors are priced directly now.
+    s.setDraft({ tier: 'negotiate', price, description: desc.trim() });
     // Same order-agnostic hop as FavorDescription: skip the address screen when
     // the member already confirmed one from Home's "Where to?".
     navigation.navigate(s.draftFavor?.location ? 'FavorSummary' : 'ConfirmAddress');
@@ -411,12 +420,22 @@ export function Negotiate({ navigation }: any) {
     <LightScreen>
       <TopBar title="Negotiate Your Favor" onBack={navigation.canGoBack() ? navigation.goBack : undefined} />
       <ScrollView contentContainerStyle={{ flexGrow: 1, paddingHorizontal: 24, paddingBottom: 24 }} keyboardShouldPersistTaps="handled">
-        <Text style={[styles.h1, { marginTop: 40 }]}>What is the favor?</Text>
+        <Text style={[styles.h1, { marginTop: 40 }]}>Name your price</Text>
         <Text style={[styles.leadText, { marginTop: 16 }]}>
-          Use the slider below to calculate your favor price based on the time you need
+          Set the price for your favor — Favor Pals can accept it or send you a counter offer.
         </Text>
 
-        <PriceSlider onChange={handlePrice} />
+        <View style={styles.priceField}>
+          <TextInput
+            value={priceText}
+            onChangeText={setPriceText}
+            keyboardType="decimal-pad"
+            placeholder="$ Your price"
+            placeholderTextColor={PLACEHOLDER}
+            style={styles.priceInput}
+            accessibilityLabel="Your favor price"
+          />
+        </View>
 
         <View style={{ marginTop: 35 }}>
           <DescriptionBlock value={desc} onChangeText={setDesc} />
@@ -901,39 +920,67 @@ const styles = StyleSheet.create({
     color: SUB,
     textAlign: 'right',
   },
-  // negotiate slider
-  trackBase: {
-    height: 10,
-    borderRadius: 34,
-    backgroundColor: WHITE,
-    borderWidth: 1,
-    borderColor: INK,
+  // negotiate typed price (replaces the slider — see FIDELITY_AUDIT divergence)
+  priceField: {
+    marginTop: 32,
+    height: 48,
+    borderRadius: 8,
+    backgroundColor: FIELD,
+    paddingHorizontal: 16,
+    justifyContent: 'center',
   },
-  trackFill: {
-    position: 'absolute',
-    left: 0,
-    height: 10,
-    borderRadius: 34,
-    backgroundColor: INK,
+  priceInput: {
+    paddingVertical: 0,
+    fontFamily: 'Poppins_400Regular',
+    fontSize: 18,
+    color: INK,
   },
-  sliderThumb: {
+  // "Add photos" section (FavorDescription)
+  photoRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 10,
+    marginTop: 12,
+  },
+  photoTile: {
+    width: 72,
+    height: 72,
+    borderRadius: 8,
+    backgroundColor: FIELD,
+    overflow: 'hidden',
+  },
+  photoRemove: {
     position: 'absolute',
-    width: THUMB,
-    height: THUMB,
-    borderRadius: THUMB / 2,
+    top: 4,
+    right: 4,
+    width: 20,
+    height: 20,
+    borderRadius: 10,
     backgroundColor: INK,
     alignItems: 'center',
     justifyContent: 'center',
   },
-  sliderThumbText: {
-    fontFamily: 'Poppins_500Medium',
-    fontSize: 12,
-    color: WHITE,
+  photoAdd: {
+    width: 72,
+    height: 72,
+    borderRadius: 8,
+    backgroundColor: FIELD,
+    alignItems: 'center',
+    justifyContent: 'center',
   },
-  sliderLabel: {
+  photoError: {
+    marginTop: 8,
     fontFamily: 'Poppins_400Regular',
-    fontSize: 18,
-    color: INK,
+    fontSize: 13,
+    lineHeight: 19,
+    color: RED,
+  },
+  photoHint: {
+    marginTop: 8,
+    fontFamily: 'Poppins_400Regular',
+    fontSize: 12,
+    lineHeight: 18,
+    color: SUB,
   },
   // map pieces
   pinDisc: {

@@ -51,6 +51,12 @@ const rawSchema = z.object({
   // Leave blank in dev: the geo routes then return empty results and the app
   // degrades to free-typed addresses.
   GOOGLE_MAPS_SERVER_KEY: z.string().optional().default(''),
+  // Supabase Storage for image uploads (favor photos + avatars) via the
+  // /api/uploads proxy. The service-role key stays server-only — the client
+  // never talks to Supabase directly. Leave blank to disable uploads: the
+  // route soft-degrades to 503 and the app hides photo/avatar upload.
+  SUPABASE_URL: z.string().optional().default(''),
+  SUPABASE_SERVICE_ROLE_KEY: z.string().optional().default(''),
 });
 
 const parsed = rawSchema.safeParse(process.env);
@@ -127,6 +133,12 @@ export const config = {
     serverKey: env.GOOGLE_MAPS_SERVER_KEY,
     enabled: env.GOOGLE_MAPS_SERVER_KEY.length > 0,
   },
+  uploads: {
+    // Trailing slash trimmed so route code can safely join `${url}/storage/...`.
+    url: env.SUPABASE_URL.replace(/\/+$/, ''),
+    serviceKey: env.SUPABASE_SERVICE_ROLE_KEY,
+    enabled: env.SUPABASE_URL.length > 0 && env.SUPABASE_SERVICE_ROLE_KEY.length > 0,
+  },
 } as const;
 
 // In production you need a real way to deliver OTP codes (dev-return is blocked
@@ -151,6 +163,16 @@ if (isProd && !env.GOOGLE_MAPS_SERVER_KEY) {
   // eslint-disable-next-line no-console
   console.warn(
     '⚠️  GOOGLE_MAPS_SERVER_KEY is not set — /api/geo returns empty results: no address autocomplete, and confirmed addresses fall back to the demo coordinates.',
+  );
+}
+
+// Uploads degrade softly (the /api/uploads route 503s and the app hides
+// photo/avatar upload), but a silently-blank pair in prod means no favor photos
+// or avatars at all — make it loud in the boot log (like maps.serverKey above).
+if (isProd && (!env.SUPABASE_URL || !env.SUPABASE_SERVICE_ROLE_KEY)) {
+  // eslint-disable-next-line no-console
+  console.warn(
+    '⚠️  SUPABASE_URL / SUPABASE_SERVICE_ROLE_KEY not set — /api/uploads returns 503: favor photos and avatar uploads are disabled.',
   );
 }
 

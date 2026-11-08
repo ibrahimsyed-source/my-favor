@@ -9,8 +9,9 @@ import { Ionicons } from '@expo/vector-icons';
 import { useFonts, Poppins_400Regular } from '@expo-google-fonts/poppins';
 import { Avatar } from '../components';
 import { MapScene, MAP_SCENE_SUPPORTED } from '../components/MapScene';
+import { SchedulePicker, formatScheduledFor } from '../components/SchedulePicker';
 import { useStore } from '../store';
-import { FAVOR_TIERS } from '../types';
+import { FAVOR_TIERS, Favor } from '../types';
 import { getKnownLocation } from '../lib/location';
 import { GEOCODE_FALLBACK } from '../lib/geocode';
 import { TIERS } from './request';
@@ -483,12 +484,33 @@ function MemberHome({ navigation }: any) {
     }, [])
   );
 
+  // The NOW pill's schedule picker (real date/time — see SchedulePicker).
+  const [scheduleOpen, setScheduleOpen] = React.useState(false);
+  const scheduledFor = s.draftFavor?.scheduledFor;
+  // A schedule that has slipped into the past must not ride silently through
+  // the whole flow only to 400 at the very end — expire it back to NOW here.
+  React.useEffect(() => {
+    if (scheduledFor != null && scheduledFor <= Date.now()) {
+      s.setDraft({ scheduledFor: undefined });
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [scheduledFor]);
+
   // Every Home entry point starts a FRESH request: a leftover draft from an
   // abandoned flow (especially its confirmed location) would silently skip
   // steps further in — the flow screens hop past whatever the draft already has.
-  const pickTier = (tier: TierKey) => {
+  // The ONE field that survives the reset is scheduledFor: the NOW pill sets it
+  // right here on Home, so wiping it when the member then taps a tile / the
+  // search field would silently turn their scheduled favor into a NOW one.
+  const startFresh = (patch?: Partial<Favor>) => {
+    const keep = s.draftFavor?.scheduledFor;
     s.clearDraft();
-    s.setDraft({ tier, price: FAVOR_TIERS[tier].price });
+    const seed: Partial<Favor> = { ...(keep != null ? { scheduledFor: keep } : {}), ...patch };
+    if (Object.keys(seed).length > 0) s.setDraft(seed);
+  };
+
+  const pickTier = (tier: TierKey) => {
+    startFresh({ tier, price: FAVOR_TIERS[tier].price });
     navigation.navigate('FavorDescription');
   };
 
@@ -579,7 +601,7 @@ function MemberHome({ navigation }: any) {
         {/* ---- NEGOTIATE ------------------------------------------------- */}
         <TouchableOpacity
           activeOpacity={0.85}
-          onPress={() => { s.clearDraft(); navigation.navigate('Negotiate'); }}
+          onPress={() => { startFresh(); navigation.navigate('Negotiate'); }}
           accessibilityRole="button"
           style={styles.negotiateBtn}
         >
@@ -589,25 +611,38 @@ function MemberHome({ navigation }: any) {
         {/* ---- LOCATION -------------------------------------------------- */}
         <Text style={styles.locationLabel}>Location of your favor</Text>
 
-        <TouchableOpacity
-          activeOpacity={0.85}
-          onPress={() => { s.clearDraft(); navigation.navigate('ConfirmAddress'); }}
-          accessibilityRole="button"
-          accessibilityLabel="Where to?"
-          style={styles.searchField}
-        >
-          <Ionicons name="search" size={18} color={SUB} />
-          <Text style={styles.searchPlaceholder}>Where to?</Text>
-          <View style={styles.nowPill}>
+        {/* Two SIBLING touchables inside a plain row: nesting the pill inside
+            an accessible touchable collapses it into one screen-reader node and
+            makes scheduling unreachable with VoiceOver/TalkBack. */}
+        <View style={styles.searchField}>
+          <TouchableOpacity
+            activeOpacity={0.85}
+            onPress={() => { startFresh(); navigation.navigate('ConfirmAddress'); }}
+            accessibilityRole="button"
+            accessibilityLabel="Where to?"
+            style={{ flex: 1, flexDirection: 'row', alignItems: 'center' }}
+          >
+            <Ionicons name="search" size={18} color={SUB} />
+            <Text style={styles.searchPlaceholder}>Where to?</Text>
+          </TouchableOpacity>
+          {/* NOW pill — opens the schedule picker (never navigates); its label
+              tracks the draft: "NOW" or the formatted schedule. */}
+          <TouchableOpacity
+            activeOpacity={0.85}
+            onPress={() => setScheduleOpen(true)}
+            accessibilityRole="button"
+            accessibilityLabel={`Favor time: ${scheduledFor != null ? formatScheduledFor(scheduledFor) : 'now'}. Change schedule`}
+            style={styles.nowPill}
+          >
             <Ionicons name="time-outline" size={13} color={WHITE} />
-            <Text style={styles.nowText}>NOW</Text>
+            <Text style={styles.nowText}>{formatScheduledFor(scheduledFor)}</Text>
             <Ionicons name="chevron-down" size={14} color={WHITE} />
-          </View>
-        </TouchableOpacity>
+          </TouchableOpacity>
+        </View>
 
         <TouchableOpacity
           activeOpacity={0.85}
-          onPress={() => { s.clearDraft(); navigation.navigate('ConfirmAddress'); }}
+          onPress={() => { startFresh(); navigation.navigate('ConfirmAddress'); }}
           accessibilityRole="button"
           accessibilityLabel={`Address: ${address}`}
           style={styles.addressRow}
@@ -655,6 +690,17 @@ function MemberHome({ navigation }: any) {
           )}
         </View>
       </ScrollView>
+
+      {/* NOW pill's scheduler. onPick(undefined) = "NOW": the store's setDraft
+          spread copies the explicit undefined over any stored schedule, and
+          requestFavor's body builder treats undefined as absent — verified, so
+          clearing needs no store change. */}
+      <SchedulePicker
+        visible={scheduleOpen}
+        value={scheduledFor}
+        onClose={() => setScheduleOpen(false)}
+        onPick={(v) => { s.setDraft({ scheduledFor: v }); setScheduleOpen(false); }}
+      />
 
       {/* Route back to a live favor: handled app-wide by ActiveFavorPill (the
           Uber-style trip bar at the navigation root). */}

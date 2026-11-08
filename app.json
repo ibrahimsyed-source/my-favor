@@ -78,6 +78,7 @@
       "output": "single"
     },
     "plugins": [
+      "@react-native-community/datetimepicker",
       [
         "expo-splash-screen",
         {

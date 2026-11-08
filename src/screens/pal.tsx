@@ -772,6 +772,28 @@ export const PalFavorDetail = ({ navigation, route }: any) => {
               <Text style={{ color: SUBTLE, fontSize: 14, lineHeight: 20, marginTop: 4, fontFamily: P400 }} numberOfLines={expanded ? undefined : 2}>
                 {shownFavor?.description || 'No details provided yet.'}
               </Text>
+              {/* Member-attached photos (favor create, max 5) — dark-kit
+                  thumbnail strip; view-only for now (no tap action). */}
+              {shownFavor?.images?.length ? (
+                <ScrollView
+                  horizontal
+                  showsHorizontalScrollIndicator={false}
+                  style={{ marginTop: 10 }}
+                  contentContainerStyle={{ gap: 8 }}
+                >
+                  {shownFavor.images.map((uri, i) => (
+                    <Image
+                      key={`${uri}-${i}`}
+                      source={{ uri }}
+                      style={{
+                        width: 64, height: 64, borderRadius: 8, backgroundColor: SHEET_ALT,
+                        borderWidth: StyleSheet.hairlineWidth, borderColor: BORDER,
+                      }}
+                      accessibilityLabel={`Favor photo ${i + 1} of ${shownFavor.images.length}`}
+                    />
+                  ))}
+                </ScrollView>
+              ) : null}
               <Text style={{ color: SUBTLE, fontSize: 13, marginTop: 6, fontFamily: P400 }}>{when}</Text>
               {/* app addition — no v2 frame (pal-side payout + area at a glance) */}
               <Text style={{ fontSize: 14, marginTop: 6, fontFamily: P400 }}>

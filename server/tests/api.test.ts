@@ -1204,3 +1204,71 @@ test('unblock restores messaging', async () => {
   assert.equal(thread.status, 200, 'thread opens after unblock');
   assert.ok(thread.json.thread?.id, 'thread returned');
 });
+
+test('uploads proxy: auth required; soft 503 shape when unconfigured', async () => {
+  const body = { data: 'aGVsbG8gd29ybGQ=', contentType: 'image/png', kind: 'favor' };
+
+  // Unauthenticated requests are rejected — the proxy spends storage quota.
+  const anon = await api('/api/uploads/image', { method: 'POST', body });
+  assert.equal(anon.status, 401, 'uploads require auth');
+
+  // No SUPABASE_URL / SUPABASE_SERVICE_ROLE_KEY in the test env → the route
+  // soft-degrades with the documented shape: a top-level message plus the
+  // standard error envelope the app's api client turns into the failure reason.
+  const u = await makeUser('member');
+  const res = await api('/api/uploads/image', { method: 'POST', token: u.token, body });
+  assert.equal(res.status, 503, 'unconfigured uploads 503 instead of crashing');
+  assert.equal(res.json.message, 'Uploads are not configured on this server.');
+  assert.equal(res.json.error?.message, 'Uploads are not configured on this server.', 'client-parseable envelope');
+
+  // Input validation still guards the route: a non-allowlisted content type is
+  // a 400 at the edge, never a storage call.
+  const badType = await api('/api/uploads/image', {
+    method: 'POST', token: u.token,
+    body: { ...body, contentType: 'image/gif' },
+  });
+  assert.equal(badType.status, 400, 'contentType outside the allowlist is rejected');
+});
+
+test('favor create accepts a full set of 10 image URLs', async () => {
+  const member = await makeUser('member');
+  const images = Array.from({ length: 10 }, (_, i) => `https://cdn.example.com/media/favors/photo-${i}.jpg`);
+  const create = await api('/api/favors', {
+    method: 'POST',
+    token: member.token,
+    body: { tier: 'tiny', description: 'Photo-heavy favor', images, location: { lat: 30.26, lng: -97.74, address: '10 Main St' } },
+  });
+  assert.equal(create.status, 201, '10 image URLs are within the create cap');
+  assert.deepEqual(create.json.favor.images, images, 'image URLs round-trip on the favor');
+});
+
+test('scheduledFor: past and far-future are rejected; a valid schedule round-trips', async () => {
+  const member = await makeUser('member');
+  const loc = { lat: 30.26, lng: -97.74, address: '11 Main St' };
+
+  // More than the 2-minute clock-skew grace in the past → 400.
+  const past = await api('/api/favors', {
+    method: 'POST', token: member.token,
+    body: { tier: 'tiny', description: 'Past schedule', location: loc, scheduledFor: Date.now() - 10 * 60 * 1000 },
+  });
+  assert.equal(past.status, 400, 'a past schedule is rejected');
+  assert.match(past.json.error.message, /must be in the future/i);
+
+  // Beyond the 90-day horizon → 400.
+  const far = await api('/api/favors', {
+    method: 'POST', token: member.token,
+    body: { tier: 'tiny', description: 'Far-future schedule', location: loc, scheduledFor: Date.now() + 91 * 24 * 60 * 60 * 1000 },
+  });
+  assert.equal(far.status, 400, 'a schedule beyond 90 days is rejected');
+  assert.match(far.json.error.message, /too far out/i);
+
+  // Neither rejected attempt occupied the member's one active-favor slot, and a
+  // valid near-future schedule is stored and serialized back as ms epoch.
+  const when = Date.now() + 24 * 60 * 60 * 1000; // tomorrow
+  const ok = await api('/api/favors', {
+    method: 'POST', token: member.token,
+    body: { tier: 'tiny', description: 'Valid schedule', location: loc, scheduledFor: when },
+  });
+  assert.equal(ok.status, 201, 'a near-future schedule is accepted');
+  assert.equal(ok.json.favor.scheduledFor, when, 'scheduledFor round-trips as ms epoch');
+});

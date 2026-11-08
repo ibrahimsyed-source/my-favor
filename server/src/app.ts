@@ -16,6 +16,7 @@ import { moderationRouter } from './routes/moderation.routes';
 import { geoRouter } from './routes/geo.routes';
 import { stripeRouter } from './routes/stripe.routes';
 import { legalRouter } from './routes/legal.routes';
+import { uploadsRouter } from './routes/uploads.routes';
 
 export function createApp() {
   const app = express();
@@ -71,6 +72,13 @@ export function createApp() {
   // Stripe webhook MUST be mounted before the JSON body parser so it can read
   // the raw body for signature verification.
   app.use('/api/stripe', stripeRouter);
+
+  // Uploads proxy — same mount-order precedent as the Stripe raw mount: it
+  // carries its OWN router-level express.json({ limit: '8mb' }) because base64
+  // image payloads far exceed the global 1mb cap below. It brings its own auth
+  // + per-user rate limit (uploads.routes.ts), so sitting above the global
+  // per-IP limiter is safe — same exemption-by-mount-order as /api/geo.
+  app.use('/api/uploads', uploadsRouter);
 
   // JSON body parsing with a strict size limit (mitigates large-payload DoS).
   app.use(express.json({ limit: '1mb' }));

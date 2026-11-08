@@ -7,7 +7,14 @@ export type RootStackParamList = {
   Signup: undefined;
   // destination = the email the code was sent to; password rides along on the
   // signup path so verify can auto-login.
-  OtpVerify: { destination: string; password?: string; context?: 'signup' | 'reset'; error?: string };
+  OtpVerify: {
+    destination: string;
+    password?: string;
+    context?: 'signup' | 'reset';
+    error?: string;
+    // Local signup avatar — uploaded post-verification (uploads are authed).
+    avatar?: import('../lib/upload').PickedImage;
+  };
   ForgotPassword: undefined;
   NewPassword: { email: string; code: string };
 

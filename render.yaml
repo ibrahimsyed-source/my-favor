@@ -60,6 +60,10 @@ services:
         sync: false
       - key: GOOGLE_MAPS_SERVER_KEY # server-side Google key (Places API (New) + Geocoding) for /api/geo
         sync: false                 # blank = no autocomplete and addresses fall back to demo coords
+      - key: SUPABASE_URL           # Supabase project URL (https://<ref>.supabase.co) — Storage for favor photos/avatars via /api/uploads
+        sync: false                 # blank = /api/uploads returns 503 and the app disables photo/avatar upload
+      - key: SUPABASE_SERVICE_ROLE_KEY # Supabase service_role key — SERVER-ONLY (bypasses RLS; never in the app bundle)
+        sync: false                 # requires the public `media` bucket to exist in Supabase ▸ Storage
       # NOTE: STRIPE_PUBLISHABLE_KEY and the EXPO_PUBLIC_GOOGLE_MAPS_KEY used for
       # Static Maps images are CLIENT-side vars (EXPO_PUBLIC_* in the EAS build
       # environment) — the server never reads those. GOOGLE_MAPS_SERVER_KEY above

@@ -5,11 +5,11 @@ import {
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
-import * as ImagePicker from 'expo-image-picker';
 import { Txt, Avatar } from '../components';
 import { fonts } from '../theme';
 import { useStore } from '../store';
 import { ApiError } from '../api/client';
+import { pickAndUploadImage } from '../lib/upload';
 
 // ---------------------------------------------------------------------------
 // User App v.2 (Figma "Mockup" canvas, #125) — these account screens are LIGHT.
@@ -472,18 +472,24 @@ export const EditProfile = ({ navigation }: any) => {
   const [currentPw, setCurrentPw] = useState('');
   const [newPw, setNewPw] = useState('');
   const [avatar, setAvatar] = useState(u?.avatar);
+  const [avatarBusy, setAvatarBusy] = useState(false);
   const [modal, setModal] = useState<{ title: string; message: string; success?: boolean } | null>(null);
   const [savingProfile, setSavingProfile] = useState(false);
   const [savingPassword, setSavingPassword] = useState(false);
 
+  // Pick + upload in one step: the lib returns a hosted https URL (null =
+  // picker cancelled), so `avatar` only ever holds a URL the server's
+  // .url() contract accepts. Failures are surfaced honestly in the modal.
   const pickImage = async () => {
+    if (avatarBusy) return;
+    setAvatarBusy(true);
     try {
-      const perm = await ImagePicker.requestMediaLibraryPermissionsAsync();
-      if (!perm.granted) { navigation.navigate('PermissionDenied', { kind: 'photos' }); return; }
-      const res = await ImagePicker.launchImageLibraryAsync({ allowsEditing: true, quality: 0.8 });
-      if (!res.canceled && res.assets && res.assets[0]) setAvatar(res.assets[0].uri);
-    } catch {
-      /* picker unavailable — non-fatal */
+      const res = await pickAndUploadImage('avatar');
+      if (res === null) return; // user cancelled the picker
+      if (res.ok) setAvatar(res.url);
+      else setModal({ title: 'Couldn’t Update Photo', message: res.reason });
+    } finally {
+      setAvatarBusy(false);
     }
   };
 
@@ -493,6 +499,15 @@ export const EditProfile = ({ navigation }: any) => {
   // including them 400s the whole save). Send only the editable fields.
   const saveProfile = async () => {
     if (savingProfile) return;
+    // A photo still uploading has no hosted URL yet — saving now would drop it
+    // (and the success modal navigates away). Say so instead of losing it.
+    if (avatarBusy) {
+      setModal({
+        title: 'Photo Still Uploading',
+        message: 'Your new photo is still uploading — give it a moment, then save again.',
+      });
+      return;
+    }
     // The server requires a non-empty first/last name (updateSchema min(1)) —
     // name the problem here instead of round-tripping into a generic 400.
     if (!firstName.trim() || !lastName.trim()) {
@@ -507,17 +522,11 @@ export const EditProfile = ({ navigation }: any) => {
       await s.updateProfile({
         firstName, lastName, bio,
         homeAddress, city, state: stateName, zip,
+        // The avatar is uploaded to a hosted https URL the moment it is picked
+        // (pickAndUploadImage), so it rides in the same PATCH as the text
+        // fields; an unchanged avatar is omitted to keep the patch minimal.
+        ...(avatar && avatar !== u?.avatar ? { avatar } : {}),
       });
-      // Avatar is intentionally kept OUT of the text-field PATCH: a raw picker
-      // URI (file://… on native, data:… on web) violates the server's
-      // avatar .url().max(2000) contract and would 400 the whole save, losing
-      // the name/bio/address edits too. Send it separately and only when it is
-      // already a hosted http(s) URL. (Until an upload endpoint exists a freshly
-      // picked local image can't be persisted, so it is dropped rather than
-      // silently corrupting the profile with an unloadable device-local path.)
-      if (avatar && avatar !== u?.avatar && /^https?:\/\//i.test(avatar)) {
-        await s.updateProfile({ avatar });
-      }
     } catch (e) {
       // Surface the failure honestly: a server rejection (validation etc.)
       // shows the server's verdict — only a genuine network failure blames
@@ -579,10 +588,23 @@ export const EditProfile = ({ navigation }: any) => {
       <LightHeader title="Edit Profile" onBack={() => navigation.goBack()} dark={dark} />
       <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
         <ScrollView contentContainerStyle={{ padding: 16, paddingBottom: 36 }} keyboardShouldPersistTaps="handled" showsVerticalScrollIndicator={false}>
-          {/* Avatar with red edit badge */}
+          {/* Avatar with red edit badge (scrim + spinner while uploading) */}
           <View style={{ alignSelf: 'center', marginTop: 6, marginBottom: 26 }}>
             <Avatar uri={avatar} name={firstName} size={124} />
-            <TouchableOpacity onPress={pickImage} style={st.editBadge} activeOpacity={0.85} accessibilityRole="button" accessibilityLabel="Change photo">
+            {avatarBusy ? (
+              <View style={st.avatarBusy}>
+                <ActivityIndicator color="#FFFFFF" />
+              </View>
+            ) : null}
+            <TouchableOpacity
+              onPress={pickImage}
+              disabled={avatarBusy}
+              style={st.editBadge}
+              activeOpacity={0.85}
+              accessibilityRole="button"
+              accessibilityLabel="Change photo"
+              accessibilityState={{ disabled: avatarBusy, busy: avatarBusy }}
+            >
               <Ionicons name="pencil" size={15} color="#FFFFFF" />
             </TouchableOpacity>
           </View>
@@ -903,6 +925,11 @@ const st = StyleSheet.create({
   editBadge: {
     position: 'absolute', right: 0, bottom: 2, width: 32, height: 32, borderRadius: 16,
     backgroundColor: L.red, alignItems: 'center', justifyContent: 'center',
+  },
+  // Dim scrim + spinner over the 124pt avatar while the picked photo uploads.
+  avatarBusy: {
+    position: 'absolute', top: 0, left: 0, width: 124, height: 124, borderRadius: 62,
+    backgroundColor: 'rgba(0,0,0,0.45)', alignItems: 'center', justifyContent: 'center',
   },
 
   // US flag

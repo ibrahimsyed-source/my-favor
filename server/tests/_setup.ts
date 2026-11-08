@@ -12,3 +12,7 @@ process.env.STRIPE_SECRET_KEY = '';
 process.env.STRIPE_WEBHOOK_SECRET = '';
 process.env.RESEND_API_KEY = '';
 process.env.OTP_DEV_RETURN = 'true';
+// Uploads stay unconfigured under test: the suite asserts the /api/uploads
+// soft-degrade (503) and must never PUT real bytes into Supabase Storage.
+process.env.SUPABASE_URL = '';
+process.env.SUPABASE_SERVICE_ROLE_KEY = '';

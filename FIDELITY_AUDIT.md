@@ -44,6 +44,11 @@ support). Do not "restore" the baked map images on native in a future fidelity p
   ("Tiny/Small/Big/Huge" + $20/$50/$100/$150 prices, white cards, soft shadow); NOW pill inside
   search field right; address "2099 Woodvine Rd, Lorman"; light map w/ 6 red person-pins + soft
   gray radius circle + avatar-in-red-ring pin.
+  ⚠️ DELIBERATE DIVERGENCE (2026-11-08, owner request): the NOW pill — static decoration in the
+  frame — now opens a REAL schedule picker (`src/components/SchedulePicker.tsx`, v.2 white modal
+  card): NOW or a date/time up to 90 days out, reflected on the pill label and on a new "When"
+  row in the Favor Summary (no v.2 frame shows either). Do not "restore" the static pill or
+  remove the When row in a future fidelity pass.
 - **Tab bar (bottom group 414×88)** — REBUILT: black bar; HOME = red rounded-square tile (~41pt,
   white house outline) + red label; ACCOUNT person; ACTIVITY history-clock + red badge; labels
   Poppins Medium 8; white home-indicator line. NOTE: request-flow screens (ConfirmAddress
@@ -110,8 +115,17 @@ support). Do not "restore" the baked map images on native in a future fidelity p
 
 ### Row: Favor flow — request.tsx / checkout.tsx / providers.tsx / tracking.tsx — mostly MATCHES
 - Favor Description `125:10981`: thumb+Tiny $20+SELECTED chip, "What is the favor?", field, NEXT. MATCHES.
+  ⚠️ DELIBERATE DIVERGENCE (2026-11-08, owner request): the screen gained an "Add photos" section
+  (up to 5 photos, uploaded immediately through the server's `/api/uploads` Supabase Storage
+  proxy; public URLs ride `draft.images`) that no v.2 frame shows; the pal favor detail renders
+  the thumbnails. Do not remove it to "match" the frame in a future fidelity pass.
 - Negotiate `130:10114`: "Negotiate Your Favor", "What is the favor?", slider 0–24hrs w/ $-bubble,
   describe field, NEXT. MATCHES-ish; verify slider look.
+  ⚠️ DELIBERATE DIVERGENCE (2026-11-08, owner request): the frame's 0–24hrs time slider was
+  REPLACED by a typed dollar input ("$ Your price", heading "Name your price") — negotiate favors
+  are priced directly, with no hours × rate maths (`hours` no longer set on new drafts; the
+  summary labels them "Custom Favor"). Do not "restore" the slider in a future fidelity pass
+  even though the Figma frame shows it.
 - Confirm Address `125:11243`: white top card "Location of your favor" + address row with X +
   CONFIRM ADDRESS; map fills below w/ radius+avatar+pins; **2-item tab bar HOME | REQUEST A FAVOR**.
 - Favor Summary `125:10996` + Negotiate variant: thumb, "Tiny Favor/2hrs x $50" + $20/$100,

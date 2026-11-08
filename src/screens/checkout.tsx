@@ -12,6 +12,7 @@ import { FAVOR_TIERS, computeFees, computeCancellation, FavorTier, FavorOffer, R
 import { counterOfferApi, declineOfferApi, getPalApi, getPalReviewsApi } from '../api/endpoints';
 import { LiveMap } from '../components/LiveMap';
 import { MapScene, MAP_SCENE_SUPPORTED } from '../components/MapScene';
+import { SchedulePicker, formatScheduledFor } from '../components/SchedulePicker';
 
 // ---------------------------------------------------------------------------
 // Checkout flow — rebuilt to the User App v.2 Figma frames (light theme):
@@ -81,7 +82,9 @@ function useFavorSummary() {
   const tier = (draftFavor?.tier ?? 'tiny') as FavorTier;
   const tierMeta = (FAVOR_TIERS as Record<string, { label: string; price: number }>)[tier];
   const base = draftFavor?.price ?? tierMeta?.price ?? FAVOR_TIERS.tiny.price;
-  // Negotiated favors label like the "Favor Summary Negotiate" frame: "2hrs x $50".
+  // `hours` is LEGACY (the retired Negotiate slider) — kept tolerant for old
+  // favors only. New negotiate drafts carry a typed price and no hours, so
+  // they fall through to 'Custom Favor' with the typed price.
   const label = draftFavor?.hours
     ? `${draftFavor.hours}hrs x $${Math.round(base / draftFavor.hours)}`
     : tierMeta?.label ?? 'Custom Favor';
@@ -89,13 +92,14 @@ function useFavorSummary() {
   const description = draftFavor?.description || FALLBACK_DESC;
   const address = draftFavor?.location?.address || FALLBACK_ADDRESS;
   const image = draftFavor?.images?.[0];
+  const scheduledFor = draftFavor?.scheduledFor; // undefined = NOW
   // The geocoded pickup coordinates (set on ConfirmAddress) — drives the pickup
   // pin on the summary map. Undefined until an address has been confirmed.
   const location =
     draftFavor?.location && typeof draftFavor.location.lat === 'number'
       ? { lat: draftFavor.location.lat, lng: draftFavor.location.lng }
       : undefined;
-  return { base, label, fees, description, address, image, tier, location };
+  return { base, label, fees, description, address, image, tier, location, scheduledFor };
 }
 
 // ---------------------------------------------------------------------------
@@ -176,11 +180,13 @@ const AlertModal = ({
 );
 
 // ---------------------------------------------------------------------------
-// Shared body of the Favor Summary (thumbnail + cost rows, Description,
-// Address). Reused as the backdrop behind the payment sheet.
+// Shared body of the Favor Summary (thumbnail + cost rows, Description, When,
+// Address). Reused as the backdrop behind the payment sheet, where the When
+// row is display-only (no onPressWhen → not tappable, no chevron).
 // ---------------------------------------------------------------------------
-function SummaryBody() {
-  const { base, label, fees, description, address, image, tier, location } = useFavorSummary();
+function SummaryBody({ onPressWhen }: { onPressWhen?: () => void }) {
+  const { base, label, fees, description, address, image, tier, location, scheduledFor } = useFavorSummary();
+  const whenLabel = formatScheduledFor(scheduledFor); // "NOW" / "Nov 12, 4:30 PM"
   const art = TIER_ART[tier as string] ?? TIER_ART.tiny;
   return (
     <View>
@@ -220,6 +226,25 @@ function SummaryBody() {
       <Divider style={{ marginTop: 18 }} />
       <Section icon="document-text" label="Description" body={description} />
       <Divider style={{ marginTop: 16 }} />
+      {/* When — NOW or the scheduled moment; tapping (FavorSummary only)
+          reopens the schedule picker bound to the draft. */}
+      <TouchableOpacity
+        onPress={onPressWhen}
+        disabled={!onPressWhen}
+        accessibilityRole="button"
+        accessibilityLabel={`Scheduled for ${whenLabel}. Change schedule`}
+        accessibilityState={{ disabled: !onPressWhen }}
+      >
+        <View style={styles.sectionHead}>
+          <Ionicons name="time-outline" size={22} color={INK} />
+          <Text style={styles.sectionLabel}>When</Text>
+          {onPressWhen ? (
+            <Ionicons name="chevron-forward" size={18} color={SUB} style={{ marginLeft: 'auto', marginRight: 25 }} />
+          ) : null}
+        </View>
+        <Text style={styles.sectionBody}>{whenLabel}</Text>
+      </TouchableOpacity>
+      <Divider style={{ marginTop: 16 }} />
       <Section icon="location" label="Address" body={address} />
       {/* Pickup pin at the geocoded address — interactive map on native, a Static
           Maps image on web (see components/LiveMap). Only shown once a location
@@ -240,10 +265,12 @@ function SummaryBody() {
 export const FavorSummary = ({ navigation }: any) => {
   const fontsReady = usePoppins();
   const insets = useSafeAreaInsets();
-  const { requestFavor, draftFavor, activeMemberFavor } = useStore();
+  const { requestFavor, draftFavor, activeMemberFavor, setDraft } = useStore();
   // In-flight guard: a second tap while the request is posting would create a
   // duplicate favor.
   const [requesting, setRequesting] = useState(false);
+  // The "When" row's schedule picker, bound to the draft.
+  const [whenOpen, setWhenOpen] = useState(false);
   // requestFavor's { ok:false } result — 'active_exists' gets a VIEW CURRENT
   // FAVOR modal; every other reason shows the server's message verbatim.
   const [requestFail, setRequestFail] = useState<{ reason: string; code?: 'active_exists' } | null>(null);
@@ -293,7 +320,7 @@ export const FavorSummary = ({ navigation }: any) => {
         </TouchableOpacity>
       ) : null}
       <ScrollView contentContainerStyle={{ flexGrow: 1, paddingBottom: 16 }} showsVerticalScrollIndicator={false}>
-        <SummaryBody />
+        <SummaryBody onPressWhen={() => setWhenOpen(true)} />
       </ScrollView>
       <View style={{ paddingHorizontal: 23, paddingTop: 8, paddingBottom: Math.max(insets.bottom, 18) + 16 }}>
         <BlackButton title="REQUEST FAVOR NOW" onPress={onRequest} busy={requesting} />
@@ -306,6 +333,17 @@ export const FavorSummary = ({ navigation }: any) => {
         onPrimary={requestFail?.code === 'active_exists' ? viewCurrentFavor : undefined}
         secondaryLabel={requestFail?.code === 'active_exists' ? 'Not now' : undefined}
         onClose={() => setRequestFail(null)}
+      />
+
+      {/* "When" row's scheduler. onPick(undefined) = back to NOW: the store's
+          setDraft spread copies the explicit undefined over the stored value,
+          and requestFavor's body builder treats undefined as absent (verified
+          against the store — no clearDraft gymnastics needed). */}
+      <SchedulePicker
+        visible={whenOpen}
+        value={draftFavor?.scheduledFor}
+        onClose={() => setWhenOpen(false)}
+        onPick={(scheduledFor) => { setDraft({ scheduledFor }); setWhenOpen(false); }}
       />
     </SafeAreaView>
   );
