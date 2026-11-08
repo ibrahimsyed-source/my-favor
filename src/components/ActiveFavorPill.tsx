@@ -6,6 +6,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { PalMarkerBadge } from './PalMarker';
 import { useStore } from '../store';
 import { haversineMiles, fmtMiles } from '../lib/geo';
+import { computePayout } from '../types';
 
 // ActiveFavorPill — Uber-style persistent trip bar. While a favor is live, a
 // floating pill rides above the tab bar on the main (tab) screens with the
@@ -19,7 +20,9 @@ import { haversineMiles, fmtMiles } from '../lib/geo';
 // flow with its own bottom-anchored CTAs (message composer, ACCEPT, payment
 // confirm) that a floating overlay would cover and hijack.
 
-const LIVE = ['requested', 'matched', 'enroute', 'arrived', 'in_progress'];
+// 'pending_release' keeps the pill up for BOTH sides of a finished favor: the
+// pal waiting on their money, and the member who needs to release it.
+const LIVE = ['requested', 'matched', 'enroute', 'arrived', 'in_progress', 'pending_release'];
 const TAB_ROUTES = new Set(['Home', 'Account', 'Activity']);
 // V2TabBar vertical extent above the safe-area inset (paddingTop 10 + icon 42 +
 // label 16 + indicator 13), so the pill sits just above it.
@@ -53,9 +56,15 @@ export const ActiveFavorPill: React.FC = () => {
 
   const user = s.user;
   // Two independent slots can be live at once (own request + a job being
-  // fulfilled). Prefer the pal-side job — it's the physical trip in flight; the
-  // member's own request takes the pill back once the job ends.
-  const fav = s.activePalFavor ?? s.activeMemberFavor;
+  // fulfilled). Prefer the pal-side job — it's the physical trip in flight —
+  // EXCEPT when that job is parked in pending_release: a passive wait (which
+  // can last indefinitely, no auto-release) must not mask actionable member
+  // states like pending offers, the member's own release duty, or the rating
+  // prompt. The member slot takes the pill then; the waiting state stays
+  // reachable from Earning History / notifications.
+  const palPassive = s.activePalFavor?.status === 'pending_release';
+  const fav =
+    palPassive && s.activeMemberFavor ? s.activeMemberFavor : s.activePalFavor ?? s.activeMemberFavor;
   const status = fav?.status;
   const iAmPal = !!fav && fav === s.activePalFavor;
   const pal = s.activePal;
@@ -105,7 +114,11 @@ export const ActiveFavorPill: React.FC = () => {
   let title: string;
   let sub: string;
   if (iAmPal) {
-    if (status === 'arrived' || status === 'in_progress') {
+    if (status === 'pending_release') {
+      // Work done; no money has moved — the member was asked to release it.
+      title = 'Waiting for your payment';
+      sub = `${fav.memberName ?? 'The member'} was asked to release $${computePayout(fav.price).payout.toFixed(2)}`;
+    } else if (status === 'arrived' || status === 'in_progress') {
       title = 'Favor in progress';
       sub = 'Tap to view or mark as done';
     } else {
@@ -130,6 +143,10 @@ export const ActiveFavorPill: React.FC = () => {
   } else if (status === 'in_progress') {
     title = `${palFirst} is doing your favor`;
     sub = miles != null ? `${fmtMiles(miles)} from the favor location` : 'Tap to view';
+  } else if (status === 'pending_release') {
+    // The pal finished — the member must release the payment on tracking.
+    title = `Release ${palFirst}’s payment`;
+    sub = 'Tap to review and release';
   } else {
     // matched / enroute
     title = `${palFirst} is on the way`;
@@ -140,7 +157,11 @@ export const ActiveFavorPill: React.FC = () => {
     if (!nav || !nav.isReady()) return;
     let dest: string;
     if (iAmPal) {
-      dest = status === 'arrived' || status === 'in_progress' ? 'PalFavorInProgress' : 'Navigation';
+      dest = status === 'pending_release'
+        ? 'PalAwaitingRelease'
+        : status === 'arrived' || status === 'in_progress'
+          ? 'PalFavorInProgress'
+          : 'Navigation';
     } else if (status === 'requested') {
       // No pal yet — the Searching screen owns the waiting (and scheduled)
       // states; FavorTracking would render a placeholder pal.

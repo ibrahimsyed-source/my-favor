@@ -612,6 +612,10 @@ export const Searching = ({ navigation }: any) => {
   // The poll parks the final 'completed' favor in the member slot until it's
   // rated — show a completion state here, never the searching spinner.
   const isCompleted = activeFavor?.status === 'completed';
+  // Finished work awaiting the member's release — the lifecycle passes through
+  // this between in_progress and completed, so the screen must hand over to the
+  // release sheet instead of regressing to the searching spinner.
+  const isPendingRelease = activeFavor?.status === 'pending_release';
   const palName = activePal?.firstName ?? 'Your Favor Pal';
 
   // Recomputed every render so the quote tracks the live status.
@@ -824,6 +828,29 @@ export const Searching = ({ navigation }: any) => {
                 onPress={() => navigation.reset({ index: 0, routes: [{ name: 'Tabs' }] })}
                 style={{ marginTop: 20 }}
               />
+            </>
+          ) : isPendingRelease ? (
+            <>
+              {/* The pal finished while this screen was up — hand the member to
+                  the release sheet, never the searching spinner (and no cancel:
+                  the server refuses on finished work). */}
+              <Text style={styles.alertTitle}>Your Favor Pal finished the favor.</Text>
+              <Text style={styles.alertBody}>
+                {`Review the work and release ${palName}'s payment.`}
+              </Text>
+              <BlackButton
+                title="REVIEW & RELEASE PAYMENT"
+                onPress={() => navigation.reset({ index: 1, routes: [{ name: 'Tabs' }, { name: 'FavorTracking' }] })}
+                style={{ marginTop: 20 }}
+              />
+              <TouchableOpacity
+                onPress={() => navigation.reset({ index: 0, routes: [{ name: 'Tabs' }] })}
+                style={{ marginTop: 14, alignSelf: 'center', paddingVertical: 4 }}
+                accessibilityRole="button"
+                accessibilityLabel="Back to home"
+              >
+                <Text style={styles.tooLong}>Back to home</Text>
+              </TouchableOpacity>
             </>
           ) : isCompleted ? (
             <>

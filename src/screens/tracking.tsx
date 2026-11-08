@@ -102,6 +102,14 @@ export const FavorTracking = ({ navigation }: any) => {
   // Set after the server confirms OUR cancel: { fee } drives "Cancelled." with
   // the charged line (fee > 0) or without it (no-charge = reblast frame 149:10128).
   const [cancelled, setCancelled] = useState<null | { fee: number }>(null);
+  // pending_release → RELEASE PAYMENT. Server-confirmed: the "Payment released."
+  // modal (total captured at press time — the store swaps the COMPLETED favor
+  // into the slot on success) only shows once the API succeeded; OK then lands
+  // on the existing completed sheet (RATE YOUR FAVOR PAL). Failure leaves the
+  // favor pending_release and surfaces the server's reason.
+  const [releaseBusy, setReleaseBusy] = useState(false);
+  const [releasedTotal, setReleasedTotal] = useState<number | null>(null);
+  const [releaseError, setReleaseError] = useState<string | null>(null);
   const [, bumpArrivedSeen] = useState(0); // re-render after marking arrivedSeenIds
 
   // Real pal identity only — the pal record arrives via the store's 4s poll
@@ -113,6 +121,7 @@ export const FavorTracking = ({ navigation }: any) => {
 
   const status = fav?.status ?? 'matched';
   const arrived = status === 'arrived' || status === 'in_progress';
+  const pendingRelease = status === 'pending_release';
   const completed = status === 'completed';
 
   const arrivedSeen = fav ? arrivedSeenIds.has(fav.id) : true;
@@ -134,7 +143,7 @@ export const FavorTracking = ({ navigation }: any) => {
       : null;
   const hasLive = liveMiles != null && !arrived && !completed;
   const distanceLabel =
-    arrived || completed
+    arrived || completed || pendingRelease // finished work = pal at the favor spot, like completed
       ? '0 miles away'
       : liveMiles != null
         ? `${fmtMiles(liveMiles)} away`
@@ -216,6 +225,20 @@ export const FavorTracking = ({ navigation }: any) => {
     setCancelled(null);
     navigation.popToTop();
     navigation.navigate('SelectFavor');
+  };
+
+  // Member releases the pal's payment on a finished favor — THIS is when money
+  // moves. Awaits the store (which awaits the server); the total is captured
+  // before the slot swaps to the completed record so the success modal quotes
+  // the number the member is actually charged.
+  const confirmRelease = async () => {
+    if (!fav || releaseBusy) return;
+    const total = fav.total;
+    setReleaseBusy(true);
+    const res = await s.releaseFavor(fav.id);
+    setReleaseBusy(false);
+    if (res.ok) setReleasedTotal(total);
+    else setReleaseError(res.reason ?? 'Could not release the payment. Please try again.');
   };
 
   // Sheet body -------------------------------------------------------------
@@ -387,7 +410,46 @@ export const FavorTracking = ({ navigation }: any) => {
           <View style={styles.handle} />
         </TouchableOpacity>
 
-        {arrived || completed ? (
+        {pendingRelease ? (
+          // ---------- Pending release — pal finished; the member releases the payment ----------
+          // Call/Message stay available (the two parties are still engaged);
+          // cancel is hidden — the server rejects cancelling finished work.
+          <View>
+            <Text style={styles.sheetTitle}>Your Favor Pal finished the favor.</Text>
+            <View style={styles.divider} />
+            <View style={styles.arrivedProfileRow}>
+              <View>
+                <Avatar uri={palAvatar} size={64} name={palName} />
+                {unread > 0 ? (
+                  <View style={styles.unreadBadge}>
+                    <Text style={styles.unreadBadgeText}>{unread}</Text>
+                  </View>
+                ) : null}
+              </View>
+              {profileCol}
+            </View>
+            <View style={styles.divider} />
+            <View style={styles.totalRow}>
+              <Text style={styles.totalLabel}>Favor total</Text>
+              <Text style={styles.totalAmount}>${(fav?.total ?? 0).toFixed(2)}</Text>
+            </View>
+            <View style={styles.divider} />
+            {actionRow('Call your Favor Pal', 'call', callPal)}
+            <View style={styles.divider} />
+            {actionRow(msgBusy ? 'Opening chat…' : 'Message your Favor Pal', 'chatbox', openThread, unread > 0)}
+            <TouchableOpacity
+              style={[styles.blackBtn, releaseBusy && { opacity: 0.5 }]}
+              activeOpacity={0.85}
+              disabled={releaseBusy}
+              onPress={() => { void confirmRelease(); }}
+              accessibilityRole="button"
+              accessibilityLabel="Release payment"
+              accessibilityState={{ disabled: releaseBusy, busy: releaseBusy }}
+            >
+              <Text style={styles.blackBtnText}>{releaseBusy ? 'RELEASING…' : 'RELEASE PAYMENT'}</Text>
+            </TouchableOpacity>
+          </View>
+        ) : arrived || completed ? (
           // ------------------- Favor Arrived (#125:9610 / #125:9354) -------------------
           <View>
             <Text style={styles.sheetTitle}>
@@ -548,6 +610,24 @@ export const FavorTracking = ({ navigation }: any) => {
         body={cancelError ?? undefined}
         buttons={[{ label: 'OK', onPress: () => setCancelError(null) }]}
         onDismiss={() => setCancelError(null)}
+      />
+
+      {/* Payment released — server-confirmed only. The slot already holds the
+          completed favor, so OK lands on the completed sheet (rate the pal). */}
+      <V2Modal
+        visible={releasedTotal != null}
+        title="Payment released."
+        body={`$${(releasedTotal ?? 0).toFixed(2)} will be charged to your payment method. Thanks for using My Favor!`}
+        buttons={[{ label: 'OK', onPress: () => setReleasedTotal(null) }]}
+      />
+
+      {/* Release failed — nothing moved; the favor stays pending_release. */}
+      <V2Modal
+        visible={releaseError != null}
+        title="Couldn't release payment"
+        body={releaseError ?? undefined}
+        buttons={[{ label: 'OK', onPress: () => setReleaseError(null) }]}
+        onDismiss={() => setReleaseError(null)}
       />
 
       {/* Pal stepped back — the favor reopened (status back to 'requested').
@@ -959,6 +1039,16 @@ const styles = StyleSheet.create({
     paddingHorizontal: 24,
     paddingVertical: 17,
   },
+  // Pending-release amount summary — the total the member is charged on release.
+  totalRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: 24,
+    paddingVertical: 16,
+  },
+  totalLabel: { fontFamily: POPPINS_M, fontSize: 15, color: BLACK },
+  totalAmount: { fontFamily: POPPINS_SB, fontSize: 16, color: BLACK },
   actionText: { flex: 1, fontFamily: POPPINS_M, fontSize: 15, color: BLACK, marginLeft: 14 },
   unreadBadge: {
     position: 'absolute',

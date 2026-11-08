@@ -94,8 +94,14 @@ export function publicOffer(o: FavorOffer & { pal?: User | null }) {
 // rides along on participant-facing reads so the requester sees negotiation
 // state through the same 4s active-favor poll that drives everything else.
 // Statuses during which the two matched parties may see each other's phone
-// number — never before a pal commits, never after the favor ends.
-const CONTACT_STATUSES = ['matched', 'enroute', 'arrived', 'in_progress'];
+// number — never before a pal commits, never after the favor ends. A favor
+// awaiting the member's payment release ('pending_release') still keeps the two
+// parties engaged, so contact stays open until the release completes it.
+const CONTACT_STATUSES = ['matched', 'enroute', 'arrived', 'in_progress', 'pending_release'];
+// Statuses during which the pal's live GPS may ride a favor read — strictly the
+// moving window. The work is done during pending_release, so the pal's last fix
+// must not keep streaming to the member while they decide to release.
+const LIVE_LOCATION_STATUSES = ['matched', 'enroute', 'arrived', 'in_progress'];
 
 export function publicFavor(
   f: Favor & {
@@ -126,7 +132,7 @@ export function publicFavor(
     // in flight, so a (former) pal's real-time location is never exposed on the
     // open feed / to strangers, and never outlives the active window.
     palLocation:
-      f.palId != null && inContact && f.palLat != null && f.palLng != null
+      f.palId != null && LIVE_LOCATION_STATUSES.includes(f.status) && f.palLat != null && f.palLng != null
         ? { lat: f.palLat, lng: f.palLng, at: f.palLocationAt ? f.palLocationAt.getTime() : undefined }
         : undefined,
     status: f.status,

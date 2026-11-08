@@ -15,6 +15,12 @@ favorRouter.use(authenticate);
 
 const ACTIVE_STATUSES = ['requested', 'matched', 'enroute', 'arrived', 'in_progress'];
 
+// A pal's LIVE job window (assigned work still physically in flight). A favor
+// parked in 'pending_release' — finished, waiting on the member to release the
+// payment — is deliberately NOT here: it never blocks the pal from new work,
+// and /active prefers a live job over it.
+const PAL_LIVE_STATUSES = ['matched', 'enroute', 'arrived', 'in_progress'];
+
 // Include the member's first name + phone, and the assigned pal's phone, on
 // participant-facing favor responses so the two matched parties can reach each
 // other (the open feed never uses this; the serializer only emits phones while
@@ -258,24 +264,41 @@ favorRouter.get(
 
 // GET /api/favors/active — the caller's current in-flight favors, split by role.
 // A user can simultaneously have an open request (as member) AND be fulfilling
-// someone else's favor (as pal) — the two slots are independent. `favor` is kept
-// for older clients (≤ build 11) that expect a single favor; it prefers the
-// pal-side favor (the physical job in flight).
+// someone else's favor (as pal) — the two slots are independent. Each slot is
+// LIVE-FIRST: a live job/request always outranks a stale pending_release favor
+// (finished, waiting only on the member's release), regardless of createdAt —
+// otherwise an unreleased favor could pin the slot and hide real work. `favor`
+// is kept for older clients (≤ build 11) that expect a single favor; it prefers
+// the pal-side favor (the physical job in flight).
 favorRouter.get(
   '/active',
   asyncHandler(async (req, res) => {
     const me = req.user!.id;
-    const [memberFavor, palFavor] = await Promise.all([
+    const [liveMemberFavor, livePalFavor] = await Promise.all([
       prisma.favor.findFirst({
         where: { memberId: me, status: { in: ACTIVE_STATUSES } },
         orderBy: { createdAt: 'desc' },
         include: participantInclude,
       }),
       prisma.favor.findFirst({
-        where: { palId: me, status: { in: ACTIVE_STATUSES } },
+        where: { palId: me, status: { in: PAL_LIVE_STATUSES } },
         orderBy: { createdAt: 'desc' },
         include: participantInclude,
       }),
+    ]);
+    const [memberFavor, palFavor] = await Promise.all([
+      liveMemberFavor ??
+        prisma.favor.findFirst({
+          where: { memberId: me, status: 'pending_release' },
+          orderBy: { createdAt: 'desc' },
+          include: participantInclude,
+        }),
+      livePalFavor ??
+        prisma.favor.findFirst({
+          where: { palId: me, status: 'pending_release' },
+          orderBy: { createdAt: 'desc' },
+          include: participantInclude,
+        }),
     ]);
     const legacy = palFavor ?? memberFavor;
     res.json({
@@ -726,7 +749,9 @@ favorRouter.post(
         palLocationAt: null,
       },
     });
-    if (released.count === 0) throw conflict('This favor can no longer be released');
+    // "released" now means the member releasing PAYMENT — this is about the pal
+    // returning the JOB to the board, so the copy must not collide with that.
+    if (released.count === 0) throw conflict('This favor can no longer be returned to the board');
     // Stale negotiations don't survive the reopen.
     await prisma.favorOffer.updateMany({
       where: { favorId: req.params.id, status: 'pending' },
@@ -851,8 +876,11 @@ favorRouter.post(
   }),
 );
 
-// POST /api/favors/:id/finish — the assigned pal completes the favor. Computes
-// the payout and writes both ledgers (member payment + pal earning).
+// POST /api/favors/:id/finish — the assigned pal marks the work DONE. The favor
+// parks in 'pending_release': no money moves and the pal's favor count doesn't
+// bump until the member explicitly releases the payment (POST /:id/release).
+// Nothing happens automatically if they never do — support resolves that
+// out-of-band, so there is deliberately no timer or auto-release here.
 favorRouter.post(
   '/:id/finish',
   validate({ params: idParam }),
@@ -864,18 +892,60 @@ favorRouter.post(
       throw conflict('Favor is not in a completable state');
     }
 
-    const { payout } = computePayout(favor.price);
-
-    // Atomic state gate: only one concurrent /finish flips the favor to completed.
+    // Atomic state gate: only one concurrent /finish parks the favor.
     const updated = await prisma.$transaction(async (tx) => {
       const done = await tx.favor.updateMany({
         where: { id: favor.id, palId: me, status: { in: ['arrived', 'in_progress'] } },
-        data: { status: 'completed' },
+        data: { status: 'pending_release' },
       });
       if (done.count === 0) throw conflict('Favor is not in a completable state');
       const f = await tx.favor.findUniqueOrThrow({ where: { id: favor.id }, include: memberInclude });
+      await tx.favorEvent.create({ data: { favorId: favor.id, status: 'pending_release', actorId: me } });
+      return f;
+    });
+
+    // Ask the member to release — this notification is the member's call to
+    // action; the actual payout happens in /release.
+    const meUser = await prisma.user.findUnique({ where: { id: me }, select: { firstName: true } });
+    await notify(
+      favor.memberId,
+      'release_request',
+      'Release the payment',
+      `${meUser?.firstName ?? 'Your Favor Pal'} marked your favor as done. Review and release their payment.`,
+    );
+    res.json({ favor: publicFavor(updated), awaitingRelease: true });
+  }),
+);
+
+// POST /api/favors/:id/release — the MEMBER releases the payment on a finished
+// favor. This is the moment money moves: the member is charged the total and
+// the pal credited their payout (settle), and only now does the pal's favor
+// count bump. 403 for anyone but the member; 409 when the favor isn't awaiting
+// release (including a double release — the atomic gate lets exactly one win).
+favorRouter.post(
+  '/:id/release',
+  validate({ params: idParam }),
+  asyncHandler(async (req, res) => {
+    const me = req.user!.id;
+    const favor = await getParticipantFavor(req.params.id, me);
+    if (favor.memberId !== me) throw forbidden('Only the member can release the payment');
+    if (favor.status !== 'pending_release') throw conflict('This favor is not awaiting release');
+
+    const { payout } = computePayout(favor.price);
+
+    // Atomic state gate: only one concurrent /release completes the favor, so
+    // the settle below can never double-charge or double-credit.
+    const updated = await prisma.$transaction(async (tx) => {
+      const done = await tx.favor.updateMany({
+        where: { id: favor.id, memberId: me, status: 'pending_release' },
+        data: { status: 'completed' },
+      });
+      if (done.count === 0) throw conflict('This favor is not awaiting release');
+      const f = await tx.favor.findUniqueOrThrow({ where: { id: favor.id }, include: memberInclude });
       await tx.favorEvent.create({ data: { favorId: favor.id, status: 'completed', actorId: me } });
-      await tx.user.update({ where: { id: me }, data: { totalFavors: { increment: 1 } } });
+      if (favor.palId) {
+        await tx.user.update({ where: { id: favor.palId }, data: { totalFavors: { increment: 1 } } });
+      }
       return f;
     });
 
@@ -885,18 +955,25 @@ favorRouter.post(
     // the earning is cashable yet ('completed') or still uncollected.
     const ledgerStatus = await settle({
       favorId: favor.id,
-      memberId: favor.memberId,
-      palId: me,
+      memberId: me,
+      palId: favor.palId,
       memberTitle: updated.description.slice(0, 80),
       memberAmount: updated.total,
       palAmount: payout,
       charge: (cid, pm) => chargeFavor({
-        favorId: favor.id, memberId: favor.memberId, palConnectId: cid,
+        favorId: favor.id, memberId: me, palConnectId: cid,
         total: updated.total, base: updated.price, tip: 0, paymentMethodId: pm,
       }),
     });
 
-    await notify(favor.memberId, 'general', 'Favor completed', 'Your favor was completed. Please leave a rating.');
+    if (favor.palId) {
+      await notify(
+        favor.palId,
+        'released',
+        'Payment released',
+        `${favor.member?.firstName ?? 'The member'} released your $${payout.toFixed(2)} payment.`,
+      );
+    }
     res.json({ favor: publicFavor(updated), payout, ledgerStatus });
   }),
 );
@@ -942,6 +1019,11 @@ favorRouter.post(
     const favor = await prisma.favor.findUnique({ where: { id: req.params.id } });
     if (!favor) throw notFound('Favor not found');
     if (favor.memberId !== me) throw forbidden('Not your favor');
+    // A finished favor can't be cancelled out of paying — the work is done, so
+    // the member's only move is to release (disputes go to support, off-app).
+    if (favor.status === 'pending_release') {
+      throw conflict('This favor is finished — release the payment, or contact support if something went wrong.');
+    }
     if (!ACTIVE_STATUSES.includes(favor.status)) throw conflict('Favor cannot be cancelled');
 
     const cancellation = computeCancellation({ status: favor.status, price: favor.price, total: favor.total });
@@ -952,7 +1034,16 @@ favorRouter.post(
         where: { id: favor.id, memberId: me, status: { in: ACTIVE_STATUSES } },
         data: { status: 'cancelled' },
       });
-      if (done.count === 0) throw conflict('Favor cannot be cancelled');
+      if (done.count === 0) {
+        // The gate can lose a race to a concurrent /finish: re-read so a favor
+        // that just became pending_release gets the specific guidance, not the
+        // generic refusal.
+        const now = await tx.favor.findUnique({ where: { id: favor.id }, select: { status: true } });
+        if (now?.status === 'pending_release') {
+          throw conflict('This favor is finished — release the payment, or contact support if something went wrong.');
+        }
+        throw conflict('Favor cannot be cancelled');
+      }
       // participantInclude keeps this response the same shape as the other
       // lifecycle writes (phones stay omitted — 'cancelled' is non-contact).
       const f = await tx.favor.findUniqueOrThrow({ where: { id: favor.id }, include: participantInclude });

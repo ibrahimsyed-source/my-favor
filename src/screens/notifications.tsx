@@ -43,6 +43,8 @@ const ACTION_LABEL: Record<AppNotification['type'], string> = {
   general: 'OKAY',
   cancellation: 'CLOSE',
   no_pal: 'CLOSE',
+  release_request: 'VIEW', // member: review the finished favor + release the payment
+  released: 'VIEW', // pal: the payment landed — view it in Earning History
 };
 
 function timeAgo(ms: number, now: number) {
@@ -147,6 +149,18 @@ export function Notifications({ navigation }: any) {
       case 'cancellation':
       case 'no_pal':
         navigation.navigate('History');
+        break;
+      case 'release_request':
+        // Member-only news ("Release the payment"): the tracking sheet owns the
+        // RELEASE PAYMENT flow while the favor still awaits release; once it was
+        // already released (or replaced by a newer request), History has the row.
+        if (activeMemberFavor?.status === 'pending_release') navigation.navigate('FavorTracking');
+        else navigation.navigate('History');
+        break;
+      case 'released':
+        // Pal-only news ("Payment released"): the payout row lives on the
+        // Earning History screen — registered as 'Earnings' (navigation/index).
+        navigation.navigate('Earnings');
         break;
       case 'offer':
         // Offer news is two-sided and rows carry no favorId, so disambiguate by

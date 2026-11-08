@@ -146,6 +146,12 @@ function chipMeta(favor: Favor, theme: any, palSide: boolean): { label: string; 
     case 'arrived':
     case 'in_progress':
       return { label: 'In Progress', bg: theme.warning };
+    case 'pending_release':
+      // Role-aware: the member owes an action (release the payment — red +
+      // flag, like Incomplete); the pal just waits for it (read-only, amber).
+      return palSide
+        ? { label: 'Waiting for release', bg: theme.warning }
+        : { label: 'Finish & release', bg: theme.primary, flag: true };
     default:
       return { label: 'Incomplete', bg: theme.primary, flag: true };
   }
@@ -390,7 +396,6 @@ export const FavorHistoryDetail = ({ navigation, route }: any) => {
   const feeTotal = (favor?.serviceFee ?? 0) + (favor?.transactionFee ?? 0);
   const payout = computePayout(favor?.price ?? 0, favor?.tip ?? 0);
   const cancelled = isCancelled(favor);
-  const incomplete = !palSide && isIncomplete(favor);
   const tierArt = favor ? TIER_ART[favor.tier] : undefined;
 
   // ---- support: open the real inbox (same mailto pattern as scenarios.tsx) ----
@@ -444,6 +449,31 @@ export const FavorHistoryDetail = ({ navigation, route }: any) => {
     } finally {
       setSubmitting(false);
     }
+  };
+
+  // ---- pending_release variant: the pal finished; the MEMBER releases the payment ----
+  const [releasing, setReleasing] = useState(false);
+  const [releaseError, setReleaseError] = useState<string | null>(null);
+  // Set once OUR release was server-confirmed — flips this view to the
+  // rate/complete variant immediately (the store's background history refresh
+  // brings the completed record in right after).
+  const [released, setReleased] = useState(false);
+  const pendingRelease = !!favor && favor.status === 'pending_release';
+  const memberPendingRelease = !palSide && pendingRelease && !released;
+  // Member detail is "incomplete" (rate + tip + mark complete) once the favor is
+  // completed-but-unrated — including right after a release confirmed here.
+  const incomplete = !palSide && (isIncomplete(favor) || (pendingRelease && released));
+
+  // Server-confirmed, honest result: the view only flips once the release
+  // actually settled; a failed request surfaces the server's reason inline.
+  const releasePayment = async () => {
+    if (!favor || releasing) return;
+    setReleasing(true);
+    setReleaseError(null);
+    const res = await s.releaseFavor(favor.id);
+    setReleasing(false);
+    if (res.ok) setReleased(true);
+    else setReleaseError(res.reason ?? 'Could not release the payment. Please try again.');
   };
 
   const Divider = () => <View style={[styles.divider, { backgroundColor: theme.divider }]} />;
@@ -625,6 +655,16 @@ export const FavorHistoryDetail = ({ navigation, route }: any) => {
             {favor.tip ? ` + tip ${money(favor.tip)}` : ''}
           </Text>
         )}
+        {/* Pal-side pending_release: the payout above hasn't settled yet —
+             read-only status; the member (not the pal) releases it. */}
+        {palSide && pendingRelease ? (
+          <View style={[styles.inline, { marginTop: 8, paddingLeft: 32 }]}>
+            <Ionicons name="time-outline" size={14} color={theme.warning} />
+            <Text style={[styles.caption, { color: theme.textSecondary, marginLeft: 8 }]}>
+              Waiting for release
+            </Text>
+          </View>
+        ) : null}
         <View style={[styles.inline, { marginTop: 14, paddingLeft: 32 }]}>
           <Text style={[styles.caption, { color: theme.textSecondary, width: 110 }]}>
             Date &amp; Time
@@ -640,18 +680,51 @@ export const FavorHistoryDetail = ({ navigation, route }: any) => {
 
         <Divider />
 
-        {/* ---- Feedback ---- */}
-        <Text style={[styles.heading, { color: theme.text }]}>Feedback</Text>
-        <View style={[styles.inline, { marginTop: tokens.spacing.base }]}>
-          <Text style={[styles.heading, { color: theme.text, marginRight: 24 }]}>Rating</Text>
-          <StarRating
-            value={incomplete ? rating : favor.rating ?? 0}
-            size={20}
-            onChange={incomplete ? setRating : undefined}
-          />
-        </View>
+        {/* ---- Feedback (hidden while the member still owes the release —
+             rating opens up right after, on the then-completed favor) ---- */}
+        {!memberPendingRelease && (
+          <>
+            <Text style={[styles.heading, { color: theme.text }]}>Feedback</Text>
+            <View style={[styles.inline, { marginTop: tokens.spacing.base }]}>
+              <Text style={[styles.heading, { color: theme.text, marginRight: 24 }]}>Rating</Text>
+              <StarRating
+                value={incomplete ? rating : favor.rating ?? 0}
+                size={20}
+                onChange={incomplete ? setRating : undefined}
+              />
+            </View>
+          </>
+        )}
 
-        {incomplete ? (
+        {memberPendingRelease ? (
+          <>
+            {/* ---- Finish & release (member role): the pal marked the work done;
+                 releasing the payment completes the favor and settles it ---- */}
+            <Text style={[styles.heading, { color: theme.text }]}>Finish &amp; release</Text>
+            <Text style={[styles.bodySm, { color: theme.textSecondary, marginTop: 8 }]}>
+              Your Favor Pal finished this favor. Release the payment to complete it — you can rate and tip right after.
+            </Text>
+            {releaseError ? (
+              <View accessibilityLiveRegion="polite" style={[styles.inline, { marginTop: 8 }]}>
+                <Ionicons name="alert-circle" size={18} color={theme.primary} style={{ marginRight: 6 }} />
+                <Text style={[styles.caption, { color: theme.primary, flex: 1 }]}>{releaseError}</Text>
+              </View>
+            ) : null}
+            <TouchableOpacity
+              activeOpacity={0.85}
+              onPress={() => { void releasePayment(); }}
+              disabled={releasing}
+              style={[styles.ctaBtn, { backgroundColor: theme.cta, opacity: releasing ? 0.5 : 1 }]}
+              accessibilityRole="button"
+              accessibilityLabel="Release payment"
+              accessibilityState={{ disabled: releasing, busy: releasing }}
+            >
+              <Text style={[styles.ctaBtnTxt, { color: theme.ctaText }]}>
+                {releasing ? 'RELEASING…' : 'RELEASE PAYMENT'}
+              </Text>
+            </TouchableOpacity>
+          </>
+        ) : incomplete ? (
           <>
             {/* ---- Incomplete favor: tip + feedback + mark complete ---- */}
             <Text style={[styles.heading, { color: theme.text, marginTop: tokens.spacing.xl }]}>

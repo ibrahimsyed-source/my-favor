@@ -40,6 +40,10 @@ export type RootStackParamList = {
   BrowseFavors: undefined; // list of all open favor requests to browse + accept
   PalFavorDetail: { favorId: string };
   PalFavorInProgress: undefined;
+  // Finished work parked until the member releases the payment. Params are the
+  // finish-response snapshot; omitted on a pill tap / cold reopen (the screen
+  // reads the pal slot).
+  PalAwaitingRelease: { favorId?: string; payout?: number } | undefined;
   Navigation: undefined;
   // favorId is load-bearing on both: Complete's rate-the-member submit posts
   // against it (store's lastFinishedRef is only a fallback).

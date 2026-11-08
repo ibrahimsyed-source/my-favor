@@ -94,6 +94,21 @@ async function requestAndApprove(favorId: string, memberToken: string, palToken:
   return approve.json;
 }
 
+// Finish-and-release flow: the pal marks the work done (parks the favor in
+// 'pending_release' — no money moves yet), then the MEMBER releases the
+// payment, which completes the favor and settles both ledgers. Returns the
+// release response ({ favor, payout, ledgerStatus }).
+async function finishAndRelease(favorId: string, memberToken: string, palToken: string) {
+  const finish = await api(`/api/favors/${favorId}/finish`, { method: 'POST', token: palToken });
+  assert.equal(finish.status, 200, 'pal finish should land');
+  assert.equal(finish.json.favor.status, 'pending_release', 'finish parks the favor awaiting release');
+  assert.equal(finish.json.awaitingRelease, true, 'finish flags the pending release');
+  const release = await api(`/api/favors/${favorId}/release`, { method: 'POST', token: memberToken });
+  assert.equal(release.status, 200, 'member release should land');
+  assert.equal(release.json.favor.status, 'completed', 'release completes the favor');
+  return release.json;
+}
+
 test('health check', async () => {
   const res = await api('/health');
   assert.equal(res.status, 200);
@@ -127,7 +142,7 @@ test('signup → never leaks password hash', async () => {
   assert.ok(!('passwordHash' in me.json.user), 'passwordHash must not be serialized');
 });
 
-test('full favor lifecycle: request → accept → advance → finish → rate', async () => {
+test('full favor lifecycle: request → accept → advance → finish → release → rate', async () => {
   const member = await makeUser('member');
   const pal = await makeUser('pal');
 
@@ -161,12 +176,33 @@ test('full favor lifecycle: request → accept → advance → finish → rate',
     assert.equal(adv.json.favor.status, status);
   }
 
-  // Pal finishes; payout = 50 - 20% = 40. The settle result rides the response
-  // so the client can be honest about whether the earning is cashable yet.
+  // Pal finishes — the favor PARKS in pending_release: no payout, no ledger
+  // rows, nothing moves until the member releases.
   const finish = await api(`/api/favors/${favorId}/finish`, { method: 'POST', token: pal.token });
   assert.equal(finish.status, 200);
-  assert.equal(finish.json.payout, 40, 'payout is base minus 20% commission');
-  assert.equal(finish.json.ledgerStatus, 'completed', 'mock-mode settle reports a cashable ledger');
+  assert.equal(finish.json.favor.status, 'pending_release', 'finish no longer completes the favor');
+  assert.equal(finish.json.awaitingRelease, true, 'finish flags the pending release');
+  assert.equal(finish.json.payout, undefined, 'no payout rides the finish anymore');
+  const earlyEarnings = await api('/api/payments/earnings', { token: pal.token });
+  assert.ok(
+    !earlyEarnings.json.earnings.some((t: any) => t.favorId === favorId),
+    'no earning row exists before the release',
+  );
+  const earlyTxns = await api('/api/payments/transactions', { token: member.token });
+  assert.ok(
+    !earlyTxns.json.transactions.some((t: any) => t.favorId === favorId),
+    'no member charge exists before the release',
+  );
+
+  // Member releases; payout = 50 - 20% = 40. The settle result rides the
+  // response so the client can be honest about whether the earning is cashable
+  // yet ('completed') or still uncollected ('incomplete' in Stripe-live dev —
+  // assert the field exists rather than pin its value).
+  const release = await api(`/api/favors/${favorId}/release`, { method: 'POST', token: member.token });
+  assert.equal(release.status, 200);
+  assert.equal(release.json.favor.status, 'completed');
+  assert.equal(release.json.payout, 40, 'payout is base minus 20% commission');
+  assert.ok(['completed', 'incomplete'].includes(release.json.ledgerStatus), 'settle result rides the release');
 
   // Member rates with a tip.
   const rate = await api(`/api/favors/${favorId}/rate`, { method: 'POST', token: member.token, body: { rating: 5, feedback: 'Great', tip: 10 } });
@@ -382,34 +418,149 @@ test('live location: assigned pal shares GPS; member sees it, strangers cannot',
   assert.equal(memberPost.status, 409, 'member cannot post pal location');
 });
 
-test('live location: rejected once the favor is no longer in flight', async () => {
+test('live location: rejected once the work is done (incl. pending_release)', async () => {
   const { pal, favorId } = await activeFavor({ advanceTo: 'in_progress' });
+  // Finishing parks the favor in pending_release — no GPS streams while the
+  // member decides to release.
   await api(`/api/favors/${favorId}/finish`, { method: 'POST', token: pal.token });
   const post = await api(`/api/favors/${favorId}/location`, {
     method: 'POST', token: pal.token, body: { lat: 30.30, lng: -97.75 },
   });
-  assert.equal(post.status, 409, 'cannot share location on a completed favor');
+  assert.equal(post.status, 409, 'cannot share location on a finished favor');
 });
 
-test('SECURITY: concurrent double-finish pays out exactly once', async () => {
+test('SECURITY: concurrent double-finish and double-release pay out exactly once', async () => {
   const { member, pal, favorId } = await activeFavor({ advanceTo: 'in_progress' });
-  // Fire two finishes at once — only one may win.
+  // Fire two finishes at once — only one may park the favor.
   const [a, b] = await Promise.all([
     api(`/api/favors/${favorId}/finish`, { method: 'POST', token: pal.token }),
     api(`/api/favors/${favorId}/finish`, { method: 'POST', token: pal.token }),
   ]);
   const statuses = [a.status, b.status].sort();
   assert.deepEqual(statuses, [200, 409], 'one finish succeeds, the other is rejected');
+  // Finishing moves no money — both ledgers stay empty until the release.
+  const before = await api('/api/payments/earnings', { token: pal.token });
+  assert.equal(before.json.earnings.filter((t: any) => t.favorId === favorId).length, 0, 'no earning before release');
+
+  // Fire two releases at once — only one may settle.
+  const [r1, r2] = await Promise.all([
+    api(`/api/favors/${favorId}/release`, { method: 'POST', token: member.token }),
+    api(`/api/favors/${favorId}/release`, { method: 'POST', token: member.token }),
+  ]);
+  assert.deepEqual([r1.status, r2.status].sort(), [200, 409], 'one release succeeds, the other is rejected');
   // Exactly one earning + one payment exist for this favor.
   const earnings = await api('/api/payments/earnings', { token: pal.token });
   assert.equal(earnings.json.earnings.filter((t: any) => t.favorId === favorId).length, 1, 'no duplicate payout');
   const txns = await api('/api/payments/transactions', { token: member.token });
   assert.equal(txns.json.transactions.filter((t: any) => t.favorId === favorId).length, 1, 'no duplicate charge');
+  // The trust counter moved exactly once, and onto the PAL (the release is
+  // called by the MEMBER — a refactor slip crediting the caller would pass
+  // every other assert in this file).
+  const palMe = await api('/api/profile/me', { token: pal.token });
+  assert.equal(palMe.json.user.totalFavors, 1, 'pal totalFavors bumped exactly once by the release');
+  const memberMe = await api('/api/profile/me', { token: member.token });
+  assert.equal(memberMe.json.user.totalFavors, 0, 'member totalFavors untouched');
+});
+
+test('fund release: member-only, single-shot, and it gates rating/cancel/abandon', async () => {
+  const { member, pal, favorId } = await activeFavor({ advanceTo: 'in_progress' });
+  const finish = await api(`/api/favors/${favorId}/finish`, { method: 'POST', token: pal.token });
+  assert.equal(finish.status, 200);
+  assert.equal(finish.json.favor.status, 'pending_release');
+
+  // The finish asks the member (and only the member) to release.
+  const memberNotes = await api('/api/notifications', { token: member.token });
+  assert.ok(
+    memberNotes.json.notifications.some(
+      (n: any) => n.type === 'release_request' && n.title === 'Release the payment' && /marked your favor as done/i.test(n.body),
+    ),
+    'member gets the release_request notification',
+  );
+
+  // Neither the pal nor a stranger can release the member's money.
+  const palRelease = await api(`/api/favors/${favorId}/release`, { method: 'POST', token: pal.token });
+  assert.equal(palRelease.status, 403, 'the pal cannot release their own payment');
+  const stranger = await makeUser('member');
+  const strangerRelease = await api(`/api/favors/${favorId}/release`, { method: 'POST', token: stranger.token });
+  assert.equal(strangerRelease.status, 403, 'a stranger cannot release');
+
+  // Ratings (both directions) wait for the release.
+  const earlyRate = await api(`/api/favors/${favorId}/rate`, { method: 'POST', token: member.token, body: { rating: 5 } });
+  assert.equal(earlyRate.status, 409, 'member cannot rate before releasing');
+  const earlyRateMember = await api(`/api/favors/${favorId}/rate-member`, { method: 'POST', token: pal.token, body: { rating: 5 } });
+  assert.equal(earlyRateMember.status, 409, 'pal cannot rate the member before the release');
+
+  // The member cannot cancel their way out of paying, and the pal cannot
+  // abandon finished work.
+  const cancel = await api(`/api/favors/${favorId}/cancel`, { method: 'POST', token: member.token });
+  assert.equal(cancel.status, 409, 'cancel is refused on a finished favor');
+  assert.match(cancel.json.error.message, /this favor is finished — release the payment, or contact support/i);
+  const abandon = await api(`/api/favors/${favorId}/abandon`, { method: 'POST', token: pal.token });
+  assert.equal(abandon.status, 409, 'finished work cannot be abandoned');
+
+  // The member releases → completed; the pal is told; a second release 409s;
+  // rating opens.
+  const release = await api(`/api/favors/${favorId}/release`, { method: 'POST', token: member.token });
+  assert.equal(release.status, 200);
+  assert.equal(release.json.payout, 40, 'small tier releases a $40 payout');
+  const palNotes = await api('/api/notifications', { token: pal.token });
+  assert.ok(
+    palNotes.json.notifications.some(
+      (n: any) => n.type === 'released' && n.title === 'Payment released' && /released your \$40\.00 payment/i.test(n.body),
+    ),
+    'pal gets the released notification',
+  );
+  const again = await api(`/api/favors/${favorId}/release`, { method: 'POST', token: member.token });
+  assert.equal(again.status, 409, 'double release is rejected');
+  const rate = await api(`/api/favors/${favorId}/rate`, { method: 'POST', token: member.token, body: { rating: 5 } });
+  assert.equal(rate.status, 200, 'rating opens after the release');
+});
+
+test('pending_release never blocks or outranks new work (live-first /active)', async () => {
+  // A second member's open request posted FIRST, so it is OLDER than the favor
+  // that will park in pending_release below — the live-first slot must still
+  // prefer it.
+  const other = await makeUser('member');
+  const older = await api('/api/favors', {
+    method: 'POST',
+    token: other.token,
+    body: { tier: 'tiny', description: 'Older open request', location: { lat: 30.26, lng: -97.74, address: '8 Main St' } },
+  });
+  assert.equal(older.status, 201);
+
+  const { member, pal, favorId } = await activeFavor({ advanceTo: 'in_progress' });
+  await api(`/api/favors/${favorId}/finish`, { method: 'POST', token: pal.token });
+
+  // While nothing live runs, both slots surface the parked favor (the member
+  // must see the release prompt; the pal must see the release land).
+  const parkedPal = await api('/api/favors/active', { token: pal.token });
+  assert.equal(parkedPal.json.palFavor?.id, favorId, 'pal slot holds the parked favor');
+  assert.equal(parkedPal.json.palFavor?.status, 'pending_release');
+  const parkedMember = await api('/api/favors/active', { token: member.token });
+  assert.equal(parkedMember.json.memberFavor?.id, favorId, 'member slot holds the parked favor');
+
+  // The busy guard ignores pending_release: the pal takes the older request…
+  await requestAndApprove(older.json.favor.id, other.token, pal.token);
+  // …and the LIVE job wins the pal slot even though the parked favor is newer.
+  const palActive = await api('/api/favors/active', { token: pal.token });
+  assert.equal(palActive.json.palFavor?.id, older.json.favor.id, 'live job outranks the newer parked favor');
+  assert.equal(palActive.json.favor?.id, older.json.favor.id, 'legacy field prefers the live pal job');
+
+  // The member create cap also ignores pending_release — and the live request
+  // wins the member slot.
+  const mine = await api('/api/favors', {
+    method: 'POST',
+    token: member.token,
+    body: { tier: 'tiny', description: 'Posted while waiting on a release', location: { lat: 30.26, lng: -97.74, address: '9 Main St' } },
+  });
+  assert.equal(mine.status, 201, 'pending_release does not hold the member create slot');
+  const memberActive = await api('/api/favors/active', { token: member.token });
+  assert.equal(memberActive.json.memberFavor?.id, mine.json.favor.id, 'live request wins the member slot');
 });
 
 test('SECURITY: re-rating a favor is rejected', async () => {
   const { member, pal, favorId } = await activeFavor({ advanceTo: 'in_progress' });
-  await api(`/api/favors/${favorId}/finish`, { method: 'POST', token: pal.token });
+  await finishAndRelease(favorId, member.token, pal.token);
   const r1 = await api(`/api/favors/${favorId}/rate`, { method: 'POST', token: member.token, body: { rating: 5, tip: 10 } });
   assert.equal(r1.status, 200);
   const r2 = await api(`/api/favors/${favorId}/rate`, { method: 'POST', token: member.token, body: { rating: 1, tip: 10 } });
@@ -497,9 +648,15 @@ test('phones are shared between participants only while the favor is in flight',
     feed.json.favors.every((f: any) => f.memberPhone === undefined && f.palPhone === undefined),
     'open feed has no phone numbers',
   );
-  // After completion the numbers disappear again.
+  // Finishing parks the favor awaiting release — the two parties are still
+  // engaged (the member must review and release), so the numbers stay visible.
   await api(`/api/favors/${favorId}/advance`, { method: 'POST', token: pal.token, body: { status: 'arrived' } });
   await api(`/api/favors/${favorId}/finish`, { method: 'POST', token: pal.token });
+  const parked = await api(`/api/favors/${favorId}`, { token: pal.token });
+  assert.equal(parked.json.favor.status, 'pending_release');
+  assert.ok(parked.json.favor.memberPhone, 'phones persist while awaiting release');
+  // After the member releases, the favor completes and the numbers disappear.
+  await api(`/api/favors/${favorId}/release`, { method: 'POST', token: member.token });
   const done = await api(`/api/favors/${favorId}`, { token: pal.token });
   assert.equal(done.json.favor.status, 'completed');
   assert.equal(done.json.favor.memberPhone, undefined, 'phone gone after completion');
@@ -507,7 +664,7 @@ test('phones are shared between participants only while the favor is in flight',
 
 test('two-way reviews: pal rating aggregates into the member profile + reviews feed', async () => {
   const { member, pal, favorId } = await activeFavor({ advanceTo: 'arrived' });
-  await api(`/api/favors/${favorId}/finish`, { method: 'POST', token: pal.token });
+  await finishAndRelease(favorId, member.token, pal.token);
   const rate = await api(`/api/favors/${favorId}/rate-member`, {
     method: 'POST', token: pal.token, body: { rating: 4, feedback: 'Friendly member' },
   });
@@ -546,8 +703,8 @@ test('decline persists: a declined favor leaves only that pal’s feed', async (
 });
 
 test('cashout pays the available balance exactly once', async () => {
-  const { pal, favorId } = await activeFavor({ advanceTo: 'in_progress' });
-  await api(`/api/favors/${favorId}/finish`, { method: 'POST', token: pal.token });
+  const { member, pal, favorId } = await activeFavor({ advanceTo: 'in_progress' });
+  await finishAndRelease(favorId, member.token, pal.token);
   const cash1 = await api('/api/payments/cashout', { method: 'POST', token: pal.token });
   assert.equal(cash1.status, 200);
   assert.ok(cash1.json.amount > 0, 'positive payout');
@@ -556,8 +713,8 @@ test('cashout pays the available balance exactly once', async () => {
 });
 
 test('pal can rate the member once', async () => {
-  const { pal, favorId } = await activeFavor({ advanceTo: 'in_progress' });
-  await api(`/api/favors/${favorId}/finish`, { method: 'POST', token: pal.token });
+  const { member, pal, favorId } = await activeFavor({ advanceTo: 'in_progress' });
+  await finishAndRelease(favorId, member.token, pal.token);
   const r1 = await api(`/api/favors/${favorId}/rate-member`, { method: 'POST', token: pal.token, body: { rating: 5, feedback: 'Great member' } });
   assert.equal(r1.status, 200);
   const r2 = await api(`/api/favors/${favorId}/rate-member`, { method: 'POST', token: pal.token, body: { rating: 1 } });
@@ -566,7 +723,7 @@ test('pal can rate the member once', async () => {
 
 test('pal reviews reflect member ratings', async () => {
   const { member, pal, favorId } = await activeFavor({ advanceTo: 'in_progress' });
-  await api(`/api/favors/${favorId}/finish`, { method: 'POST', token: pal.token });
+  await finishAndRelease(favorId, member.token, pal.token);
   await api(`/api/favors/${favorId}/rate`, { method: 'POST', token: member.token, body: { rating: 5, feedback: 'Fantastic pal' } });
   const reviews = await api(`/api/profile/pals/${pal.id}/reviews`, { token: member.token });
   assert.equal(reviews.status, 200);
@@ -585,7 +742,7 @@ test('cancellation compensation is cashable by the committed pal', async () => {
 
 test('SECURITY: a tip charges the member and credits the pal equally (no unfunded earning)', async () => {
   const { member, pal, favorId } = await activeFavor({ advanceTo: 'in_progress' });
-  await api(`/api/favors/${favorId}/finish`, { method: 'POST', token: pal.token });
+  await finishAndRelease(favorId, member.token, pal.token);
   await api(`/api/favors/${favorId}/rate`, { method: 'POST', token: member.token, body: { rating: 5, tip: 10 } });
   const txns = await api('/api/payments/transactions', { token: member.token });
   const earns = await api('/api/payments/earnings', { token: pal.token });
@@ -978,8 +1135,8 @@ test('a pal quietly withdrawing their own request does not notify the member', a
 });
 
 test('history rows name the member for pal-side receipts', async () => {
-  const { pal, favorId } = await activeFavor({ advanceTo: 'in_progress' });
-  await api(`/api/favors/${favorId}/finish`, { method: 'POST', token: pal.token });
+  const { member, pal, favorId } = await activeFavor({ advanceTo: 'in_progress' });
+  await finishAndRelease(favorId, member.token, pal.token);
   const hist = await api('/api/favors', { token: pal.token });
   assert.equal(hist.status, 200);
   const row = hist.json.favors.find((f: any) => f.id === favorId);

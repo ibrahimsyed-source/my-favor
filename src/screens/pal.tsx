@@ -12,8 +12,9 @@ import type { MapSceneMarker } from '../components/MapScene';
 import { useStore } from '../store';
 import {
   getIncomingApi, makeOfferApi, getFavorOffersApi, counterOfferApi, declineOfferApi, rateMemberApi,
+  getFavorApi, getEarningsApi,
 } from '../api/endpoints';
-import { computePayout, computeFees, FAVOR_TIERS, Favor, FavorOffer } from '../types';
+import { computePayout, computeFees, FAVOR_TIERS, Favor, FavorOffer, Transaction } from '../types';
 
 // Favor Pal (provider) active-favor flow — "Provider App v.2" DARK design.
 // Palette verified on the v.2 canvas: page/map ink #0D0A0A, navy sheets/modals
@@ -1237,6 +1238,15 @@ export const PalFavorInProgress = ({ navigation }: any) => {
   const [finishBusy, setFinishBusy] = useState(false);
   const [finishError, setFinishError] = useState('');
   const fav = s.activePalFavor;
+  // Finished-but-unreleased work belongs to the awaiting-release screen — a
+  // cold reopen (or a poll tick landing 'pending_release' mid-view) hands over
+  // there so this screen never shows MARK AS DONE for work that's already done.
+  // Guarded on !finishBusy: our OWN finish resets to it with the payout params,
+  // and this redirect must not double-navigate around that reset.
+  const awaitingRelease = fav?.status === 'pending_release';
+  useEffect(() => {
+    if (awaitingRelease && fav && !finishBusy) navigation.replace('PalAwaitingRelease', { favorId: fav.id });
+  }, [awaitingRelease, finishBusy]); // eslint-disable-line react-hooks/exhaustive-deps
   const base = fav?.price ?? 20;
   // Pal-side breakdown — what the pal takes home, NOT the member's invoice.
   const { payout, commission } = computePayout(base);
@@ -1253,8 +1263,11 @@ export const PalFavorInProgress = ({ navigation }: any) => {
     : (fav?.location?.address ? `Head to ${fav.location.address}` : 'Head to the favor location.');
 
   if (!fontsLoaded) return <View style={{ flex: 1, backgroundColor: PAGE_BG }} />;
+  // Blank frame while the awaiting-release replace above lands — the
+  // in-progress UI below would be a lie for finished work.
+  if (awaitingRelease) return <View style={{ flex: 1, backgroundColor: PAGE_BG }} />;
   // The favor ended under us (member canceled) — our own finish resets straight
-  // to the success screen, so a null favor here is always the other side's doing.
+  // to the awaiting-release screen, so a null favor here is the other side's doing.
   if (!fav) return <PalFavorEndedState navigation={navigation} />;
 
   return (
@@ -1289,7 +1302,7 @@ export const PalFavorInProgress = ({ navigation }: any) => {
           style={[st.whiteBtn, { marginTop: 16, opacity: fav && !finishBusy ? 1 : 0.5 }]}
           disabled={!fav || finishBusy}
           accessibilityRole="button"
-          accessibilityLabel="Mark favor done and get paid"
+          accessibilityLabel="Mark favor done and ask for the payment release"
           accessibilityState={{ disabled: !fav || finishBusy }}
           onPress={async () => {
             // Guards: never let a null favor produce a phantom payout, and never
@@ -1298,18 +1311,21 @@ export const PalFavorInProgress = ({ navigation }: any) => {
             const finishedId = s.activePalFavor.id;
             setFinishBusy(true);
             const res = await s.finishFavorAsPal();
-            setFinishBusy(false);
             if (res.ok) {
-              // Terminal transition: reset so backing out lands on Tabs (not this
-              // now-stale in-progress screen) and can't refire "You got paid".
+              // The work is done but NO money moved yet — park on the
+              // awaiting-release screen (its 5s poll catches the member's
+              // release). Reset so backing out lands on Tabs, not this
+              // now-stale in-progress screen. finishBusy stays true: we're
+              // leaving, and releasing it would re-arm the redirect above.
               navigation.reset({
                 index: 1,
                 routes: [{ name: 'Tabs' }, {
-                  name: 'PalFavorSuccess',
-                  params: { payout: res.payout, ledgerStatus: res.ledgerStatus, favorId: finishedId },
+                  name: 'PalAwaitingRelease',
+                  params: { payout: res.payout, favorId: finishedId },
                 }],
               });
             } else {
+              setFinishBusy(false);
               // The server rejected the finish — say why instead of celebrating.
               setFinishError(res.reason || 'Could not complete the favor. Please try again.');
             }
@@ -1339,6 +1355,126 @@ function CostRow({ label, value, bold }: any) {
 }
 
 // ===========================================================================
+// 3b. PalAwaitingRelease — "Favor finished!" — app addition — no v2 frame
+// (release flow); v.2 dark success language. The work is done but NO money has
+// moved: the member was asked to release the payment, and this screen polls
+// the favor every 5s until the release lands (→ PalFavorSuccess). The pal is
+// free to pick up new work meanwhile — FIND ANOTHER FAVOR resets to Tabs.
+// ===========================================================================
+export const PalAwaitingRelease = ({ navigation, route }: any) => {
+  const s = useStore();
+  const fontsLoaded = usePoppins();
+  const paramFavorId: string | undefined = route?.params?.favorId;
+  const paramPayout: number | undefined = route?.params?.payout;
+  // Pin the favor on first render: the app-wide poll clears the pal slot the
+  // moment the member releases (the favor leaves the active set), and this
+  // screen must keep its name/amounts while its own poll confirms the release.
+  const pinnedRef = useRef<Favor | null>(null);
+  if (!pinnedRef.current) {
+    const slot = s.activePalFavor;
+    if (slot?.status === 'pending_release' && (!paramFavorId || slot.id === paramFavorId)) {
+      pinnedRef.current = slot;
+    }
+  }
+  const fav = pinnedRef.current;
+  const favorId: string | undefined = paramFavorId ?? fav?.id;
+  const [gone, setGone] = useState(false);
+
+  // Release watch: every 5s ask the server whether the member released. A
+  // 'cancelled' can't happen (the server 409s cancel on pending_release), so
+  // the only exits are completed → success, or the favor no longer being
+  // visible to us → neutral ended state.
+  useEffect(() => {
+    if (!favorId) return;
+    let busy = false;
+    const id = setInterval(async () => {
+      if (busy) return; // slow network — never stack ticks
+      busy = true;
+      try {
+        const { favor } = await getFavorApi(favorId);
+        if (favor?.status === 'completed') {
+          clearInterval(id);
+          // ledgerStatus is deliberately undefined: PalFavorSuccess refreshes
+          // the earnings ledger and derives the honest paid / pending-collection
+          // copy from the REAL earning row for this favor.
+          navigation.reset({
+            index: 1,
+            routes: [{ name: 'Tabs' }, {
+              name: 'PalFavorSuccess',
+              params: {
+                payout: paramPayout ?? computePayout(favor.price).payout,
+                favorId,
+                ledgerStatus: undefined,
+              },
+            }],
+          });
+        }
+      } catch (e: any) {
+        // 403/404 = the favor is no longer ours/visible — a neutral ended
+        // state. Anything else is transient: keep waiting.
+        if (e?.status === 403 || e?.status === 404) {
+          clearInterval(id);
+          setGone(true);
+        }
+      } finally {
+        busy = false;
+      }
+    }, 5000);
+    return () => clearInterval(id);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [favorId]);
+
+  const memberName = fav?.memberName ?? 'the member';
+  const base = fav?.price;
+  const { payout: computedPayout, commission } = computePayout(base ?? 0);
+  const payout = paramPayout ?? (typeof base === 'number' ? computedPayout : undefined);
+
+  if (!fontsLoaded) return <View style={{ flex: 1, backgroundColor: PAGE_BG }} />;
+  if (gone || !favorId) return <PalFavorEndedState navigation={navigation} />;
+
+  return (
+    <SafeAreaView edges={['top', 'bottom']} style={{ flex: 1, backgroundColor: PAGE_BG }}>
+      <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 24 }}>
+        <Ionicons name="checkmark-circle" size={120} color={SUCCESS} />
+        <Text style={{ color: TEXT, fontSize: 24, fontFamily: P500, textAlign: 'center', marginTop: 24 }}>
+          Favor finished!
+        </Text>
+        <Text style={{ color: SUBTLE, fontSize: 15, lineHeight: 22, fontFamily: P400, textAlign: 'center', marginTop: 10 }}>
+          {`We’ve asked ${memberName} to release your payment.`}
+        </Text>
+        {typeof payout === 'number' ? (
+          <Text style={{ color: TEXT, fontSize: 18, fontFamily: P500, textAlign: 'center', marginTop: 18 }}>
+            {`You’ll receive $${payout.toFixed(2)}`}
+          </Text>
+        ) : null}
+        {fav && typeof base === 'number' ? (
+          // Same pal-side breakdown the in-progress card shows — the exact
+          // numbers the member's release will settle.
+          <View style={{ alignSelf: 'stretch', backgroundColor: SHEET, borderRadius: 16, padding: 16, marginTop: 18, borderWidth: StyleSheet.hairlineWidth, borderColor: BORDER }}>
+            <CostRow label={tierLabel(fav)} value={`$${base.toFixed(2)}`} bold />
+            <CostRow label="Platform commission (20%)" value={`-$${commission.toFixed(2)}`} />
+            <CostRow label="You earn" value={`$${computedPayout.toFixed(2)}`} bold />
+          </View>
+        ) : null}
+      </View>
+      <View style={{ paddingHorizontal: 24, paddingBottom: 12 }}>
+        <TouchableOpacity
+          style={st.whiteBtn}
+          accessibilityRole="button"
+          accessibilityLabel="Find another favor"
+          onPress={() => navigation.reset({ index: 0, routes: [{ name: 'Tabs' }] })}
+        >
+          <Text style={st.whiteBtnTxt}>FIND ANOTHER FAVOR</Text>
+        </TouchableOpacity>
+        <Text style={{ color: SUBTLE, fontSize: 13, lineHeight: 19, fontFamily: P400, textAlign: 'center', marginTop: 14 }}>
+          {'We’ll notify you the moment it’s released.'}
+        </Text>
+      </View>
+    </SafeAreaView>
+  );
+};
+
+// ===========================================================================
 // 4. PalFavorSuccess — "Favor Success" (v.2): black full screen, green check
 // circle, "You just got paid!", white ADD FEEDBACK + dark FIND ANOTHER FAVOR.
 // ===========================================================================
@@ -1346,11 +1482,24 @@ export const PalFavorSuccess = ({ navigation, route }: any) => {
   const fontsLoaded = usePoppins();
   const s = useStore();
   const { payout: optimisticPayout, favorId, ledgerStatus } = route?.params ?? {};
-  // The amount passed in params is the server's /finish response; once the
-  // earnings refresh lands, the ledger row for this favor carries the
-  // authoritative payout AND status — prefer it.
+  // The member's release settled the ledger seconds ago, server-side — fetch a
+  // fresh earnings snapshot so the paid / pending-collection copy below derives
+  // from the REAL earning row (the awaiting-release path passes no ledgerStatus
+  // param at all; the store's copy predates the settle).
+  const [freshEarnings, setFreshEarnings] = useState<Transaction[] | null>(null);
+  useEffect(() => {
+    let cancelled = false;
+    void getEarningsApi()
+      .then(({ earnings }) => { if (!cancelled) setFreshEarnings(earnings); })
+      .catch(() => undefined); // transient — the store snapshot below still serves
+    return () => { cancelled = true; };
+  }, []);
+  // The amount passed in params is the server's response; once the earnings
+  // refresh lands, the ledger row for this favor carries the authoritative
+  // payout AND status — prefer it.
+  const rows = freshEarnings ?? s.earnings;
   const serverRow = favorId
-    ? s.earnings.find((e) => e.favorId === favorId && e.kind === 'earning' && !e.id.startsWith('pending_'))
+    ? rows.find((e) => e.favorId === favorId && e.kind === 'earning' && !e.id.startsWith('pending_'))
     : undefined;
   const payout = serverRow?.amount ?? optimisticPayout;
   const paid = typeof payout === 'number';

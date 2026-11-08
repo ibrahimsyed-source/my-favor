@@ -2,7 +2,7 @@ import React, { createContext, useContext, useMemo, useState, useCallback, useEf
 import { Platform } from 'react-native';
 import {
   User, Favor, FavorOffer, PaymentCard, Transaction, Thread, Message, AppNotification,
-  Role, UserStatus, FavorTier, GeoPoint, FavorStatus,
+  Role, UserStatus, FavorTier, GeoPoint, FavorStatus, computePayout,
 } from '../types';
 import { setSession, clearSession, getStoredRefresh, getStoredUser, setStoredUser, ApiError, setOnSessionExpired, setOnAccountSuspended } from '../api/client';
 import { startLocationBroadcast } from '../lib/location';
@@ -12,7 +12,7 @@ import {
   getConfigApi, getMeApi, updateProfileApi, setRoleApi, verifyPalApi, setStatusApi, getPalsApi, getPalApi,
   updatePushTokenApi,
   createFavorApi, getFavorsApi, getActiveFavorApi, getFavorApi, getIncomingApi,
-  acceptFavorApi, declineFavorApi, abandonFavorApi, assignPalApi, advanceFavorApi, updateFavorLocationApi, finishFavorApi, cancelFavorApi, rateFavorApi, rateMemberApi,
+  acceptFavorApi, declineFavorApi, abandonFavorApi, assignPalApi, advanceFavorApi, updateFavorLocationApi, finishFavorApi, releaseFavorApi, cancelFavorApi, rateFavorApi, rateMemberApi,
   acceptOfferApi,
   getCardsApi, addCardApi, removeCardApi, getTransactionsApi, getEarningsApi, cashoutApi,
   getPaymentsConfigApi, createSetupCheckoutApi, syncCardsApi, connectOnboardApi, connectStatusApi,
@@ -28,12 +28,19 @@ import {
 // loaded from the API after auth. See src/api for the client + endpoints.
 // ---------------------------------------------------------------------------
 
-const ACTIVE = ['requested', 'matched', 'enroute', 'arrived', 'in_progress'];
+// Statuses that occupy a role slot and keep the 4s poll alive. Includes
+// pending_release (work done, payment not yet released): the member must see
+// the release ask appear and the pal must see the release land.
+const ACTIVE = ['requested', 'matched', 'enroute', 'arrived', 'in_progress', 'pending_release'];
+// LIVE subset — a favor still being worked. pending_release is excluded on
+// purpose: finished work awaiting payment blocks neither a new member request
+// nor new pal work (a new job simply replaces it in the slot).
+const LIVE = ['requested', 'matched', 'enroute', 'arrived', 'in_progress'];
 // Lifecycle order, used to drop stale poll responses that would rewind an
 // optimistic local status advance. Terminal states share the top rank.
 const STATUS_RANK: Record<FavorStatus, number> = {
   draft: 0, requested: 1, matched: 2, enroute: 3, arrived: 4, in_progress: 5,
-  completed: 6, cancelled: 6, no_pal: 6,
+  pending_release: 6, completed: 7, cancelled: 7, no_pal: 7,
 };
 // Statuses during which an assigned pal streams their live location to the member.
 const PAL_BROADCAST_STATUSES = ['matched', 'enroute', 'arrived', 'in_progress'];
@@ -143,6 +150,13 @@ interface StoreValue {
   cancelFavor: () => Promise<{ ok: boolean; fee?: number; refund?: number; reason?: string }>;
   // Awaits; success clears the slot + refreshes history; failure leaves state.
   rateFavor: (rating: number, feedback: string, tip?: number) => Promise<boolean>;
+  // Member releases the payment on a finished (pending_release) favor — THIS is
+  // when money moves, not at finish. Success returns the server's payout +
+  // ledgerStatus and, when the member slot still holds that favor, swaps in the
+  // completed record (the completed-unrated retention then shows the rating
+  // prompt) and refreshes the ledgers; failure leaves state untouched and
+  // returns the server's reason.
+  releaseFavor: (favorId: string) => Promise<{ ok: boolean; payout?: number; ledgerStatus?: 'completed' | 'incomplete'; reason?: string }>;
   // pal side
   incomingFavors: Favor[];
   refreshIncoming: () => Promise<void>;
@@ -161,10 +175,12 @@ interface StoreValue {
   declineFavor: (favorId: string) => Promise<boolean>;
   abandonFavor: () => Promise<boolean>;
   assignPal: (palId: string) => Promise<boolean>;
-  // Awaits POST /finish. Success returns the server's payout + ledgerStatus
-  // ('incomplete' = recorded but not yet collectable); failure reconciles to
-  // server truth and returns ok:false with the server's message.
-  finishFavorAsPal: () => Promise<{ ok: boolean; payout?: number; ledgerStatus?: 'completed' | 'incomplete'; reason?: string }>;
+  // Awaits POST /finish. Finishing only marks the work done: success parks the
+  // returned pending_release favor in the pal slot (nothing settles until the
+  // member releases the payment) and returns a display-only payout computed
+  // client-side; failure reconciles to server truth and returns ok:false with
+  // the server's message.
+  finishFavorAsPal: () => Promise<{ ok: boolean; awaitingRelease?: true; payout?: number; reason?: string }>;
   // Pal rates the member for a finished favor. Pass the favor id from the
   // navigation params (survives app restarts); null falls back to the favor
   // finished this session. Resolves false when nothing was persisted.
@@ -440,6 +456,14 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
             setMemberFavor(mf);
             setPalCanceled(true);
           }
+        } else if (
+          curM && curM.id !== mf.id &&
+          curM.status === 'completed' && mf.status === 'pending_release'
+        ) {
+          // The server's pending_release FALLBACK must not clobber a locally
+          // parked completed-unrated favor (the rating prompt). The parked one
+          // wins until rated; the pending_release favor returns on the tick
+          // after rateFavor clears the slot.
         } else {
           setMemberFavor(mf);
           if (mf.status !== 'requested') setPalCanceled(false); // matched again — notice is moot
@@ -453,15 +477,23 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
 
         // -- pal slot (the favor I'm fulfilling) --
         const curP = palFavorRef.current;
-        if (!pf) {
+        // A LIVE job can also vanish by being REPLACED: the server's slot falls
+        // back to an older pending_release favor when the live job ends, so a
+        // non-null pf with a different id is still "my live job is gone" when
+        // what came back is only parked finished work. Same cancel notice.
+        const liveJobGone =
+          curP &&
+          ['matched', 'enroute', 'arrived', 'in_progress'].includes(curP.status) &&
+          pf != null && pf.id !== curP.id && pf.status === 'pending_release';
+        if (!pf || liveJobGone) {
           // The favor left my pal slot without MY doing (my own finish/abandon
-          // clears it locally first): the member cancelled. Clear the slot and
-          // raise the notice so the in-progress screens show a canceled state
-          // instead of ghost "I'M HERE"/"CANCEL" buttons. NOT a cancellation
-          // when WE finished it — a tick racing our own in-flight /finish must
-          // not flash "the member canceled" over a success screen.
+          // clears it locally first): the member cancelled. Clear/replace the
+          // slot and raise the notice so the in-progress screens show a canceled
+          // state instead of ghost "I'M HERE"/"CANCEL" buttons. NOT a
+          // cancellation when WE finished it — a tick racing our own in-flight
+          // /finish must not flash "the member canceled" over a success screen.
           if (curP) {
-            setPalFavor(null);
+            setPalFavor(pf ?? null);
             if (curP.id !== lastFinishedRef.current) setMemberCanceled(true);
           }
         } else if (
@@ -687,11 +719,13 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
   const requestFavor = useCallback(async (): Promise<
     { ok: true; favor: Favor } | { ok: false; reason: string; code?: 'active_exists' }
   > => {
-    // One active request per member (the UI has exactly one member slot): a
-    // still-active favor must be finished or cancelled first. A parked
-    // completed-unrated favor doesn't count — it's just awaiting a rating.
+    // One LIVE request per member (the UI has exactly one member slot): a
+    // still-live favor must be finished or cancelled first. A parked
+    // completed-unrated favor doesn't count — it's just awaiting a rating —
+    // and neither does a pending_release one: the work is done, and releasing
+    // the payment needn't block the next favor.
     const cur = memberFavorRef.current;
-    if (cur && ACTIVE.includes(cur.status)) {
+    if (cur && LIVE.includes(cur.status)) {
       return {
         ok: false,
         reason: 'Finish or cancel your current favor before requesting another.',
@@ -810,10 +844,12 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
   }, [user, refreshIncoming]);
 
   const acceptFavor = useCallback(async (favorId: string): Promise<{ ok: boolean; offer?: FavorOffer; reason?: string; code?: 'unavailable' | 'error' }> => {
-    // One JOB at a time: only an in-flight favor the user is FULFILLING blocks
-    // requesting another. Their own open request (member slot) never does —
-    // requesting and fulfilling are independent roles.
-    if (palFavor) {
+    // One JOB at a time: only a LIVE favor the user is FULFILLING blocks
+    // accepting another. Their own open request (member slot) never does —
+    // requesting and fulfilling are independent roles — and neither does a
+    // pending_release favor (finished work awaiting the member's release; the
+    // new job replaces it in the slot server-side).
+    if (palFavor && LIVE.includes(palFavor.status)) {
       return { ok: false, reason: 'You already have an active favor. Finish it before accepting another.' };
     }
     try {
@@ -838,9 +874,10 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
 
   const acceptOffer = useCallback(async (favorId: string, offerId: string, price: number): Promise<{ ok: boolean; reason?: string }> => {
     // A member accepting an offer ON their own favor is always allowed; a pal
-    // accepting the member's counter needs a free pal slot (one job at a time).
+    // accepting the member's counter needs a pal slot with no LIVE job (one job
+    // at a time — a pending_release favor doesn't block; the new job replaces it).
     const memberSide = memberFavor?.id === favorId;
-    if (!memberSide && palFavor) {
+    if (!memberSide && palFavor && LIVE.includes(palFavor.status)) {
       return { ok: false, reason: 'You already have an active favor. Finish it before accepting another.' };
     }
     try {
@@ -932,46 +969,64 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     }
   }, [memberFavor]);
 
-  const finishFavorAsPal = useCallback(async (): Promise<{ ok: boolean; payout?: number; ledgerStatus?: 'completed' | 'incomplete'; reason?: string }> => {
+  const finishFavorAsPal = useCallback(async (): Promise<{ ok: boolean; awaitingRelease?: true; payout?: number; reason?: string }> => {
     const f = palFavor;
     const uid = user?.id ?? '';
     if (!f) return { ok: false, reason: 'No active favor to finish.' };
     // Stamp BEFORE the request fires: any poll tick that starts while /finish is
-    // in flight is discarded as stale, so it can't resurrect the slot mid-finish.
-    // lastFinishedRef marks this as OUR finish so an empty pal slot in a racing
-    // tick is never misread as "the member canceled".
+    // in flight is discarded as stale, so it can't rewind the slot mid-finish.
+    // lastFinishedRef marks this as OUR finish so the poll never misreads this
+    // favor leaving the active set (the member released) as "the member canceled".
     lastFavorWriteRef.current = Date.now();
     lastFinishedRef.current = f.id;
     try {
-      const { payout, ledgerStatus } = await finishFavorApi(f.id);
+      const { favor } = await finishFavorApi(f.id);
       lastFavorWriteRef.current = Date.now();
-      setPalFavor(null);
-      // Local echo of the ledgers until the refresh lands (replaced wholesale).
-      const echo: Transaction = {
-        id: `pending_${f.id}`, favorId: f.id,
-        title: (f.description && f.description.slice(0, 40)) || 'Favor',
-        amount: payout, status: ledgerStatus === 'incomplete' ? 'incomplete' : 'completed',
-        date: Date.now(), kind: 'earning',
-      };
-      setEarnings((e) => [echo, ...e]);
-      setHistory((h) => [{ ...f, palId: uid, status: 'completed' }, ...h]);
-      void Promise.all([getEarningsApi(), getFavorsApi()])
-        .then(([e, hist]) => { setEarnings(e.earnings); setHistory(hist.favors); })
-        .catch(() => undefined);
-      return { ok: true, payout, ledgerStatus };
+      // The favor parks in the slot at 'pending_release' — do NOT clear it, and
+      // do NOT echo earnings/history: nothing settles until the member releases
+      // the payment. The payout is computed client-side purely for display.
+      setPalFavor(favor);
+      return { ok: true, awaitingRelease: true, payout: computePayout(favor.price).payout };
     } catch (e: any) {
       // The finish didn't happen (409 not-completable / network): reconcile to
       // server truth so the slot reflects reality and the favor can be retried.
-      lastFinishedRef.current = null;
       try {
         const [a, earn, hist] = await Promise.all([getActiveFavorApi(), getEarningsApi(), getFavorsApi()]);
-        setPalFavor(splitActive(a, uid).pal);
+        const reconciled = splitActive(a, uid).pal;
+        setPalFavor(reconciled);
+        // Only clear the our-finish marker when the finish genuinely did NOT
+        // land. A timeout-after-commit (or double-tap 409) reconciles to this
+        // favor at pending_release — clearing the ref then would make the
+        // eventual release read as "the member canceled".
+        if (!(reconciled && reconciled.id === f.id && reconciled.status === 'pending_release')) {
+          lastFinishedRef.current = null;
+        }
         setEarnings(earn.earnings);
         setHistory(hist.favors);
       } catch { /* keep local state; the poll reconciles */ }
       return { ok: false, reason: e?.message || 'Could not complete the favor. Please try again.' };
     }
   }, [palFavor, user]);
+
+  // Member releases the payment on a finished (pending_release) favor — the
+  // step that actually settles money. Server-confirmed BEFORE any state change:
+  // success swaps the completed record into the member slot (only when the slot
+  // still holds this favor — a release from History must not clobber a newer
+  // live request) so the completed-unrated retention shows the rating prompt,
+  // then refreshes the ledgers. Failure leaves state untouched.
+  const releaseFavor = useCallback(async (favorId: string): Promise<{ ok: boolean; payout?: number; ledgerStatus?: 'completed' | 'incomplete'; reason?: string }> => {
+    try {
+      const { favor, payout, ledgerStatus } = await releaseFavorApi(favorId);
+      lastFavorWriteRef.current = Date.now();
+      if (memberFavorRef.current?.id === favor.id) setMemberFavor(favor);
+      void Promise.all([getTransactionsApi(), getFavorsApi()])
+        .then(([t, h]) => { setTransactions(t.transactions); setHistory(h.favors); })
+        .catch(() => undefined);
+      return { ok: true, payout, ledgerStatus };
+    } catch (e: any) {
+      return { ok: false, reason: e?.message || 'Could not release the payment. Please try again.' };
+    }
+  }, []);
 
   // Pal rates the member they just helped (persists to the finished favor).
   // Honest result: the submit screen must not claim success on a silent no-op
@@ -1273,7 +1328,7 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       activeMemberFavor: memberFavor, activePalFavor: palFavor,
       activePal: palById(memberFavor?.palId) ?? null, palById, history,
       palCanceled, clearPalCanceled, memberCanceled, clearMemberCanceled, locationDenied,
-      requestFavor, advanceFavor, cancelFavor, rateFavor, incomingFavors, refreshIncoming, acceptFavor,
+      requestFavor, advanceFavor, cancelFavor, rateFavor, releaseFavor, incomingFavors, refreshIncoming, acceptFavor,
       acceptOffer, refreshActive,
       declineFavor, abandonFavor, assignPal, finishFavorAsPal, rateMember,
       blockedUsers, reportUser, blockUser, unblockUser,
@@ -1284,7 +1339,7 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     }),
     [user, restoring, maintenance, updateRequired, suspended, recheckConfig, signup, verifyOtp, submitVetting, login, logout, deleteAccount, updateProfile, changePassword, setRole, setStatus,
       pals, draftFavor, setDraft, clearDraft, memberFavor, palFavor, palCanceled, clearPalCanceled, memberCanceled, clearMemberCanceled, locationDenied, palById, history, requestFavor, advanceFavor, cancelFavor,
-      rateFavor, incomingFavors, refreshIncoming, acceptFavor, acceptOffer, refreshActive, declineFavor, abandonFavor, assignPal, finishFavorAsPal, rateMember, blockedUsers, reportUser,
+      rateFavor, releaseFavor, incomingFavors, refreshIncoming, acceptFavor, acceptOffer, refreshActive, declineFavor, abandonFavor, assignPal, finishFavorAsPal, rateMember, blockedUsers, reportUser,
       blockUser, unblockUser, cards, addCard, removeCard, transactions, earnings, cashOut,
       paymentsLive, startAddCard, syncCards, connectOnboard, connectStatus,
       threads, messagesFor, sendMessage, retrySendMessage,

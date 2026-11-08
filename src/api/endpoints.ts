@@ -116,10 +116,16 @@ export const abandonFavorApi = (id: string) => apiRequest<{ ok: boolean }>(`/api
 export const assignPalApi = (id: string, palId: string) => apiRequest<{ favor: Favor }>(`/api/favors/${id}/assign`, { method: 'POST', auth: true, body: { palId } });
 export const advanceFavorApi = (id: string, status: string) => apiRequest<{ favor: Favor }>(`/api/favors/${id}/advance`, { method: 'POST', auth: true, body: { status } });
 export const updateFavorLocationApi = (id: string, lat: number, lng: number) => apiRequest<{ ok: boolean }>(`/api/favors/${id}/location`, { method: 'POST', auth: true, body: { lat, lng } });
-// `ledgerStatus` is the settle() result: 'completed' = the member's money was
-// collected and the earning is cashable; 'incomplete' = recorded uncollected.
+// Finishing only marks the work done: the favor parks at 'pending_release' and
+// NO money moves until the member releases the payment (releaseFavorApi).
 export const finishFavorApi = (id: string) =>
-  apiRequest<{ favor: Favor; payout: number; ledgerStatus?: 'completed' | 'incomplete' }>(`/api/favors/${id}/finish`, { method: 'POST', auth: true });
+  apiRequest<{ favor: Favor; awaitingRelease?: boolean }>(`/api/favors/${id}/finish`, { method: 'POST', auth: true });
+// Member releases the payment on a pending_release favor — THIS is what settles
+// the ledgers (charge member, credit pal). `ledgerStatus` is the settle()
+// result: 'completed' = the member's money was collected and the earning is
+// cashable; 'incomplete' = recorded uncollected.
+export const releaseFavorApi = (id: string) =>
+  apiRequest<{ favor: Favor; payout: number; ledgerStatus?: 'completed' | 'incomplete' }>(`/api/favors/${id}/release`, { method: 'POST', auth: true });
 export const cancelFavorApi = (id: string) => apiRequest<{ favor: Favor; cancellation: { fee: number; refund: number } }>(`/api/favors/${id}/cancel`, { method: 'POST', auth: true });
 export const rateFavorApi = (id: string, body: { rating: number; feedback: string; tip?: number }) =>
   apiRequest<{ favor: Favor }>(`/api/favors/${id}/rate`, { method: 'POST', auth: true, body });

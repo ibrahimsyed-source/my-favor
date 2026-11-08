@@ -51,6 +51,7 @@ export type FavorStatus =
   | 'enroute' // pal traveling
   | 'arrived' // pal at location
   | 'in_progress'
+  | 'pending_release' // pal marked the work done; awaiting the member's payment release
   | 'completed'
   | 'cancelled'
   | 'no_pal';
@@ -182,7 +183,7 @@ export interface Thread {
 
 export interface AppNotification {
   id: string;
-  type: 'match' | 'cancellation' | 'no_pal' | 'arrived' | 'offer' | 'general';
+  type: 'match' | 'cancellation' | 'no_pal' | 'arrived' | 'offer' | 'release_request' | 'released' | 'general';
   title: string;
   body: string;
   date: number;

@@ -195,7 +195,12 @@ export function routeForNotificationTap(
         : { name: 'BrowseFavors' };
     case 'match':
     case 'arrived':
-      if (activePalFavor) {
+      // Only a LIVE pal job claims these taps — a parked pending_release favor
+      // must not swallow a notification about the user's own member favor.
+      if (
+        activePalFavor &&
+        ['matched', 'enroute', 'arrived', 'in_progress'].includes(activePalFavor.status)
+      ) {
         return {
           name:
             activePalFavor.status === 'arrived' || activePalFavor.status === 'in_progress'
@@ -204,7 +209,15 @@ export function routeForNotificationTap(
         };
       }
       if (activeMemberFavor) return { name: 'FavorTracking' };
+      if (activePalFavor?.status === 'pending_release') return { name: 'PalAwaitingRelease' };
       return { name: 'History' };
+    case 'release_request':
+      // The pal finished — route the member to the release sheet.
+      if (activeMemberFavor?.status === 'pending_release') return { name: 'FavorTracking' };
+      return { name: 'History' };
+    case 'released':
+      // Money landed — show the pal their earnings.
+      return { name: 'Earnings' };
     case 'cancellation':
     case 'no_pal':
       return { name: 'History' };
@@ -327,6 +340,7 @@ export default function RootNavigator() {
           <Stack.Screen name="BrowseFavors" component={Pal.BrowseFavors} />
           <Stack.Screen name="PalFavorDetail" component={Pal.PalFavorDetail} />
           <Stack.Screen name="PalFavorInProgress" component={Pal.PalFavorInProgress} />
+          <Stack.Screen name="PalAwaitingRelease" component={Pal.PalAwaitingRelease} />
           <Stack.Screen name="Navigation" component={Pal.Navigation} />
           <Stack.Screen name="PalFavorComplete" component={Pal.PalFavorComplete} />
           <Stack.Screen name="PalFavorSuccess" component={Pal.PalFavorSuccess} />
