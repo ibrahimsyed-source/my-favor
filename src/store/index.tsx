@@ -10,7 +10,7 @@ import { registerForPushNotificationsAsync } from '../lib/notifications';
 import {
   signupApi, verifyOtpApi, loginApi, logoutApi, deleteAccountApi, changePasswordApi,
   getConfigApi, getMeApi, updateProfileApi, setRoleApi, verifyPalApi, setStatusApi, getPalsApi, getPalApi,
-  updatePushTokenApi,
+  acceptPalAgreementApi, updatePushTokenApi,
   createFavorApi, getFavorsApi, getActiveFavorApi, getFavorApi, getIncomingApi,
   acceptFavorApi, declineFavorApi, abandonFavorApi, assignPalApi, advanceFavorApi, updateFavorLocationApi, finishFavorApi, releaseFavorApi, cancelFavorApi, rateFavorApi, rateMemberApi,
   acceptOfferApi,
@@ -99,7 +99,7 @@ interface StoreValue {
   recheckConfig: () => Promise<void>;
   signup: (data: Partial<User> & { password: string; ageAffirmed?: boolean; acceptedTerms?: boolean; dateOfBirth?: string }) => Promise<void>;
   verifyOtp: (code: string) => Promise<boolean>;
-  submitVetting: (data: { legalFirstName: string; legalLastName: string; dateOfBirth: string; consent: boolean }) => Promise<'approved' | 'rejected' | 'error'>;
+  submitVetting: (data: { legalFirstName: string; legalLastName: string; dateOfBirth: string; consent: boolean }) => Promise<'approved' | 'rejected' | 'error' | 'agreement_required'>;
   login: (email: string, password: string) => Promise<'ok' | 'unverified' | 'invalid' | 'error' | 'suspended'>;
   // Fully sequenced sign-out: unregister the push token (best-effort), revoke
   // the refresh token, clear storage, THEN reset state — so a quick re-login
@@ -113,6 +113,20 @@ interface StoreValue {
   // Optimistic with revert: false means the switch didn't stick server-side.
   setRole: (role: Role) => Promise<boolean>;
   setStatus: (status: UserStatus) => Promise<boolean>;
+  // ---- Pal preferences + agreement ----
+  // notifyFavors (master favor-alert switch) and palRadiusMiles (discovery
+  // radius) are optimistic with revert — a flipped switch / nudged radius shows
+  // instantly and rolls back if the PATCH fails. palHome is a multi-field
+  // address set, confirmed by the server before state changes. All honest:
+  // false means the change didn't stick server-side.
+  setNotifyFavors: (on: boolean) => Promise<boolean>;
+  setPalRadius: (miles: number) => Promise<boolean>;
+  // Set the pal's discovery home, or pass null to clear it (see-everywhere).
+  setPalHome: (lat: number | null, lng: number | null, address: string | null) => Promise<boolean>;
+  // Record acceptance of the independent-contractor Favor Pal Agreement at the
+  // given version — server-confirmed; false means nothing was recorded (so the
+  // vetting gate stays closed and the screen can surface a retry).
+  acceptPalAgreement: (version: string) => Promise<boolean>;
 
   // favors
   pals: User[];
@@ -581,13 +595,17 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
   // becomes palVerified, unlocking favor acceptance. Returns true on success.
   const submitVetting = useCallback(async (data: {
     legalFirstName: string; legalLastName: string; dateOfBirth: string; consent: boolean;
-  }): Promise<'approved' | 'rejected' | 'error'> => {
+  }): Promise<'approved' | 'rejected' | 'error' | 'agreement_required'> => {
     try {
       const { user: u } = await verifyPalApi(data);
       setUser(u);
       await setStoredUser(u);
       return u.palVerified ? 'approved' : 'rejected';
-    } catch {
+    } catch (e: any) {
+      // The server refuses verification until the Favor Pal Agreement is
+      // accepted — surface it distinctly so the screen can route to signing
+      // instead of blaming the applicant's details.
+      if (e?.code === 'pal_agreement_required') return 'agreement_required';
       return 'error';
     }
   }, []);
@@ -714,6 +732,77 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       return false;
     }
   }, [user]);
+
+  // ---- pal preferences + agreement ----
+  // The master favor-alert switch — optimistic with revert (same pattern as
+  // setStatus) so the toggle feels instant; the prefs ride the existing PATCH
+  // /me. prev may be undefined (server default true); restoring it on failure
+  // is correct since the UI reads undefined as "on".
+  // Persist a server-returned user ONLY if the session that started the request
+  // is still current — a response landing after logout must never resurrect the
+  // account (re-flip isAuthenticated + re-write it to storage).
+  const applyUserIfCurrent = useCallback(async (u: User, epoch: number): Promise<boolean> => {
+    if (epoch !== sessionEpochRef.current) return false;
+    setUser(u);
+    await setStoredUser(u);
+    return true;
+  }, []);
+
+  const setNotifyFavors = useCallback(async (on: boolean): Promise<boolean> => {
+    const prev = user?.notifyFavors;
+    const epoch = sessionEpochRef.current;
+    setUser((u) => (u ? { ...u, notifyFavors: on } : u)); // optimistic
+    try {
+      const { user: u } = await updateProfileApi({ notifyFavors: on });
+      return await applyUserIfCurrent(u, epoch);
+    } catch {
+      if (epoch === sessionEpochRef.current) setUser((u) => (u ? { ...u, notifyFavors: prev } : u)); // revert
+      return false;
+    }
+  }, [user, applyUserIfCurrent]);
+
+  // Discovery radius (1..100 mi) — optimistic with revert; the chip/stepper
+  // reflects the new value immediately and rolls back if the PATCH fails.
+  const setPalRadius = useCallback(async (miles: number): Promise<boolean> => {
+    const prev = user?.palRadiusMiles;
+    const epoch = sessionEpochRef.current;
+    setUser((u) => (u ? { ...u, palRadiusMiles: miles } : u)); // optimistic
+    try {
+      const { user: u } = await updateProfileApi({ palRadiusMiles: miles });
+      return await applyUserIfCurrent(u, epoch);
+    } catch {
+      if (epoch === sessionEpochRef.current) setUser((u) => (u ? { ...u, palRadiusMiles: prev } : u)); // revert
+      return false;
+    }
+  }, [user, applyUserIfCurrent]);
+
+  // The pal's home/work anchor used to distance-filter discovery — a multi-field
+  // set, so server-confirmed (NOT optimistic): a failed PATCH must never leave
+  // the client showing a home the server never stored. Pass null to CLEAR the
+  // home (back to the home-less "see favors everywhere" state).
+  const setPalHome = useCallback(async (
+    lat: number | null, lng: number | null, address: string | null,
+  ): Promise<boolean> => {
+    const epoch = sessionEpochRef.current;
+    try {
+      const { user: u } = await updateProfileApi({ palHomeLat: lat, palHomeLng: lng, palHomeAddress: address });
+      return await applyUserIfCurrent(u, epoch);
+    } catch {
+      return false;
+    }
+  }, [applyUserIfCurrent]);
+
+  // Record acceptance of the Favor Pal Agreement — server-confirmed before any
+  // state change (the vetting gate reads palAgreementAt/Version off the user).
+  const acceptPalAgreement = useCallback(async (version: string): Promise<boolean> => {
+    const epoch = sessionEpochRef.current;
+    try {
+      const { user: u } = await acceptPalAgreementApi(version);
+      return await applyUserIfCurrent(u, epoch);
+    } catch {
+      return false;
+    }
+  }, [applyUserIfCurrent]);
 
   // ---- favors ----
   const setDraft = useCallback((patch: Partial<Favor>) => setDraftFavor((d) => ({ ...d, ...patch })), []);
@@ -1333,7 +1422,7 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     () => ({
       user, isAuthenticated: !!user, restoring, maintenance, updateRequired, suspended, recheckConfig,
       signup, verifyOtp, submitVetting, login, logout, deleteAccount, updateProfile, changePassword,
-      setRole, setStatus,
+      setRole, setStatus, setNotifyFavors, setPalRadius, setPalHome, acceptPalAgreement,
       pals, draftFavor, setDraft, clearDraft,
       activeMemberFavor: memberFavor, activePalFavor: palFavor,
       activePal: palById(memberFavor?.palId) ?? null, palById, history,
@@ -1348,6 +1437,7 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       notifications, markNotificationRead, markAllNotificationsRead, refreshNotifications,
     }),
     [user, restoring, maintenance, updateRequired, suspended, recheckConfig, signup, verifyOtp, submitVetting, login, logout, deleteAccount, updateProfile, changePassword, setRole, setStatus,
+      setNotifyFavors, setPalRadius, setPalHome, acceptPalAgreement,
       pals, draftFavor, setDraft, clearDraft, memberFavor, palFavor, palCanceled, clearPalCanceled, memberCanceled, clearMemberCanceled, locationDenied, palById, history, requestFavor, advanceFavor, cancelFavor,
       rateFavor, releaseFavor, incomingFavors, refreshIncoming, acceptFavor, acceptOffer, refreshActive, declineFavor, abandonFavor, assignPal, finishFavorAsPal, rateMember, blockedUsers, reportUser,
       blockUser, unblockUser, cards, addCard, removeCard, transactions, earnings, cashOut,

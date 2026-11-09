@@ -61,6 +61,7 @@ export type RootStackParamList = {
   StripeOnboarding: undefined;
   BankInfo: undefined;
   Vetting: undefined; // pal identity/background verification
+  PalAgreement: undefined; // independent-contractor Favor Pal Agreement signing gate
 
   // --- Shared ---
   SideDrawer: undefined;

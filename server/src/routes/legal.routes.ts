@@ -18,6 +18,12 @@ const CONTACT_EMAIL = 'support@myfavorr.com';
 const COMPANY = 'My Favor';
 const LAST_UPDATED = 'July 1, 2026';
 
+// Version of the Favor Pal Agreement. Bump when the independent-contractor terms
+// below materially change; the app ships its own local copy with a matching
+// version constant and POSTs it to /api/profile/accept-pal-agreement so each
+// pal's recorded palAgreementVersion says exactly which terms they signed.
+const PAL_AGREEMENT_VERSION = '2026-11-09';
+
 // LEGAL: must match src/screens/legal.tsx. Replace with the registered company
 // legal entity, business address, and governing-law jurisdiction before launch.
 const LEGAL_ENTITY = 'Favor App LLC';
@@ -135,6 +141,47 @@ const PRIVACY: Block[] = [
   { p: `Questions about privacy? Email us at ${CONTACT_EMAIL}.` },
 ];
 
+// The Favor Pal Agreement — the independent-contractor terms a Favor Pal accepts
+// before they are verified to perform Favors. It expands on the
+// Independent-Contractor section of the Terms; it does not replace the Terms,
+// which continue to govern all use of the Service. Keep this in sync with the
+// app's local copy constant (see the PalAgreement screen) — if you edit the
+// terms here, bump PAL_AGREEMENT_VERSION and the app's matching version.
+const PAL_AGREEMENT: Block[] = [
+  { p: `This Favor Pal Agreement ("Agreement") is entered into between You and ${LEGAL_ENTITY}, the operator of ${COMPANY} ("the Company", "We", "Us"). It applies when You choose to act as a Favor Pal and perform Favors for Members through the Service. It supplements, and does not replace, the ${COMPANY} Terms and Conditions and Privacy Policy, which continue to apply.` },
+  { p: 'By accepting this Agreement in the app, You confirm that You have read it, that You meet the requirements below, and that You agree to perform Favors as an independent contractor on the terms set out here.' },
+  { h1: 'Independent-Contractor Relationship' },
+  { p: 'You are an independent contractor, not an employee, agent, partner, or joint venturer of the Company. Nothing in this Agreement creates an employment, agency, partnership, or franchise relationship. You decide whether, when, where, and how to accept and perform Favors, and You use Your own skill, judgment, equipment, and means to do so. You are free to accept or decline any Favor and to offer Your services elsewhere, including to competitors.' },
+  { li: 'The Company does not set Your hours, assign You Favors, or supervise how You perform them.' },
+  { li: 'You are not entitled to employee benefits, workers’ compensation, unemployment insurance, or paid leave from the Company.' },
+  { li: 'You may use subcontractors or helpers only where a Favor and the law allow it, and You remain responsible for them.' },
+  { h: 'Taxes' },
+  { p: 'As an independent contractor, You are solely responsible for reporting and paying all federal, state, and local taxes on the amounts You earn, including self-employment taxes. The Company does not withhold taxes from Your payouts. Where required by law, the Company (or its payment processor) may issue tax information forms and may request tax information from You.' },
+  { h: 'Eligibility & Verification' },
+  { li: 'You must be at least 18 years old and legally able to work and to perform the Favors You accept.' },
+  { li: 'You authorize the identity and background checks described at sign-up and agree they must be completed before You are verified to perform Favors.' },
+  { li: 'You are responsible for obtaining and maintaining any licenses, permits, registrations, or insurance that the Favors You choose to perform require by law.' },
+  { li: 'You agree to keep Your account information accurate and to perform Favors only while Your verification is in good standing.' },
+  { h: 'Performing Favors' },
+  { li: 'You will perform each Favor You accept competently, honestly, lawfully, and as described, using reasonable care and good judgment.' },
+  { li: 'You are responsible for Your own conduct and safety and for the people and property You encounter while performing a Favor.' },
+  { li: 'You will not request or accept payment outside the Service for a Favor arranged through it, and You will not use the Service to circumvent fees.' },
+  { li: 'You will follow the Company’s community and safety policies and all applicable laws while using the Service.' },
+  { h: 'Payments & Fees' },
+  { p: 'For each completed Favor, You receive the Favor price minus the platform commission disclosed in the app. Members are charged the Favor price plus service and processing fees. Payments and payouts are handled by our third-party processor, and payouts are made to the account You connect. You are responsible for the accuracy of Your payout details.' },
+  { h: 'Insurance & Responsibility' },
+  { p: 'Except where the law provides otherwise, You perform Favors at Your own risk and are responsible for any loss, damage, injury, or liability arising from Your performance of a Favor. The Company does not provide insurance for You and is not responsible for the acts or omissions of any Member or Pal. You are encouraged to carry Your own appropriate insurance.' },
+  { h: 'Indemnification' },
+  { p: `You agree to indemnify and hold harmless the Company and its officers, employees, and agents from any claim, damage, loss, or expense (including reasonable legal fees) arising out of the Favors You perform, Your Content, Your use of the Service as a Pal, Your misclassification claims, or Your breach of this Agreement, the Terms, or the law.` },
+  { h: 'Term & Termination' },
+  { p: 'This Agreement applies for as long as You act as a Favor Pal. You may stop performing Favors at any time. The Company may suspend or end Your access to Pal features if You breach this Agreement, the Terms, or the law, or to protect the safety of the community. Provisions that by their nature should survive — including taxes, payment obligations, responsibility, indemnification, and governing law — survive termination.' },
+  { h: 'Governing Law' },
+  { p: `This Agreement is governed by the laws of ${GOVERNING_LAW}, without regard to conflict-of-laws rules, and is subject to the dispute-resolution provisions of the ${COMPANY} Terms and Conditions.` },
+  { h: 'Contact' },
+  { p: `Questions about this Agreement? Email us at ${CONTACT_EMAIL}, or write to ${LEGAL_ENTITY}, ${LEGAL_ADDRESS}.` },
+  { p: `Agreement version: ${PAL_AGREEMENT_VERSION}.` },
+];
+
 // --- Minimal HTML rendering (no template engine; escaped where dynamic) -----
 
 function esc(s: string): string {
@@ -183,7 +230,7 @@ function page(title: string, body: string): string {
 <h1>${esc(title)}</h1>
 <p class="updated">Last updated: ${esc(LAST_UPDATED)}</p>
 ${body}
-<footer>© 2026 ${esc(COMPANY)} · <a href="/privacy">Privacy Policy</a> · <a href="/terms">Terms &amp; Conditions</a> · <a href="/support">Support</a></footer>
+<footer>© 2026 ${esc(COMPANY)} · <a href="/privacy">Privacy Policy</a> · <a href="/terms">Terms &amp; Conditions</a> · <a href="/pal-agreement">Pal Agreement</a> · <a href="/support">Support</a></footer>
 </body>
 </html>`;
 }
@@ -191,6 +238,7 @@ ${body}
 // Rendered once at module load — these are static documents.
 const PRIVACY_HTML = page('Privacy Policy', renderBlocks(PRIVACY));
 const TERMS_HTML = page('Terms and Conditions', renderBlocks(TERMS));
+const PAL_AGREEMENT_HTML = page('Favor Pal Agreement', renderBlocks(PAL_AGREEMENT));
 const SUPPORT_HTML = page(
   'Support',
   `<p>Need help with ${esc(COMPANY)}? We're happy to assist with your account, favors, payments, or anything else.</p>
@@ -204,4 +252,5 @@ const SUPPORT_HTML = page(
 export const legalRouter = Router();
 legalRouter.get('/privacy', (_req, res) => res.type('html').send(PRIVACY_HTML));
 legalRouter.get('/terms', (_req, res) => res.type('html').send(TERMS_HTML));
+legalRouter.get('/pal-agreement', (_req, res) => res.type('html').send(PAL_AGREEMENT_HTML));
 legalRouter.get('/support', (_req, res) => res.type('html').send(SUPPORT_HTML));

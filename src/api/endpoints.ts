@@ -47,8 +47,14 @@ export const deleteAccountApi = () =>
 
 // --- profile ---
 export const getMeApi = () => apiRequest<{ user: User }>('/api/profile/me', { auth: true });
-export const updateProfileApi = (patch: Partial<User>) =>
-  apiRequest<{ user: User }>('/api/profile/me', { method: 'PATCH', auth: true, body: patch });
+// `null` is allowed on the pal-home fields specifically — sending null CLEARS
+// the stored home (the only way back to the "see favors everywhere" state).
+// Omit then re-add those keys so the null widens the type instead of being
+// intersected away.
+export const updateProfileApi = (
+  patch: Omit<Partial<User>, 'palHomeLat' | 'palHomeLng' | 'palHomeAddress'>
+    & { palHomeLat?: number | null; palHomeLng?: number | null; palHomeAddress?: string | null },
+) => apiRequest<{ user: User }>('/api/profile/me', { method: 'PATCH', auth: true, body: patch });
 export const setRoleApi = (role: Role) =>
   apiRequest<{ user: User }>('/api/profile/role', { method: 'POST', auth: true, body: { role } });
 // Submit the pal vetting application (Driver Information). On success the returned
@@ -58,6 +64,12 @@ export const verifyPalApi = (data: {
 }) => apiRequest<{ user: User }>('/api/profile/verify-pal', { method: 'POST', auth: true, body: data });
 export const setStatusApi = (status: UserStatus) =>
   apiRequest<{ user: User }>('/api/profile/status', { method: 'POST', auth: true, body: { status } });
+// Record acceptance of the independent-contractor Favor Pal Agreement. The pal
+// prefs (radius / home / notifyFavors) instead ride the existing PATCH /me
+// (updateProfileApi); only this acceptance is its own endpoint — it stamps
+// palAgreementAt + palAgreementVersion and gates auto-approval in verify-pal.
+export const acceptPalAgreementApi = (version: string) =>
+  apiRequest<{ user: User }>('/api/profile/accept-pal-agreement', { method: 'POST', auth: true, body: { version } });
 // Register (or clear, with null) this device's Expo push token on the profile so
 // the server can deliver favor-lifecycle push notifications.
 export const updatePushTokenApi = (pushToken: string | null) =>

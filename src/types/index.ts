@@ -29,6 +29,18 @@ export interface User {
   yearsActive: number;
   reliability: number; // 0-100
   positiveReviews: number; // 0-100
+  // ---- Pal discovery preferences (server-backed; exposed on the caller's OWN
+  // profile via GET /me only — never leaked on another pal's public shape). ----
+  palRadiusMiles?: number; // 1..100; how far a pal wants to see/alert on favors
+  palHomeLat?: number; // pal's home/work anchor used for distance filtering
+  palHomeLng?: number;
+  palHomeAddress?: string;
+  notifyFavors?: boolean; // master push/alert switch for new-favor fan-out (default true)
+  // Pal agreement (independent-contractor) acceptance — separate from signup
+  // terms. palAgreementAt is a ms epoch (serialize.ts emits dates as ms), unset
+  // until the pal has accepted the current agreement version.
+  palAgreementAt?: number;
+  palAgreementVersion?: string;
 }
 
 // Favor sizing tiers from the design.

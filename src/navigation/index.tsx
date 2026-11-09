@@ -12,6 +12,7 @@ import { addNotificationResponseListener } from '../lib/notifications';
 import type { Favor, User } from '../types';
 
 import * as Onb from '../screens/onboarding';
+import * as PalAgree from '../screens/palagreement';
 import * as AuthF from '../screens/authflow';
 import * as Dash from '../screens/dashboard';
 import * as Req from '../screens/request';
@@ -370,6 +371,7 @@ export default function RootNavigator() {
           <Stack.Screen name="FavorHistoryDetail" component={Hist.FavorHistoryDetail} />
           <Stack.Screen name="Notifications" component={Notif.Notifications} />
           <Stack.Screen name="Vetting" component={Onb.Vetting} />
+          <Stack.Screen name="PalAgreement" component={PalAgree.PalAgreement} />
           <Stack.Screen name="Legal" component={LegalScr.Legal} />
           {/* System / connectivity states (also registered in the auth group) */}
           <Stack.Screen name="Offline" component={Sys.OfflineScreen} />

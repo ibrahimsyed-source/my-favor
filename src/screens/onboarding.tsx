@@ -7,6 +7,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { Screen, Txt, Button, Field } from '../components';
 import { useTheme, fonts, tokens } from '../theme';
 import { useStore } from '../store';
+import { PAL_AGREEMENT_VERSION } from './palagreement';
 
 // Assets ----------------------------------------------------------------------
 const logo = require('../../assets/img/logo.png');
@@ -324,26 +325,44 @@ export function Vetting({ navigation }: any) {
       key: 'agreement',
       icon: 'document-text-outline' as const,
       title: 'Sign your pal agreement',
-      ms: 1000,
+      // Not a mock timer: `ms` is unused for this step — it opens the real
+      // PalAgreement screen and is marked done only after server acceptance.
+      ms: 0,
       body: {
-        todo: 'Review and accept the Favor Pal agreement.',
+        todo: 'Tap to review and sign the Favor Pal Agreement.',
         pending: 'Recording your signature…',
         done: 'Pal agreement signed.',
       },
     },
   ];
 
-  const phaseOf = (key: string) => phases[key] ?? 'todo';
+  // The agreement step is a REAL signing gate, not a mock timer: its done-ness
+  // is the acceptance the server recorded (store.acceptPalAgreement stamps the
+  // user), so derive it from the user rather than the local phases map. On
+  // return from the PalAgreement screen the updated user flips this to 'done'.
+  const agreementAccepted =
+    !!s.user?.palAgreementAt && s.user?.palAgreementVersion === PAL_AGREEMENT_VERSION;
+  const phaseOf = (key: string): Phase =>
+    key === 'agreement' ? (agreementAccepted ? 'done' : 'todo') : (phases[key] ?? 'todo');
   const doneCount = steps.filter((st) => phaseOf(st.key) === 'done').length;
   const allCleared = doneCount === steps.length;
 
   const infoComplete = !!firstName.trim() && !!lastName.trim() && !!dob.trim();
-  const canSubmit = allCleared && consent && infoComplete;
+  // Explicitly require the signed agreement (allCleared already implies it, but
+  // the gate is load-bearing — the server rejects verify-pal without it).
+  const canSubmit = allCleared && consent && infoComplete && agreementAccepted;
 
   const onStep = (index: number) => {
     const st = steps[index];
     const prevDone = index === 0 || phaseOf(steps[index - 1].key) === 'done';
     const needConsent = st.key === 'background' && !consent;
+    // The agreement step opens the real PalAgreement signing screen instead of
+    // running a mock timer; it marks done only once acceptance is recorded
+    // server-side (agreementAccepted, re-read when we return here).
+    if (st.key === 'agreement') {
+      if (prevDone) navigation.navigate('PalAgreement');
+      return;
+    }
     if (prevDone && !needConsent && phaseOf(st.key) === 'todo') runStep(st.key, st.ms);
   };
 
@@ -372,6 +391,11 @@ export function Vetting({ navigation }: any) {
       // A true server-side rejection (background check didn't clear) — format
       // and age mistakes are caught inline above and never reach this screen.
       navigation.navigate('PalApplicationRejected');
+    } else if (result === 'agreement_required') {
+      // The client gate should have caught this, but if the agreement version
+      // moved under us, send the applicant to sign rather than blame details.
+      setSubmitError('Please review and sign the Favor Pal Agreement to finish applying.');
+      navigation.navigate('PalAgreement');
     } else {
       setSubmitError('We couldn’t submit your application. Please check your details and try again.');
     }

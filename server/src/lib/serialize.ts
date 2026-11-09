@@ -29,6 +29,17 @@ export function publicUser(u: User) {
     yearsActive: u.yearsActive,
     reliability: u.reliability,
     positiveReviews: u.positiveReviews,
+    // Pal discovery preferences — OWN-PROFILE ONLY. publicUser carries the
+    // caller's email/phone/homeAddress already, so it is never used to present
+    // another user; the pal's home anchor rides here the same way. publicPal /
+    // publicFavorOpen (member-facing) must NOT expose another pal's home.
+    palRadiusMiles: u.palRadiusMiles,
+    palHomeLat: u.palHomeLat ?? undefined,
+    palHomeLng: u.palHomeLng ?? undefined,
+    palHomeAddress: u.palHomeAddress ?? undefined,
+    notifyFavors: u.notifyFavors,
+    palAgreementAt: u.palAgreementAt ? u.palAgreementAt.getTime() : undefined,
+    palAgreementVersion: u.palAgreementVersion ?? undefined,
   };
 }
 

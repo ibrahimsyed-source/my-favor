@@ -1,7 +1,7 @@
-import React, { useState } from 'react';
+import React, { useState, useRef, useCallback, useEffect } from 'react';
 import {
   View, TextInput, TouchableOpacity, Pressable, ScrollView, StyleSheet,
-  KeyboardAvoidingView, Platform, Modal, ActivityIndicator, Linking,
+  KeyboardAvoidingView, Platform, Modal, ActivityIndicator, Linking, Switch, Keyboard,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
@@ -10,6 +10,11 @@ import { fonts } from '../theme';
 import { useStore } from '../store';
 import { ApiError } from '../api/client';
 import { pickAndUploadImage } from '../lib/upload';
+import { User } from '../types';
+import {
+  suggestAddressesApi, resolvePlaceApi, geocodeServerApi, reverseGeocodeApi, AddressSuggestion,
+} from '../api/endpoints';
+import { getCurrentLocation } from '../lib/location';
 
 // ---------------------------------------------------------------------------
 // User App v.2 (Figma "Mockup" canvas, #125) — these account screens are LIGHT.
@@ -209,7 +214,7 @@ function TinyToggle({ value, onChange }: { value: boolean; onChange: (v: boolean
 // design as a root (no back chevron) plus the red Set Status link, which no
 // v.2 frame covers but keeps s.setStatus reachable.
 // ===========================================================================
-function ProfileBody({ navigation, onBack, showSetStatus, showBlocked }: { navigation: any; onBack?: () => void; showSetStatus?: boolean; showBlocked?: boolean }) {
+function ProfileBody({ navigation, onBack, showSetStatus, showBlocked, showPrefs }: { navigation: any; onBack?: () => void; showSetStatus?: boolean; showBlocked?: boolean; showPrefs?: boolean }) {
   const s = useStore();
   const user = s.user;
   const [confirming, setConfirming] = useState(false);
@@ -218,6 +223,10 @@ function ProfileBody({ navigation, onBack, showSetStatus, showBlocked }: { navig
   const [switching, setSwitching] = useState(false);
   const [unblockingId, setUnblockingId] = useState<string | null>(null);
   const [notice, setNotice] = useState<{ title: string; message: string } | null>(null);
+  // Pal discovery preferences — the radius chip sheet + the Favor-home address
+  // sheet open from the Settings rows below (pal-only).
+  const [radiusOpen, setRadiusOpen] = useState(false);
+  const [homeOpen, setHomeOpen] = useState(false);
   if (!user) return null;
 
   const isPal = user.role === 'pal';
@@ -261,6 +270,32 @@ function ProfileBody({ navigation, onBack, showSetStatus, showBlocked }: { navig
       setNotice({
         title: 'Couldn’t Unblock',
         message: 'This user is still blocked. Please check your connection and try again.',
+      });
+    }
+  };
+
+  // Favor alerts master switch — the store flips user.notifyFavors optimistically
+  // and reverts itself on failure (same contract as setStatus), so the Switch
+  // visibly snaps back; we only need to surface the failure.
+  const toggleNotify = async (on: boolean) => {
+    const ok = await s.setNotifyFavors(on);
+    if (!ok) {
+      setNotice({
+        title: 'Couldn’t Update',
+        message: 'Your Favor alert preference didn’t save. Please check your connection and try again.',
+      });
+    }
+  };
+
+  // Radius is optimistic in the store too — close the sheet immediately (the
+  // subtitle already reflects the new value) and only surface a save failure.
+  const chooseRadius = async (miles: number) => {
+    setRadiusOpen(false);
+    const ok = await s.setPalRadius(miles);
+    if (!ok) {
+      setNotice({
+        title: 'Couldn’t Update',
+        message: 'Your Favor radius didn’t save. Please check your connection and try again.',
       });
     }
   };
@@ -338,6 +373,47 @@ function ProfileBody({ navigation, onBack, showSetStatus, showBlocked }: { navig
         <InfoRow icon="home" title="Home" subtitle={user.homeAddress} onPress={() => navigation.navigate('EditProfile')} dark={dark} />
         <InfoRow icon="lock-closed" title="Password" subtitle="Change Password" onPress={() => navigation.navigate('EditProfile')} dark={dark} />
 
+        {/* Favor preferences — pal-only, Settings only (showPrefs). Server-backed
+            discovery prefs: the master alert switch, the discovery radius, and the
+            home anchor favors are measured from. Members never see these. */}
+        {showPrefs && isPal ? (
+          <View style={{ marginTop: 26 }}>
+            <Txt style={dark ? { ...st.blockedHeading, color: D.text } : st.blockedHeading}>Favor preferences</Txt>
+            <PrefRow
+              icon="notifications"
+              title="Favor alerts"
+              subtitle="Get notified when a new favor opens near you."
+              dark={dark}
+              right={
+                <Switch
+                  value={user.notifyFavors ?? true}
+                  onValueChange={(v) => { void toggleNotify(v); }}
+                  trackColor={{ false: dark ? '#3A3F4D' : L.toggleOff, true: L.red }}
+                  thumbColor="#FFFFFF"
+                  ios_backgroundColor={dark ? '#3A3F4D' : L.toggleOff}
+                  accessibilityLabel="Favor alerts"
+                />
+              }
+            />
+            <PrefRow
+              icon="navigate"
+              title="Favor radius"
+              subtitle={`${user.palRadiusMiles ?? 25} miles`}
+              onPress={() => setRadiusOpen(true)}
+              dark={dark}
+              right={<Ionicons name="chevron-forward" size={18} color={dark ? D.sub : L.sub} />}
+            />
+            <PrefRow
+              icon="location"
+              title="Favor home"
+              subtitle={user.palHomeAddress || 'Not set — you’ll see favors everywhere'}
+              onPress={() => setHomeOpen(true)}
+              dark={dark}
+              right={<Ionicons name="chevron-forward" size={18} color={dark ? D.sub : L.sub} />}
+            />
+          </View>
+        ) : null}
+
         {/* Blocked users — Settings only; hidden while nobody is blocked. The
             store only knows ids; pals resolve to a name via the directory. */}
         {showBlocked && s.blockedUsers.length > 0 ? (
@@ -409,7 +485,22 @@ function ProfileBody({ navigation, onBack, showSetStatus, showBlocked }: { navig
         </Pressable>
       </Modal>
 
-      {/* Failure notices (delete / role switch / unblock didn't stick). */}
+      {/* Pal discovery-preference sheets (pal mode → always the dark v.2 kit). */}
+      <RadiusModal
+        visible={radiusOpen}
+        value={user.palRadiusMiles ?? 25}
+        onSelect={(m) => { void chooseRadius(m); }}
+        onClose={() => setRadiusOpen(false)}
+      />
+      <HomeModal
+        visible={homeOpen}
+        user={user}
+        onSave={(lat, lng, address) => s.setPalHome(lat, lng, address)}
+        onClear={() => s.setPalHome(null, null, null)}
+        onClose={() => setHomeOpen(false)}
+      />
+
+      {/* Failure notices (delete / role switch / unblock / prefs didn't stick). */}
       <LightModal
         visible={!!notice}
         title={notice?.title ?? ''}
@@ -436,6 +527,303 @@ function InfoRow({ icon, title, subtitle, onPress, dark }: any) {
   );
 }
 
+// Settings row with a trailing control (a Switch, or a chevron into a sheet).
+// Like InfoRow but vertically centered so the control lines up with the text,
+// and it renders as a plain row when there's no onPress (the Switch IS the
+// control — the whole row shouldn't double as a button over it).
+function PrefRow({ icon, title, subtitle, onPress, right, dark }: any) {
+  const ink = dark ? D.text : L.text;
+  const a11y = subtitle ? `${title}, ${subtitle}` : title;
+  const inner = (
+    <>
+      <Ionicons name={icon} size={17} color={ink} style={{ width: 34 }} />
+      <View style={{ flex: 1 }}>
+        <Txt style={dark ? { ...st.infoTitle, color: D.text } : st.infoTitle}>{title}</Txt>
+        {subtitle ? (
+          <Txt style={dark ? { ...st.infoSub, color: D.sub } : st.infoSub} numberOfLines={2}>{subtitle}</Txt>
+        ) : null}
+      </View>
+      {right ?? null}
+    </>
+  );
+  if (onPress) {
+    return (
+      <TouchableOpacity onPress={onPress} activeOpacity={0.7} style={[st.prefRow, dark && { borderBottomColor: D.divider }]} accessibilityRole="button" accessibilityLabel={a11y}>
+        {inner}
+      </TouchableOpacity>
+    );
+  }
+  return <View style={[st.prefRow, dark && { borderBottomColor: D.divider }]}>{inner}</View>;
+}
+
+// Discovery-radius sheet — a navy card of mile chips (Provider v.2 dark kit).
+// Presentational: onSelect fires with the tapped value; the parent closes the
+// sheet + persists (optimistic in the store). Always dark — pal-mode only.
+const RADIUS_OPTIONS = [5, 10, 25, 50, 100] as const;
+
+function RadiusModal({ visible, value, onSelect, onClose }: {
+  visible: boolean; value: number; onSelect: (m: number) => void; onClose: () => void;
+}) {
+  return (
+    <Modal visible={visible} transparent animationType="fade" onRequestClose={onClose} accessibilityViewIsModal>
+      <Pressable style={[st.scrim, { paddingHorizontal: 28 }]} onPress={onClose}>
+        <Pressable style={st.prefSheet} onPress={() => {}}>
+          <Txt style={st.prefSheetTitle} center>Favor radius</Txt>
+          <Txt style={st.prefSheetBody} center>Only alert me about favors within this distance of my Favor home.</Txt>
+          <View style={st.chipRow}>
+            {RADIUS_OPTIONS.map((m) => {
+              const sel = value === m;
+              return (
+                <TouchableOpacity
+                  key={m}
+                  onPress={() => onSelect(m)}
+                  activeOpacity={0.8}
+                  style={[st.chip, sel && st.chipSelected]}
+                  accessibilityRole="radio"
+                  accessibilityState={{ selected: sel }}
+                  accessibilityLabel={`${m} miles`}
+                >
+                  <Txt style={sel ? st.chipTextSelected : st.chipText}>{m}</Txt>
+                  <Txt style={sel ? st.chipUnitSelected : st.chipUnit}>mi</Txt>
+                </TouchableOpacity>
+              );
+            })}
+          </View>
+        </Pressable>
+      </Pressable>
+    </Modal>
+  );
+}
+
+// Favor-home sheet — a lightweight address setter reusing the server geo proxy
+// (suggest → resolve, forward-geocode on save) plus a "use my current location"
+// shortcut. Mirrors ConfirmAddress's epoch-guarded lookup discipline so a slow
+// response can't clobber text the pal has since changed. onSave is the store's
+// setPalHome (server-confirmed); a false result surfaces inline. Always dark.
+function HomeModal({ visible, user, onSave, onClear, onClose }: {
+  visible: boolean; user: User;
+  onSave: (lat: number, lng: number, address: string) => Promise<boolean>;
+  onClear: () => Promise<boolean>;
+  onClose: () => void;
+}) {
+  const seedCoord = () =>
+    (user.palHomeLat != null && user.palHomeLng != null
+      ? { lat: user.palHomeLat, lng: user.palHomeLng }
+      : null);
+  const [addr, setAddr] = useState(user.palHomeAddress ?? '');
+  const [suggestions, setSuggestions] = useState<AddressSuggestion[]>([]);
+  const [coord, setCoord] = useState<{ lat: number; lng: number } | null>(seedCoord);
+  const [busy, setBusy] = useState(false);
+  const [locating, setLocating] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  // One epoch guards every background lookup (suggest / resolve / reverse / GPS):
+  // a newer action bumps it and a late response only applies while its epoch is
+  // current — same discipline as ConfirmAddress.
+  const epoch = useRef(0);
+  const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const supersede = useCallback(() => {
+    epoch.current += 1;
+    if (timer.current) { clearTimeout(timer.current); timer.current = null; }
+  }, []);
+  useEffect(() => () => supersede(), [supersede]); // unmount: drop in-flight lookups
+
+  // Re-seed from the latest saved home every time the sheet opens.
+  useEffect(() => {
+    if (!visible) return;
+    supersede();
+    setAddr(user.palHomeAddress ?? '');
+    setCoord(seedCoord());
+    setSuggestions([]);
+    setError(null);
+    setBusy(false);
+    setLocating(false);
+  }, [visible]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const onChange = useCallback((t: string) => {
+    supersede();
+    setAddr(t);
+    setCoord(null); // edited text no longer matches any picked/located point
+    setError(null);
+    const q = t.trim();
+    if (q.length < 3) { setSuggestions([]); return; }
+    const e = epoch.current;
+    timer.current = setTimeout(async () => {
+      try {
+        const { suggestions: list } = await suggestAddressesApi(q);
+        if (e === epoch.current) setSuggestions(list);
+      } catch { /* suggestions are best-effort — typing + Save still works */ }
+    }, 350);
+  }, [supersede]);
+
+  const pick = useCallback(async (sug: AddressSuggestion) => {
+    supersede();
+    const e = epoch.current;
+    setSuggestions([]);
+    setAddr(sug.description);
+    setError(null);
+    Keyboard.dismiss();
+    try {
+      const { location } = await resolvePlaceApi(sug.id);
+      if (e !== epoch.current || !location) return; // superseded / unresolvable
+      setCoord({ lat: location.lat, lng: location.lng });
+    } catch { /* keep the description; Save forward-geocodes it */ }
+  }, [supersede]);
+
+  const useCurrent = useCallback(async () => {
+    if (locating) return;
+    supersede();
+    const e = epoch.current;
+    setLocating(true);
+    setError(null);
+    Keyboard.dismiss();
+    // Explicit action → getCurrentLocation (prompts at the contextual moment),
+    // not getKnownLocation, so the button isn't a silent no-op when permission
+    // was never granted.
+    const c = await getCurrentLocation();
+    if (e !== epoch.current) { setLocating(false); return; }
+    if (!c) {
+      setLocating(false);
+      setError('We couldn’t get your current location. Allow location access or type an address.');
+      return;
+    }
+    setCoord(c);
+    let label: string | null = null;
+    try {
+      const { location } = await reverseGeocodeApi(c.lat, c.lng);
+      label = location?.address ?? null;
+    } catch { label = null; }
+    if (e !== epoch.current) { setLocating(false); return; }
+    // No nameable address (rural fix / lookup failure): show honest coordinates
+    // rather than leave a stale label.
+    setAddr(label ?? `Current location (${c.lat.toFixed(5)}, ${c.lng.toFixed(5)})`);
+    setSuggestions([]);
+    setLocating(false);
+  }, [locating, supersede]);
+
+  const canSave = addr.trim().length > 0 && !busy && !locating;
+  const save = useCallback(async () => {
+    const trimmed = addr.trim();
+    if (!trimmed || busy || locating) return;
+    supersede();
+    setSuggestions([]);
+    setBusy(true);
+    setError(null);
+    // A picked suggestion / located fix already carries exact coordinates; only
+    // free-typed text needs the forward geocode.
+    let resolved = coord;
+    if (!resolved) {
+      try {
+        const { location } = await geocodeServerApi(trimmed);
+        resolved = location ? { lat: location.lat, lng: location.lng } : null;
+      } catch { resolved = null; }
+    }
+    if (!resolved) {
+      setBusy(false);
+      setError('We couldn’t find that address. Please pick a suggestion or try again.');
+      return;
+    }
+    const ok = await onSave(resolved.lat, resolved.lng, trimmed);
+    setBusy(false);
+    if (!ok) {
+      setError('Couldn’t save your Favor home. Please check your connection and try again.');
+      return;
+    }
+    onClose();
+  }, [addr, busy, locating, coord, onSave, onClose, supersede]);
+
+  return (
+    <Modal visible={visible} transparent animationType="fade" onRequestClose={onClose} accessibilityViewIsModal>
+      <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
+        <Pressable style={[st.scrim, { paddingHorizontal: 24 }]} onPress={onClose}>
+          <Pressable style={st.prefSheet} onPress={() => {}}>
+            <Txt style={st.prefSheetTitle} center>Favor home</Txt>
+            <Txt style={st.prefSheetBody} center>We’ll alert you about favors within your radius of this place. Leave it unset to see favors everywhere.</Txt>
+
+            <View style={st.homeField}>
+              <Ionicons name="locate" size={18} color={D.red} style={{ marginLeft: 12 }} />
+              <TextInput
+                value={addr}
+                onChangeText={onChange}
+                placeholder="Enter your home or work address"
+                placeholderTextColor={D.placeholder}
+                style={st.homeInput}
+                numberOfLines={1}
+                returnKeyType="done"
+                accessibilityLabel="Favor home address"
+              />
+              {addr.length > 0 ? (
+                <TouchableOpacity onPress={() => onChange('')} hitSlop={10} style={{ marginRight: 12 }} accessibilityRole="button" accessibilityLabel="Clear address">
+                  <Ionicons name="close" size={16} color={D.text} />
+                </TouchableOpacity>
+              ) : null}
+            </View>
+
+            {suggestions.length > 0 ? (
+              <View style={st.homeSuggestBox}>
+                {suggestions.map((sug, i) => (
+                  <TouchableOpacity
+                    key={sug.id}
+                    style={[st.homeSuggestRow, i > 0 && st.homeSuggestDivider]}
+                    onPress={() => void pick(sug)}
+                    accessibilityRole="button"
+                    accessibilityLabel={`Use address ${sug.description}`}
+                  >
+                    <Ionicons name="location-outline" size={15} color={D.red} />
+                    <Txt style={st.homeSuggestText} numberOfLines={1}>{sug.description}</Txt>
+                  </TouchableOpacity>
+                ))}
+              </View>
+            ) : null}
+
+            <TouchableOpacity
+              onPress={() => void useCurrent()}
+              disabled={locating}
+              style={st.currentLocBtn}
+              activeOpacity={0.7}
+              accessibilityRole="button"
+              accessibilityLabel="Use my current location"
+              accessibilityState={{ disabled: locating, busy: locating }}
+            >
+              {locating ? <ActivityIndicator size="small" color={D.text} /> : <Ionicons name="navigate" size={16} color={D.text} />}
+              <Txt style={st.currentLocText}>{locating ? 'Locating…' : 'Use my current location'}</Txt>
+            </TouchableOpacity>
+
+            {error ? (
+              <View accessibilityLiveRegion="polite">
+                <Txt style={st.homeError} center>{error}</Txt>
+              </View>
+            ) : null}
+
+            <Cta title="SAVE FAVOR HOME" onPress={() => void save()} disabled={!canSave} loading={busy} dark style={{ marginTop: 14 }} />
+            {user.palHomeLat != null ? (
+              <TouchableOpacity
+                onPress={async () => {
+                  if (busy || locating) return;
+                  setBusy(true); setError(null);
+                  const ok = await onClear();
+                  setBusy(false);
+                  if (ok) onClose();
+                  else setError('Couldn’t clear your Favor home. Please try again.');
+                }}
+                style={{ marginTop: 12 }}
+                hitSlop={8}
+                accessibilityRole="button"
+                accessibilityLabel="Clear Favor home and see favors everywhere"
+              >
+                <Txt style={{ ...st.homeCancel, color: D.red }} center>Clear Favor home</Txt>
+              </TouchableOpacity>
+            ) : null}
+            <TouchableOpacity onPress={onClose} style={{ marginTop: 12 }} hitSlop={8} accessibilityRole="button" accessibilityLabel="Cancel">
+              <Txt style={st.homeCancel} center>Cancel</Txt>
+            </TouchableOpacity>
+          </Pressable>
+        </Pressable>
+      </KeyboardAvoidingView>
+    </Modal>
+  );
+}
+
 // 1. Profile — root tab (no back chevron), same v.2 design.
 export const Profile = ({ navigation }: any) => (
   <ProfileBody navigation={navigation} showSetStatus />
@@ -446,7 +834,7 @@ export const Profile = ({ navigation }: any) => (
 // the Provider App v.2 dark Settings (#181:9932); pal mode only (ProfileBody
 // hides it for members). Settings is also where blocked users are managed.
 export const Settings = ({ navigation }: any) => (
-  <ProfileBody navigation={navigation} onBack={() => navigation.goBack()} showSetStatus showBlocked />
+  <ProfileBody navigation={navigation} onBack={() => navigation.goBack()} showSetStatus showBlocked showPrefs />
 );
 
 // ===========================================================================
@@ -975,6 +1363,37 @@ const st = StyleSheet.create({
   },
   blockedName: { flex: 1, fontFamily: fonts.bodyRegular, fontSize: 14, color: L.text },
   unblockText: { fontFamily: fonts.displayMedium, fontSize: 12.5, letterSpacing: 0.6, color: L.red },
+
+  // Pal discovery preferences (Settings, pal mode) — rows + the radius/home sheets
+  prefRow: {
+    flexDirection: 'row', alignItems: 'center', gap: 2, paddingVertical: 14, paddingLeft: 12,
+    borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: L.divider,
+  },
+  prefSheet: { width: '100%', borderRadius: 16, backgroundColor: D.sheet, paddingVertical: 24, paddingHorizontal: 22 },
+  prefSheetTitle: { fontFamily: fonts.display, fontSize: 19, color: D.text, marginBottom: 8 },
+  prefSheetBody: { fontFamily: fonts.bodyRegular, fontSize: 13, lineHeight: 19, color: D.sub, marginBottom: 20 },
+  // radius chips
+  chipRow: { flexDirection: 'row', flexWrap: 'wrap', justifyContent: 'center', gap: 10 },
+  chip: {
+    minWidth: 58, height: 48, borderRadius: 10, backgroundColor: D.field,
+    flexDirection: 'row', alignItems: 'baseline', justifyContent: 'center', paddingHorizontal: 12, gap: 2,
+  },
+  chipSelected: { backgroundColor: '#FFFFFF' },
+  chipText: { fontFamily: fonts.displayMedium, fontSize: 17, color: D.text },
+  chipTextSelected: { fontFamily: fonts.displayMedium, fontSize: 17, color: '#000000' },
+  chipUnit: { fontFamily: fonts.bodyRegular, fontSize: 11, color: D.sub },
+  chipUnitSelected: { fontFamily: fonts.bodyRegular, fontSize: 11, color: '#555555' },
+  // home address sheet
+  homeField: { flexDirection: 'row', alignItems: 'center', backgroundColor: D.field, borderRadius: 10, minHeight: 48 },
+  homeInput: { flex: 1, fontFamily: fonts.bodyRegular, fontSize: 14, color: D.text, paddingHorizontal: 10, paddingVertical: 0 },
+  homeSuggestBox: { backgroundColor: D.field, borderRadius: 10, marginTop: 8, overflow: 'hidden' },
+  homeSuggestRow: { flexDirection: 'row', alignItems: 'center', gap: 10, paddingVertical: 12, paddingHorizontal: 14 },
+  homeSuggestDivider: { borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: D.border },
+  homeSuggestText: { flex: 1, fontFamily: fonts.bodyRegular, fontSize: 13, color: D.text },
+  currentLocBtn: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8, marginTop: 14, paddingVertical: 10 },
+  currentLocText: { fontFamily: POPPINS_MEDIUM, fontSize: 13, color: D.text },
+  homeError: { fontFamily: fonts.bodyRegular, fontSize: 12.5, lineHeight: 18, color: D.red, marginTop: 12 },
+  homeCancel: { fontFamily: POPPINS_MEDIUM, fontSize: 14, color: D.sub },
 
   // SideDrawer
   drawer: {

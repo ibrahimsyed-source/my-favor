@@ -2,9 +2,10 @@ import { Router } from 'express';
 import { z } from 'zod';
 import { prisma } from '../db';
 import { validate } from '../lib/validate';
-import { asyncHandler, notFound } from '../lib/errors';
+import { asyncHandler, notFound, AppError } from '../lib/errors';
 import { authenticate } from '../middleware/authenticate';
 import { publicUser, publicPal } from '../lib/serialize';
+import { PAL_RADIUS_MIN, PAL_RADIUS_MAX } from '../lib/geo';
 
 export const profileRouter = Router();
 profileRouter.use(authenticate); // every profile route requires auth
@@ -40,9 +41,32 @@ const updateSchema = z
     state: z.string().max(120),
     zip: z.string().max(20),
     homeAddress: z.string().max(300),
+    // Pal discovery preferences (Group 8). The home anchor drives distance
+    // filtering of the new-favor fan-out and the /incoming feed; notifyFavors is
+    // the master alerts switch. All own-profile; never exposed to other users.
+    palRadiusMiles: z.number().int().min(PAL_RADIUS_MIN).max(PAL_RADIUS_MAX),
+    // Nullable so a pal can CLEAR their home (back to see-everywhere); a
+    // half-set home is still rejected by the refine below.
+    palHomeLat: z.number().min(-90).max(90).nullable(),
+    palHomeLng: z.number().min(-180).max(180).nullable(),
+    palHomeAddress: z.string().max(300).nullable(),
+    notifyFavors: z.boolean(),
   })
   .partial()
-  .strict();
+  .strict()
+  // Lat/lng are one anchor — a half-set home would filter against a meaningless
+  // point, so they must be set together or cleared together (both numbers, or
+  // both null; absence on both = no change).
+  .refine((d) => {
+    const latSet = d.palHomeLat !== undefined;
+    const lngSet = d.palHomeLng !== undefined;
+    if (latSet !== lngSet) return false;
+    if (latSet && lngSet) return (d.palHomeLat === null) === (d.palHomeLng === null);
+    return true;
+  }, {
+    message: 'palHomeLat and palHomeLng must be set (or cleared) together',
+    path: ['palHomeLat'],
+  });
 profileRouter.patch(
   '/me',
   validate({ body: updateSchema }),
@@ -91,6 +115,26 @@ profileRouter.post(
   }),
 );
 
+// POST /api/profile/accept-pal-agreement — record the pal's acceptance of the
+// independent-contractor Favor Pal Agreement (separate from the signup Terms).
+// Required before verify-pal will approve a pal (see the gate there). The app
+// ships the agreement copy locally and POSTs the version string it showed; the
+// hosted /pal-agreement page carries the same terms for the stores/legal. We
+// record whatever version the client accepted — the client owns the canonical
+// copy, the server just stamps the consent.
+profileRouter.post(
+  '/accept-pal-agreement',
+  validate({ body: z.object({ version: z.string().trim().min(1).max(40) }) }),
+  asyncHandler(async (req, res) => {
+    const { version } = req.body as { version: string };
+    const user = await prisma.user.update({
+      where: { id: req.user!.id },
+      data: { palAgreementAt: new Date(), palAgreementVersion: version },
+    });
+    res.json({ user: publicUser(user) });
+  }),
+);
+
 // POST /api/profile/verify-pal — submit the pal vetting application (legal name,
 // DOB, driver-requirements consent). No SSN is collected — identity/background
 // vendors are mocked in this build, so a complete, consented submission is
@@ -108,6 +152,19 @@ profileRouter.post(
   '/verify-pal',
   validate({ body: vettingSchema }),
   asyncHandler(async (req, res) => {
+    // Pal agreement gate: the independent-contractor Favor Pal Agreement must be
+    // accepted (POST /accept-pal-agreement) BEFORE a pal can be vetted/approved,
+    // so an unsigned pal is never auto-approved. The client presents + accepts
+    // the agreement first; until palAgreementAt is set this is 409
+    // pal_agreement_required and the client routes the user to the agreement.
+    const me = await prisma.user.findUniqueOrThrow({
+      where: { id: req.user!.id },
+      select: { palAgreementAt: true },
+    });
+    if (!me.palAgreementAt) {
+      throw new AppError(409, 'pal_agreement_required', 'Accept the Favor Pal Agreement before pal verification.');
+    }
+
     const { dateOfBirth } = req.body as z.infer<typeof vettingSchema>;
     const dob = new Date(dateOfBirth);
     // Mock background check: applicants who are under 18 (or whose DOB doesn't

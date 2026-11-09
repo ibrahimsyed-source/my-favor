@@ -6,6 +6,7 @@ import type { Server } from 'node:http';
 import { createApp } from '../src/app';
 import { prisma } from '../src/db';
 import { computeFees } from '../src/lib/money';
+import { selectBroadcastRecipients } from '../src/routes/favor.routes';
 
 // End-to-end API tests. Spins the real app up in-process against the dev SQLite
 // DB and drives the full favor lifecycle plus the security controls. Uses unique
@@ -14,6 +15,10 @@ import { computeFees } from '../src/lib/money';
 let server: Server;
 let baseUrl = '';
 const uniq = crypto.randomBytes(4).toString('hex');
+
+// The version string the tests sign the pal agreement with. The server records
+// whatever version the client accepts; the value itself is arbitrary here.
+const PAL_AGREEMENT_VERSION = 'test-2026-11-09';
 
 before(async () => {
   server = createApp().listen(0);
@@ -68,7 +73,10 @@ async function makeUser(role: 'member' | 'pal', opts: { vetted?: boolean } = {})
   // Pals must clear vetting before they can accept favors — auto-approve the
   // mocked application so lifecycle tests can proceed. Pass { vetted: false }
   // to get a pal-role account that has NOT cleared vetting (gate tests).
+  // Verification is now gated on first accepting the Favor Pal Agreement, so
+  // sign it before submitting the vetting application.
   if (role === 'pal' && opts.vetted !== false) {
+    await acceptPalAgreement(token);
     const vet = await api('/api/profile/verify-pal', {
       method: 'POST',
       token,
@@ -77,6 +85,18 @@ async function makeUser(role: 'member' | 'pal', opts: { vetted?: boolean } = {})
     assert.equal(vet.status, 200, 'pal vetting should succeed');
   }
   return { email, token, refreshToken: verify.json.refreshToken as string, id: verify.json.user.id as string };
+}
+
+// Accept the independent-contractor Favor Pal Agreement — the prerequisite the
+// server now enforces before POST /verify-pal will approve a pal.
+async function acceptPalAgreement(token: string): Promise<Res> {
+  const res = await api('/api/profile/accept-pal-agreement', {
+    method: 'POST',
+    token,
+    body: { version: PAL_AGREEMENT_VERSION },
+  });
+  assert.equal(res.status, 200, 'pal agreement acceptance should succeed');
+  return res;
 }
 
 // Approval flow: a pal's /accept is a REQUEST (list-price offer, no match); the
@@ -124,6 +144,7 @@ test('public legal pages serve HTML (store-required URLs)', async () => {
   for (const [path, marker] of [
     ['/privacy', 'Privacy Policy'],
     ['/terms', 'Terms and Conditions'],
+    ['/pal-agreement', 'Favor Pal Agreement'],
     ['/support', 'support@myfavorr.com'],
   ] as const) {
     const res = await fetch(baseUrl + path);
@@ -264,6 +285,7 @@ test('any vetted account can browse and fulfill others\' favors, but not their o
   // A "member" can also fulfill favors, but only after passing pal vetting
   // (entering a home requires a background check regardless of the role label).
   const bob = await makeUser('member');
+  await acceptPalAgreement(bob.token);
   const bobVet = await api('/api/profile/verify-pal', {
     method: 'POST', token: bob.token,
     body: { legalFirstName: 'Bob', legalLastName: 'Member', dateOfBirth: '1992-05-05', consent: true },
@@ -611,6 +633,7 @@ test('role slots are independent: an open request does not block pal work', asyn
   });
   assert.equal(mine.status, 201);
   // …then clears vetting and accepts B's favor as a pal.
+  await acceptPalAgreement(a.token);
   const vet = await api('/api/profile/verify-pal', {
     method: 'POST',
     token: a.token,
@@ -785,7 +808,9 @@ test('trust & safety: an unvetted account cannot accept a favor until verified',
   const blocked = await api(`/api/favors/${favorId}/accept`, { method: 'POST', token: helper.token });
   assert.equal(blocked.status, 403, 'unvetted account cannot accept');
 
-  // After completing vetting, the same account can accept.
+  // After accepting the pal agreement and completing vetting, the same account
+  // can accept.
+  await acceptPalAgreement(helper.token);
   const vet = await api('/api/profile/verify-pal', {
     method: 'POST', token: helper.token,
     body: { legalFirstName: 'Help', legalLastName: 'Er', dateOfBirth: '1991-02-02', consent: true },
@@ -821,6 +846,7 @@ test('suspended accounts cannot log in and are cut off mid-session', async () =>
 
 test('pal vetting rejects an under-18 applicant', async () => {
   const u = await makeUser('member');
+  await acceptPalAgreement(u.token);
   const thisYear = new Date().getFullYear();
   const minorDob = `${thisYear - 15}-01-01`;
   const res = await api('/api/profile/verify-pal', {
@@ -834,6 +860,7 @@ test('pal vetting rejects an under-18 applicant', async () => {
 
 test('vetting still accepts (and ignores) the legacy ssn field from old app builds', async () => {
   const u = await makeUser('member');
+  await acceptPalAgreement(u.token);
   const res = await api('/api/profile/verify-pal', {
     method: 'POST', token: u.token,
     body: { legalFirstName: 'Old', legalLastName: 'Client', ssn: '123456789', dateOfBirth: '1990-01-01', consent: true },
@@ -1282,4 +1309,181 @@ test('scheduledFor: past and far-future are rejected; a valid schedule round-tri
   });
   assert.equal(ok.status, 201, 'a near-future schedule is accepted');
   assert.equal(ok.json.favor.scheduledFor, when, 'scheduledFor round-trips as ms epoch');
+});
+
+test('PATCH /me accepts pal discovery preferences and rejects an out-of-range radius', async () => {
+  const pal = await makeUser('pal');
+
+  const ok = await api('/api/profile/me', {
+    method: 'PATCH',
+    token: pal.token,
+    body: {
+      palRadiusMiles: 10,
+      palHomeLat: 40.1,
+      palHomeLng: -75.2,
+      palHomeAddress: '1 Pal St, Philadelphia, PA',
+      notifyFavors: false,
+    },
+  });
+  assert.equal(ok.status, 200);
+  assert.equal(ok.json.user.palRadiusMiles, 10);
+  assert.equal(ok.json.user.palHomeLat, 40.1);
+  assert.equal(ok.json.user.palHomeLng, -75.2);
+  assert.equal(ok.json.user.palHomeAddress, '1 Pal St, Philadelphia, PA');
+  assert.equal(ok.json.user.notifyFavors, false, 'the alerts toggle is saved');
+
+  // GET /me reflects the saved preferences (own-profile serialization).
+  const me = await api('/api/profile/me', { token: pal.token });
+  assert.equal(me.json.user.palRadiusMiles, 10);
+  assert.equal(me.json.user.notifyFavors, false);
+
+  // Radius is clamped to 1..100 at the edge.
+  const tooLow = await api('/api/profile/me', { method: 'PATCH', token: pal.token, body: { palRadiusMiles: 0 } });
+  assert.equal(tooLow.status, 400, 'a radius below 1 is rejected');
+  const tooHigh = await api('/api/profile/me', { method: 'PATCH', token: pal.token, body: { palRadiusMiles: 101 } });
+  assert.equal(tooHigh.status, 400, 'a radius above 100 is rejected');
+
+  // The home anchor is lat+lng together — a half-set home is refused.
+  const halfHome = await api('/api/profile/me', { method: 'PATCH', token: pal.token, body: { palHomeLat: 40.1 } });
+  assert.equal(halfHome.status, 400, 'lat without lng is rejected');
+});
+
+test('another pal’s home is never leaked (publicPal / members read)', async () => {
+  // A pal sets a home, then is viewed by a member via /pals/:id — the home
+  // coords/address must NOT ride that member-facing shape.
+  const pal = await makeUser('pal');
+  await api('/api/profile/me', {
+    method: 'PATCH',
+    token: pal.token,
+    body: { palHomeLat: 40.1, palHomeLng: -75.2, palHomeAddress: '1 Secret Home Ln', palRadiusMiles: 25 },
+  });
+  const member = await makeUser('member');
+  const view = await api(`/api/profile/pals/${pal.id}`, { token: member.token });
+  assert.equal(view.status, 200);
+  assert.equal(view.json.pal.palHomeLat, undefined, 'publicPal never exposes home lat');
+  assert.equal(view.json.pal.palHomeLng, undefined, 'publicPal never exposes home lng');
+  assert.equal(view.json.pal.palHomeAddress, undefined, 'publicPal never exposes home address');
+});
+
+test('/incoming filters open favors by a homed pal’s radius; a home-less pal sees everything', async () => {
+  const member = await makeUser('member');
+  const favorLat = 39.95;
+  const favorLng = -75.16; // Philadelphia — well away from the Austin test favors
+  const create = await api('/api/favors', {
+    method: 'POST',
+    token: member.token,
+    body: { tier: 'tiny', description: 'Radius incoming test', location: { lat: favorLat, lng: favorLng, address: '1 Market St, Philadelphia, PA' } },
+  });
+  assert.equal(create.status, 201);
+  const favorId = create.json.favor.id;
+
+  // Homed ON the favor with a small radius → the favor is in range.
+  const nearPal = await makeUser('pal');
+  await api('/api/profile/me', {
+    method: 'PATCH',
+    token: nearPal.token,
+    body: { palHomeLat: favorLat, palHomeLng: favorLng, palHomeAddress: 'near', palRadiusMiles: 10 },
+  });
+  const nearFeed = await api('/api/favors/incoming', { token: nearPal.token });
+  assert.equal(nearFeed.status, 200);
+  assert.ok(nearFeed.json.favors.some((f: any) => f.id === favorId), 'homed-near pal sees the in-radius favor');
+
+  // Homed far away with the same small radius → out of range, filtered out.
+  const farPal = await makeUser('pal');
+  await api('/api/profile/me', {
+    method: 'PATCH',
+    token: farPal.token,
+    body: { palHomeLat: favorLat + 10, palHomeLng: favorLng, palHomeAddress: 'far', palRadiusMiles: 10 },
+  });
+  const farFeed = await api('/api/favors/incoming', { token: farPal.token });
+  assert.equal(farFeed.status, 200);
+  assert.ok(!farFeed.json.favors.some((f: any) => f.id === favorId), 'homed-far pal does not see the out-of-radius favor');
+
+  // No home set → unfiltered, sees everything (today's behavior).
+  const homelessPal = await makeUser('pal');
+  const homelessFeed = await api('/api/favors/incoming', { token: homelessPal.token });
+  assert.equal(homelessFeed.status, 200);
+  assert.ok(homelessFeed.json.favors.some((f: any) => f.id === favorId), 'home-less pal still sees the favor');
+});
+
+test('new-favor fan-out: distance radius + notifyFavors decide who is alerted', async () => {
+  const member = await makeUser('member');
+  const favorLat = 41.88;
+  const favorLng = -87.63; // Chicago — distinct from the other test-favor regions
+  const create = await api('/api/favors', {
+    method: 'POST',
+    token: member.token,
+    body: { tier: 'tiny', description: 'Fan-out radius test', location: { lat: favorLat, lng: favorLng, address: '1 Loop St, Chicago, IL' } },
+  });
+  assert.equal(create.status, 201);
+  const favor = create.json.favor;
+
+  // Homed on the favor, small radius → alerted (near favor).
+  const near = await makeUser('pal');
+  await api('/api/profile/me', {
+    method: 'PATCH',
+    token: near.token,
+    body: { palHomeLat: favorLat, palHomeLng: favorLng, palHomeAddress: 'near', palRadiusMiles: 10 },
+  });
+  // Homed far away, small radius → NOT alerted (far favor).
+  const far = await makeUser('pal');
+  await api('/api/profile/me', {
+    method: 'PATCH',
+    token: far.token,
+    body: { palHomeLat: favorLat + 10, palHomeLng: favorLng, palHomeAddress: 'far', palRadiusMiles: 10 },
+  });
+  // Homed on the favor but alerts OFF → suppressed entirely.
+  const optedOut = await makeUser('pal');
+  await api('/api/profile/me', {
+    method: 'PATCH',
+    token: optedOut.token,
+    body: { palHomeLat: favorLat, palHomeLng: favorLng, palHomeAddress: 'muted', palRadiusMiles: 10, notifyFavors: false },
+  });
+  // No home set → can't be distance-filtered, so still alerted.
+  const homeless = await makeUser('pal');
+
+  const recipients = await selectBroadcastRecipients({
+    memberId: favor.memberId,
+    locationLat: favor.location.lat,
+    locationLng: favor.location.lng,
+  });
+
+  assert.ok(recipients.includes(near.id), 'a near homed pal is alerted');
+  assert.ok(recipients.includes(homeless.id), 'a home-less pal is alerted (opted into everything)');
+  assert.ok(!recipients.includes(far.id), 'a far homed pal is NOT alerted about an out-of-radius favor');
+  assert.ok(!recipients.includes(optedOut.id), 'notifyFavors=false suppresses the alert entirely');
+  assert.ok(!recipients.includes(favor.memberId), 'the requester is never alerted about their own favor');
+});
+
+test('pal agreement gate: verify-pal is blocked until the agreement is accepted', async () => {
+  const u = await makeUser('member');
+
+  // Before accepting, verify-pal is refused with the distinct code so the
+  // client knows to present the agreement first.
+  const blocked = await api('/api/profile/verify-pal', {
+    method: 'POST',
+    token: u.token,
+    body: { legalFirstName: 'Pre', legalLastName: 'Agreement', dateOfBirth: '1990-01-01', consent: true },
+  });
+  assert.equal(blocked.status, 409, 'verify-pal is gated on the pal agreement');
+  assert.equal(blocked.json.error.code, 'pal_agreement_required', 'distinct code routes the client to the agreement');
+
+  // Accepting stamps the consent on the profile.
+  const accept = await api('/api/profile/accept-pal-agreement', {
+    method: 'POST',
+    token: u.token,
+    body: { version: PAL_AGREEMENT_VERSION },
+  });
+  assert.equal(accept.status, 200);
+  assert.ok(accept.json.user.palAgreementAt, 'acceptance timestamp is recorded');
+  assert.equal(accept.json.user.palAgreementVersion, PAL_AGREEMENT_VERSION, 'the accepted version is recorded');
+
+  // Now verify-pal goes through.
+  const ok = await api('/api/profile/verify-pal', {
+    method: 'POST',
+    token: u.token,
+    body: { legalFirstName: 'Pre', legalLastName: 'Agreement', dateOfBirth: '1990-01-01', consent: true },
+  });
+  assert.equal(ok.status, 200, 'verify-pal succeeds once the agreement is accepted');
+  assert.equal(ok.json.user.palVerified, true);
 });

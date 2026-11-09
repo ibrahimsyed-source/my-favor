@@ -9,6 +9,7 @@ import { publicFavor, publicFavorOpen, publicOffer } from '../lib/serialize';
 import { computeFees, computePayout, computeCancellation, FAVOR_TIERS } from '../lib/money';
 import { stripeEnabled, chargeFavor, chargeToPal, refundFavorCharge } from '../lib/stripe';
 import { sendPushNotification } from '../lib/push';
+import { haversineMiles } from '../lib/geo';
 
 export const favorRouter = Router();
 favorRouter.use(authenticate);
@@ -39,41 +40,78 @@ const participantInclude = {
   offers: { where: { status: 'pending' }, include: { pal: true }, orderBy: { updatedAt: 'desc' as const } },
 } as const;
 
-// Best-effort fan-out when a new favor is posted: every verified pal (except the
-// requester and anyone in a block relationship with them) gets a durable
-// Notification row + a push, so a favor posted while the other tester's phone is
-// in their pocket still reaches them. Capped and fire-and-forget — fan-out
-// failures must never fail the create. Skipped under test so integration runs
-// don't spray notifications at real accounts in the shared DB.
-async function broadcastNewFavor(favor: { id: string; memberId: string; tier: string; price: number; description: string }) {
+// Which pals should be alerted that `favor` just opened: verified, available
+// (not suspended, not DND), not in a block relationship with the member, with
+// new-favor alerts turned ON (notifyFavors), and — when the pal has set a
+// palHome — within their palRadiusMiles of the favor. A pal with NO palHome set
+// can't be distance-filtered, so they stay in (they opted into everything by not
+// setting a home — we must not silently drop them). Exported so the fan-out AND
+// the tests share one definition. O(verified pals) per call — Prisma can't
+// haversine, so we fetch candidates and filter distance in JS; fine at current
+// scale. The caller applies the fan-out cap AFTER this filter.
+export async function selectBroadcastRecipients(favor: {
+  memberId: string;
+  locationLat: number;
+  locationLng: number;
+}): Promise<string[]> {
+  const blocks = await prisma.block.findMany({
+    where: { OR: [{ blockerId: favor.memberId }, { blockedId: favor.memberId }] },
+    select: { blockerId: true, blockedId: true },
+  });
+  const excluded = new Set<string>([favor.memberId]);
+  for (const b of blocks) excluded.add(b.blockerId === favor.memberId ? b.blockedId : b.blockerId);
+  const pals = await prisma.user.findMany({
+    where: {
+      palVerified: true,
+      suspended: false,
+      // Set Status is a real do-not-disturb: invisible/offline pals get no
+      // notification row and no push (they can still browse on their own).
+      status: { notIn: ['invisible', 'offline'] },
+      // Favor-alerts toggle (feature 2): notifyFavors=false opts out entirely.
+      notifyFavors: true,
+      id: { notIn: [...excluded] },
+    },
+    select: { id: true, palHomeLat: true, palHomeLng: true, palRadiusMiles: true },
+  });
+  return pals
+    .filter((p) =>
+      p.palHomeLat == null || p.palHomeLng == null
+        ? true
+        : haversineMiles(p.palHomeLat, p.palHomeLng, favor.locationLat, favor.locationLng) <= p.palRadiusMiles,
+    )
+    .map((p) => p.id);
+}
+
+// Best-effort fan-out when a new favor is posted: every eligible pal (see
+// selectBroadcastRecipients) gets a durable Notification row + a push, so a
+// favor posted while the other tester's phone is in their pocket still reaches
+// them. Capped and fire-and-forget — fan-out failures must never fail the
+// create. Skipped under test so integration runs don't spray notifications at
+// real accounts in the shared DB (the recipient selection itself is unit-tested
+// directly against selectBroadcastRecipients).
+async function broadcastNewFavor(favor: {
+  id: string;
+  memberId: string;
+  tier: string;
+  price: number;
+  description: string;
+  locationLat: number;
+  locationLng: number;
+}) {
   if (process.env.NODE_ENV === 'test') return;
   try {
-    const blocks = await prisma.block.findMany({
-      where: { OR: [{ blockerId: favor.memberId }, { blockedId: favor.memberId }] },
-      select: { blockerId: true, blockedId: true },
-    });
-    const excluded = new Set<string>([favor.memberId]);
-    for (const b of blocks) excluded.add(b.blockerId === favor.memberId ? b.blockedId : b.blockerId);
-    const pals = await prisma.user.findMany({
-      where: {
-        palVerified: true,
-        suspended: false,
-        // Set Status is a real do-not-disturb: invisible/offline pals get no
-        // notification row and no push (they can still browse on their own).
-        status: { notIn: ['invisible', 'offline'] },
-        id: { notIn: [...excluded] },
-      },
-      select: { id: true },
-      take: 100,
-    });
-    if (pals.length === 0) return;
+    // Distance + notifyFavors filtering happens in selectBroadcastRecipients;
+    // the 100 cap is applied AFTER it so an out-of-radius favor never wastes the
+    // fan-out budget on pals who would be filtered out anyway.
+    const palIds = (await selectBroadcastRecipients(favor)).slice(0, 100);
+    if (palIds.length === 0) return;
     const title = 'New favor nearby';
     const body = `$${favor.price} — ${favor.description.slice(0, 80)}`;
     await prisma.notification.createMany({
-      data: pals.map((p) => ({ userId: p.id, type: 'general', title, body })),
+      data: palIds.map((id) => ({ userId: id, type: 'general', title, body })),
     });
-    for (const p of pals) {
-      void sendPushNotification(p.id, title, body, { type: 'new_favor', favorId: favor.id });
+    for (const id of palIds) {
+      void sendPushNotification(id, title, body, { type: 'new_favor', favorId: favor.id });
     }
   } catch (err) {
     // eslint-disable-next-line no-console
@@ -328,15 +366,28 @@ favorRouter.get(
   '/incoming',
   asyncHandler(async (req, res) => {
     const me = req.user!.id;
-    const blocks = await prisma.block.findMany({
-      where: { OR: [{ blockerId: me }, { blockedId: me }] },
-      select: { blockerId: true, blockedId: true },
-    });
+    const [meUser, blocks] = await Promise.all([
+      prisma.user.findUnique({
+        where: { id: me },
+        select: { palHomeLat: true, palHomeLng: true, palRadiusMiles: true },
+      }),
+      prisma.block.findMany({
+        where: { OR: [{ blockerId: me }, { blockedId: me }] },
+        select: { blockerId: true, blockedId: true },
+      }),
+    ]);
     const blockedMembers = new Set<string>();
     for (const b of blocks) {
       blockedMembers.add(b.blockerId === me ? b.blockedId : b.blockerId);
     }
-    const favors = await prisma.favor.findMany({
+    // A homed pal only sees favors within their radius; distance can't be done
+    // in SQL (no haversine), so fetch a wider candidate set, filter in JS, then
+    // cap. A home-less pal is unfiltered and sees everything (today's behavior),
+    // so the candidate fetch is ordered newest-first and the cap keeps the same
+    // 50 newest they saw before. Fine at current scale.
+    const INCOMING_CAP = 50;
+    const homed = meUser?.palHomeLat != null && meUser?.palHomeLng != null;
+    const candidates = await prisma.favor.findMany({
       where: {
         status: 'requested',
         palId: null,
@@ -345,13 +396,20 @@ favorRouter.get(
         declines: { none: { palId: me } },
       },
       orderBy: { createdAt: 'desc' },
-      take: 50,
+      take: homed ? 200 : INCOMING_CAP,
       // First name + member rating ride the open feed so pals can judge the
       // requester (and tap through to their profile/reviews) before committing.
       include: { member: { select: { firstName: true, memberRating: true } } },
     });
+    const visible = homed
+      ? candidates.filter(
+          (f) =>
+            haversineMiles(meUser!.palHomeLat!, meUser!.palHomeLng!, f.locationLat, f.locationLng) <=
+            meUser!.palRadiusMiles,
+        )
+      : candidates;
     // Coarse location only — exact address is revealed to the pal once matched.
-    res.json({ favors: favors.map(publicFavorOpen) });
+    res.json({ favors: visible.slice(0, INCOMING_CAP).map(publicFavorOpen) });
   }),
 );
 

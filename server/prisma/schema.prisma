@@ -56,6 +56,16 @@ model User {
   dateOfBirth     DateTime?
   ageAffirmed     Boolean   @default(false)
 
+  // Pal discovery preferences
+  palRadiusMiles  Int     @default(25)   // how far a pal wants to see/alert on favors (1..100)
+  palHomeLat      Float?                  // pal's set home/work anchor for distance filtering
+  palHomeLng      Float?
+  palHomeAddress  String?
+  notifyFavors    Boolean @default(true) // master push/alert switch for new-favor fan-out
+  // Pal agreement (independent-contractor) acceptance — separate from signup terms
+  palAgreementAt      DateTime?
+  palAgreementVersion String?
+
   // Stripe: customer id (member, for charges) + Connect account id (pal, for payouts)
   stripeCustomerId String?
   stripeConnectId  String?
