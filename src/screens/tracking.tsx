@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import {
   View, Text, Image, ScrollView, TouchableOpacity, StyleSheet, StatusBar,
-  TextInput, KeyboardAvoidingView, Platform, Modal, Dimensions, Linking,
+  TextInput, KeyboardAvoidingView, Platform, Modal, Dimensions, Linking, Animated,
 } from 'react-native';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
@@ -12,6 +12,7 @@ import { tokens } from '../theme';
 import { useStore } from '../store';
 import { computeCancellation } from '../types';
 import { haversineMiles, fmtMiles } from '../lib/geo';
+import { useSheetDrag } from '../lib/useSheetDrag';
 
 // ---------------------------------------------------------------------------
 // User App v.2 — tracking module (light design over a light map).
@@ -129,6 +130,19 @@ export const FavorTracking = ({ navigation }: any) => {
   const arrived = status === 'arrived' || status === 'in_progress';
   const pendingRelease = status === 'pending_release';
   const completed = status === 'completed';
+
+  // Drag-to-expand/collapse on the sheet handle (the tap-to-toggle stays).
+  // Only the booked states render the minimized/expanded variants, so the drag
+  // is disabled while the arrived/completed/pending-release content shows.
+  const { y: sheetY, panHandlers: sheetPan } = useSheetDrag({
+    onRelease: (direction) => {
+      if (direction === 'up') setExpanded(true);
+      else if (direction === 'down') setExpanded(false);
+    },
+    maxUp: 60,
+    maxDown: 60,
+    enabled: !arrived && !pendingRelease && !completed,
+  });
 
   const arrivedSeen = fav ? arrivedSeenIds.has(fav.id) : true;
   const markArrivedSeen = () => {
@@ -424,17 +438,28 @@ export const FavorTracking = ({ navigation }: any) => {
 
       <View style={{ flex: 1 }} />
 
-      {/* White bottom sheet */}
-      <View style={[styles.sheet, { paddingBottom: Math.max(insets.bottom, 12) }, tokens.shadow.card]}>
-        <TouchableOpacity
-          activeOpacity={0.8}
-          onPress={() => setExpanded((e) => !e)}
-          accessibilityRole="button"
-          accessibilityLabel={expanded ? 'Collapse favor details' : 'Expand favor details'}
-          style={{ alignSelf: 'stretch', alignItems: 'center', paddingTop: 10, paddingBottom: 4 }}
-        >
-          <View style={styles.handle} />
-        </TouchableOpacity>
+      {/* White bottom sheet — follows a handle drag (clamped), then springs
+          home while the content snaps: up expands, down collapses. */}
+      <Animated.View
+        style={[
+          styles.sheet,
+          { paddingBottom: Math.max(insets.bottom, 12), transform: [{ translateY: sheetY }] },
+          tokens.shadow.card,
+        ]}
+      >
+        {/* Grab area = the handle row only (inner rows keep their touches). The
+            pan lives on the wrapper so a plain tap still reaches the toggle. */}
+        <View {...sheetPan}>
+          <TouchableOpacity
+            activeOpacity={0.8}
+            onPress={() => setExpanded((e) => !e)}
+            accessibilityRole="button"
+            accessibilityLabel={expanded ? 'Collapse favor details' : 'Expand favor details'}
+            style={{ alignSelf: 'stretch', alignItems: 'center', paddingTop: 10, paddingBottom: 4 }}
+          >
+            <View style={styles.handle} />
+          </TouchableOpacity>
+        </View>
 
         {pendingRelease ? (
           // ---------- Pending release — pal finished; the member releases the payment ----------
@@ -568,7 +593,7 @@ export const FavorTracking = ({ navigation }: any) => {
             </View>
           </TouchableOpacity>
         )}
-      </View>
+      </Animated.View>
 
       {/* Modal: Favor Pal Arrived (#125:10406) — once per favor, not per mount */}
       <V2Modal

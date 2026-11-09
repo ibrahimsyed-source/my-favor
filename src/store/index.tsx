@@ -289,6 +289,9 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
   // 'requested' echo right after accepting an offer would read as "my pal
   // canceled" and rewind the match.
   const lastFavorWriteRef = useRef(0);
+  // Same idea for the open-favors FEED: a snapshot requested before a local
+  // feed write (swipe-decline) must not clobber it when it resolves late.
+  const lastIncomingWriteRef = useRef(0);
   // Remember the favor a pal just finished, so the post-completion screen can
   // submit the pal's rating of the member for the right favor — and so the poll
   // never mistakes OUR OWN in-flight finish for a member cancellation.
@@ -826,9 +829,14 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
   const refreshIncoming = useCallback(async () => {
     if (!user) return;
     const epoch = sessionEpochRef.current;
+    const startedAt = Date.now();
     try {
       const { favors } = await getIncomingApi();
       if (epoch !== sessionEpochRef.current) return;
+      // A snapshot requested BEFORE a local feed write (a swipe-decline's
+      // optimistic removal) predates it server-side too — applying it would
+      // resurrect the just-swiped card for a poll cycle.
+      if (startedAt <= lastIncomingWriteRef.current) return;
       setIncomingFavors(favors);
     } catch {
       /* ignore transient errors */
@@ -926,8 +934,10 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
   const declineFavor = useCallback(async (favorId: string): Promise<boolean> => {
     const prev = incomingFavors.find((x) => x.id === favorId);
     setIncomingFavors((list) => list.filter((x) => x.id !== favorId)); // optimistic
+    lastIncomingWriteRef.current = Date.now(); // in-flight feed snapshots are now stale
     try {
       await declineFavorApi(favorId);
+      lastIncomingWriteRef.current = Date.now();
       return true;
     } catch {
       // Nothing was persisted — restore the favor so the dismissal isn't

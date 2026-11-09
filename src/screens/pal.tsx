@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import {
   View, Text, TextInput, TouchableOpacity, ScrollView, Image, StyleSheet, FlatList, RefreshControl, Modal, ActivityIndicator,
-  KeyboardAvoidingView, Linking, Platform,
+  KeyboardAvoidingView, Linking, Platform, Animated, PanResponder, Dimensions,
 } from 'react-native';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
@@ -17,6 +17,7 @@ import {
 import { decodePolyline } from '../lib/geo';
 import { GEOCODE_FALLBACK } from '../lib/geocode';
 import { openTurnByTurn } from '../lib/navigation-links';
+import { useSheetDrag } from '../lib/useSheetDrag';
 import { computePayout, computeFees, FAVOR_TIERS, Favor, FavorOffer, Transaction } from '../types';
 
 // Favor Pal (provider) active-favor flow — "Provider App v.2" DARK design.
@@ -337,52 +338,119 @@ const relTime = (ms?: number) => {
   return `${Math.round(h / 24)}d ago`;
 };
 
+// Swipe-to-decline: a horizontal PanResponder layered over the browse card.
+// The |dx| > 12 AND |dx| > 1.5·|dy| claim gate keeps plain taps (same gate) and
+// the vertical FlatList scroll winning; a decisive LEFT drag follows the finger
+// (rightward drags rubber-band at 0.2), revealing the red DECLINE underlay.
+// Declining without gestures stays available in the detail sheet.
 function FavorCard({ favor, onPress, origin }: { favor: Favor; onPress: () => void; origin: Origin }) {
+  const s = useStore();
   const { payout } = computePayout(favor.price);
+  const tx = useRef(new Animated.Value(0)).current;
+  // Refs (not deps) keep the once-created PanResponder from going stale: the
+  // FlatList keys rows by favor id, but a feed refresh can swap the favor
+  // object (and the store callback identity) under the same mounted row.
+  const widthRef = useRef(0);
+  const favorIdRef = useRef(favor.id);
+  favorIdRef.current = favor.id;
+  const declineRef = useRef(s.declineFavor);
+  declineRef.current = s.declineFavor;
+  const busyRef = useRef(false); // a decline in flight — ignore further gestures
+
+  const springHome = () => {
+    Animated.spring(tx, { toValue: 0, friction: 9, useNativeDriver: true }).start();
+  };
+
+  const pan = useRef(
+    PanResponder.create({
+      // Never claim on start — taps must fall through to the card's onPress.
+      onStartShouldSetPanResponder: () => false,
+      // Claim only a decisively horizontal move; anything steeper belongs to
+      // the vertical FlatList scroll.
+      onMoveShouldSetPanResponder: (_e, g) =>
+        !busyRef.current && Math.abs(g.dx) > 12 && Math.abs(g.dx) > 1.5 * Math.abs(g.dy),
+      // Once we own a horizontal swipe, don't hand it back to the list.
+      onPanResponderTerminationRequest: () => false,
+      onPanResponderMove: (_e, g) => {
+        // Left-only gesture: rightward drags rubber-band at 0.2.
+        tx.setValue(g.dx < 0 ? g.dx : g.dx * 0.2);
+      },
+      onPanResponderRelease: (_e, g) => {
+        const w = widthRef.current || Dimensions.get('window').width - 32;
+        if (!busyRef.current && (g.dx <= -0.4 * w || g.vx <= -0.5)) {
+          busyRef.current = true;
+          // Off-screen left first, then the real decline. The store removes the
+          // favor optimistically (this row unmounts, no dead gap) and restores
+          // the feed on API failure — resetting the local value here just makes
+          // sure a still-mounted row sits back home when that happens.
+          Animated.timing(tx, { toValue: -(w + 32), duration: 200, useNativeDriver: true }).start(() => {
+            void declineRef.current(favorIdRef.current).then((ok) => {
+              busyRef.current = false;
+              if (!ok) springHome();
+            });
+          });
+        } else {
+          springHome();
+        }
+      },
+      onPanResponderTerminate: () => springHome(),
+    })
+  ).current;
+
   return (
-    <TouchableOpacity
-      activeOpacity={0.85}
-      onPress={onPress}
-      style={bw.card}
-      accessibilityRole="button"
-      accessibilityLabel={`${tierLabel(favor)}, ${fmtMoney(favor.price)}. ${favor.description}. You earn $${payout.toFixed(2)}.`}
-    >
-      <View style={bw.cardTop}>
-        {/* Pill shrinks (with ellipsis) before it can shove the price off-card. */}
-        <View style={[bw.tierPill, { flexShrink: 1, marginRight: 10 }]}>
-          <Text style={bw.tierPillText} numberOfLines={1}>{tierLabel(favor)}</Text>
-        </View>
-        <Text style={bw.price}>{fmtMoney(favor.price)}</Text>
+    <View style={bw.rowWrap} onLayout={(e) => { widthRef.current = e.nativeEvent.layout.width; }}>
+      {/* Revealed by the swipe — sits behind the opaque card. */}
+      <View style={bw.declineUnder} pointerEvents="none">
+        <Ionicons name="trash-outline" size={20} color={TEXT} />
+        <Text style={bw.declineText}>DECLINE</Text>
       </View>
-      <Text style={bw.desc} numberOfLines={2}>{favor.description || 'No details provided.'}</Text>
-      <View style={bw.metaRow}>
-        <Ionicons name="location-outline" size={14} color={SUBTLE} />
-        {/* flexShrink so the address truncates instead of pushing the miles/time
-            (and itself) past the card edge — Text defaults to flexShrink:0 in a row. */}
-        <Text style={[bw.meta, { flexShrink: 1 }]} numberOfLines={1}>{favor.location?.address || 'Nearby'}</Text>
-        <Text style={bw.dot}>·</Text>
-        <Text style={bw.meta}>{fmtMiles(favorDistance(favor, origin))}</Text>
-        {favor.createdAt ? <Text style={bw.dot}>·</Text> : null}
-        {favor.createdAt ? <Text style={bw.meta}>{relTime(favor.createdAt)}</Text> : null}
-      </View>
-      {favor.scheduledFor ? (
-        <View style={bw.schedRow}>
-          <Ionicons name="calendar-outline" size={13} color={RED} />
-          <Text style={[bw.schedText, { flex: 1 }]} numberOfLines={1}>
-            Scheduled · {new Date(favor.scheduledFor).toLocaleString([], { weekday: 'short', hour: 'numeric', minute: '2-digit' })}
-          </Text>
-        </View>
-      ) : null}
-      <View style={bw.cardFooter}>
-        <Text style={[bw.earn, { flexShrink: 1, marginRight: 10 }]} numberOfLines={1}>
-          You earn <Text style={bw.earnAmt}>${payout.toFixed(2)}</Text>
-        </Text>
-        <View style={bw.viewBtn}>
-          <Text style={bw.viewText}>View</Text>
-          <Ionicons name="chevron-forward" size={15} color={CTA_TEXT} />
-        </View>
-      </View>
-    </TouchableOpacity>
+      <Animated.View {...pan.panHandlers} style={{ transform: [{ translateX: tx }] }}>
+        <TouchableOpacity
+          activeOpacity={0.85}
+          onPress={onPress}
+          style={bw.card}
+          accessibilityRole="button"
+          accessibilityLabel={`${tierLabel(favor)}, ${fmtMoney(favor.price)}. ${favor.description}. You earn $${payout.toFixed(2)}.`}
+          accessibilityHint="Swipe left to decline"
+        >
+          <View style={bw.cardTop}>
+            {/* Pill shrinks (with ellipsis) before it can shove the price off-card. */}
+            <View style={[bw.tierPill, { flexShrink: 1, marginRight: 10 }]}>
+              <Text style={bw.tierPillText} numberOfLines={1}>{tierLabel(favor)}</Text>
+            </View>
+            <Text style={bw.price}>{fmtMoney(favor.price)}</Text>
+          </View>
+          <Text style={bw.desc} numberOfLines={2}>{favor.description || 'No details provided.'}</Text>
+          <View style={bw.metaRow}>
+            <Ionicons name="location-outline" size={14} color={SUBTLE} />
+            {/* flexShrink so the address truncates instead of pushing the miles/time
+                (and itself) past the card edge — Text defaults to flexShrink:0 in a row. */}
+            <Text style={[bw.meta, { flexShrink: 1 }]} numberOfLines={1}>{favor.location?.address || 'Nearby'}</Text>
+            <Text style={bw.dot}>·</Text>
+            <Text style={bw.meta}>{fmtMiles(favorDistance(favor, origin))}</Text>
+            {favor.createdAt ? <Text style={bw.dot}>·</Text> : null}
+            {favor.createdAt ? <Text style={bw.meta}>{relTime(favor.createdAt)}</Text> : null}
+          </View>
+          {favor.scheduledFor ? (
+            <View style={bw.schedRow}>
+              <Ionicons name="calendar-outline" size={13} color={RED} />
+              <Text style={[bw.schedText, { flex: 1 }]} numberOfLines={1}>
+                Scheduled · {new Date(favor.scheduledFor).toLocaleString([], { weekday: 'short', hour: 'numeric', minute: '2-digit' })}
+              </Text>
+            </View>
+          ) : null}
+          <View style={bw.cardFooter}>
+            <Text style={[bw.earn, { flexShrink: 1, marginRight: 10 }]} numberOfLines={1}>
+              You earn <Text style={bw.earnAmt}>${payout.toFixed(2)}</Text>
+            </Text>
+            <View style={bw.viewBtn}>
+              <Text style={bw.viewText}>View</Text>
+              <Ionicons name="chevron-forward" size={15} color={CTA_TEXT} />
+            </View>
+          </View>
+        </TouchableOpacity>
+      </Animated.View>
+    </View>
   );
 }
 
@@ -568,7 +636,13 @@ const bw = StyleSheet.create({
   chipActive: { backgroundColor: RED },
   chipText: { color: SUBTLE, fontSize: 13, fontFamily: P500 },
   chipTextActive: { color: TEXT },
-  card: { backgroundColor: SHEET, borderRadius: 16, padding: 16, marginBottom: 12, borderWidth: StyleSheet.hairlineWidth, borderColor: BORDER, overflow: 'hidden' },
+  // Swipe-to-decline row: the wrapper carries the gap (so the margin doesn't
+  // slide away with the card) and deliberately does NOT clip, letting the card
+  // travel off-screen while the underlay stays put behind it.
+  rowWrap: { marginBottom: 12 },
+  declineUnder: { position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: PIN_RED, borderRadius: 16, flexDirection: 'row', alignItems: 'center', justifyContent: 'flex-end', paddingRight: 22, gap: 8 },
+  declineText: { color: TEXT, fontSize: 13, letterSpacing: 1, fontFamily: P600 },
+  card: { backgroundColor: SHEET, borderRadius: 16, padding: 16, borderWidth: StyleSheet.hairlineWidth, borderColor: BORDER, overflow: 'hidden' },
   cardTop: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
   tierPill: { backgroundColor: 'rgba(237,28,36,0.18)', borderRadius: 999, paddingHorizontal: 10, paddingVertical: 4 },
   tierPillText: { color: '#FF6B70', fontSize: 12, fontFamily: P600 },
@@ -602,6 +676,15 @@ export const PalFavorDetail = ({ navigation, route }: any) => {
   const [accepting, setAccepting] = useState(false);
   const [acceptError, setAcceptError] = useState('');
   const fontsLoaded = usePoppins();
+
+  // Drag-to-dismiss on the handle: pulling the sheet down closes the quick view
+  // (the back chevron stays as the tap path); up does nothing. Dismissing with
+  // an offer pending is safe — the offer lives server-side and reopening the
+  // favor restores it (see the getFavorOffersApi effect below).
+  const dismissDrag = useSheetDrag({
+    onRelease: (direction) => { if (direction === 'down') navigation.goBack(); },
+    maxDown: 120,
+  });
 
   const onAccept = async (id: string) => {
     if (accepting) return;
@@ -807,8 +890,12 @@ export const PalFavorDetail = ({ navigation, route }: any) => {
     <View style={{ flex: 1, backgroundColor: PAGE_BG }}>
       <MapBackdrop dest={shownFavor?.location} />
       <MapTopBar navigation={navigation} onBack={() => navigation.goBack()} />
-      <View style={st.sheet}>
-        <Handle />
+      <Animated.View style={[st.sheet, { transform: [{ translateY: dismissDrag.y }] }]}>
+        {/* Grab strip (handle + its row only — never the whole sheet, so the
+            ScrollView below is never fought over). */}
+        <View {...dismissDrag.panHandlers} style={st.grab}>
+          <Handle />
+        </View>
         {/* The sheet caps at ~86% of the screen (st.sheet maxHeight) and scrolls:
             a long description (server allows 2000 chars) expanded via View More
             must not push the title/requester of this bottom-anchored sheet above
@@ -1002,7 +1089,7 @@ export const PalFavorDetail = ({ navigation, route }: any) => {
           primaryLabel="OK"
           onPrimary={() => setOfferError('')}
         />
-      </View>
+      </Animated.View>
 
       {/* Offer / counter input */}
       <Modal visible={negotiateOpen} transparent animationType="fade" onRequestClose={() => setNegotiateOpen(false)}>
@@ -1118,6 +1205,20 @@ export const Navigation = ({ navigation }: any) => {
   const [cancelledOpen, setCancelledOpen] = useState(false);
   const [mapsError, setMapsError] = useState(false);
   const fontsLoaded = usePoppins();
+
+  // Minimized variant: the booked sheet collapses to a compact row so the map
+  // reads almost full-screen. Drag down on the handle (or tap it) minimizes;
+  // drag up (or tap) restores. Deliberately not persisted — default expanded.
+  const [minimized, setMinimized] = useState(false);
+  const bookedDrag = useSheetDrag({
+    onRelease: (direction) => {
+      if (direction === 'down') setMinimized(true);
+      else if (direction === 'up') setMinimized(false);
+    },
+    maxUp: 60,
+    maxDown: 60,
+  });
+
   const memberName = fav?.memberName ?? 'Favor Member';
   const tierName = fav ? tierLabel(fav) : 'Favor';
   const distance = fav ? fmtMiles(favorDistance(fav, origin)) : '';
@@ -1173,49 +1274,80 @@ export const Navigation = ({ navigation }: any) => {
       <MapBackdrop route dest={fav?.location} />
       <MapTopBar navigation={navigation} banner={banner} onBannerPress={fav?.location ? getDirections : undefined} />
       <LocationDeniedBanner visible={s.locationDenied} />
-      <View style={st.sheet}>
-        <Handle />
-        <Text style={{ color: TEXT, fontSize: 18, fontFamily: P600, textAlign: 'center', marginVertical: 12 }}>Favor Booked</Text>
-        <View style={st.divider} />
-        <TouchableOpacity
-          style={{ flexDirection: 'row', alignItems: 'center', marginTop: 16 }}
-          onPress={() => { if (fav?.memberId) navigation.navigate('MemberProfile', { userId: fav.memberId }); }}
-          accessibilityRole="button"
-          accessibilityLabel={`View ${memberName}'s profile and reviews`}
-        >
-          <Avatar uri={undefined} size={56} name={memberName} />
-          {/* flex:1 + numberOfLines so a long member name truncates instead of
-              running off the sheet (rows default to flexShrink:0). */}
-          <View style={{ flex: 1, marginLeft: 14 }}>
-            <Text style={{ color: TEXT, fontSize: 17, fontFamily: P500 }} numberOfLines={1}>{memberName}</Text>
-            <Text style={{ color: SUBTLE, fontSize: 14, marginTop: 2, fontFamily: P400 }}>{tierName}</Text>
-            {distance ? <Text style={{ color: SUBTLE, fontSize: 13, marginTop: 2, fontFamily: P400 }}>{distance} away</Text> : null}
+      <Animated.View style={[st.sheet, { transform: [{ translateY: bookedDrag.y }] }]}>
+        {/* Grab strip (handle row only — never the whole sheet). The pan claims
+            only on a >6px vertical move, so plain taps still reach the toggle.
+            The padding lives on the TOUCHABLE and the negative margin on the
+            pan view, keeping the whole strip inside the pan view's bounds —
+            Android drops touches that land outside a parent's box. */}
+        <View {...bookedDrag.panHandlers} style={st.grabWrap}>
+          <TouchableOpacity
+            onPress={() => setMinimized((m) => !m)}
+            style={st.grabBtn}
+            accessibilityRole="button"
+            accessibilityState={{ expanded: !minimized }}
+            accessibilityLabel={minimized ? 'Expand favor details' : 'Minimize favor details'}
+          >
+            <Handle />
+          </TouchableOpacity>
+        </View>
+        {minimized ? (
+          // Compact row — the map stays almost full-screen; I AM HERE / CANCEL
+          // exist only in the expanded variant.
+          <View style={st.miniRow}>
+            <Avatar uri={undefined} size={40} name={memberName} />
+            <View style={{ flex: 1, marginLeft: 12 }}>
+              <Text style={{ color: TEXT, fontSize: 15, fontFamily: P500 }} numberOfLines={1}>{memberName}</Text>
+              <Text style={{ color: SUBTLE, fontSize: 13, marginTop: 1, fontFamily: P400 }} numberOfLines={1}>{tierName}</Text>
+            </View>
+            <Text style={{ color: TEXT, fontSize: 15, fontFamily: P500, textAlign: 'right', flexShrink: 1, marginLeft: 10 }} numberOfLines={1}>{window}</Text>
+            <Ionicons name="chevron-up" size={18} color={SUBTLE} style={{ marginLeft: 8 }} />
           </View>
-        </TouchableOpacity>
-        <Text style={{ color: TEXT, fontSize: 28, fontFamily: P500, textAlign: 'center', marginTop: 18 }}>{window}</Text>
-        <View style={st.windowPill}><Text style={{ color: SUBTLE, fontSize: 13, fontFamily: P400 }}>Arrival Window</Text></View>
+        ) : (
+          <>
+            <Text style={{ color: TEXT, fontSize: 18, fontFamily: P600, textAlign: 'center', marginVertical: 12 }}>Favor Booked</Text>
+            <View style={st.divider} />
+            <TouchableOpacity
+              style={{ flexDirection: 'row', alignItems: 'center', marginTop: 16 }}
+              onPress={() => { if (fav?.memberId) navigation.navigate('MemberProfile', { userId: fav.memberId }); }}
+              accessibilityRole="button"
+              accessibilityLabel={`View ${memberName}'s profile and reviews`}
+            >
+              <Avatar uri={undefined} size={56} name={memberName} />
+              {/* flex:1 + numberOfLines so a long member name truncates instead of
+                  running off the sheet (rows default to flexShrink:0). */}
+              <View style={{ flex: 1, marginLeft: 14 }}>
+                <Text style={{ color: TEXT, fontSize: 17, fontFamily: P500 }} numberOfLines={1}>{memberName}</Text>
+                <Text style={{ color: SUBTLE, fontSize: 14, marginTop: 2, fontFamily: P400 }}>{tierName}</Text>
+                {distance ? <Text style={{ color: SUBTLE, fontSize: 13, marginTop: 2, fontFamily: P400 }}>{distance} away</Text> : null}
+              </View>
+            </TouchableOpacity>
+            <Text style={{ color: TEXT, fontSize: 28, fontFamily: P500, textAlign: 'center', marginTop: 18 }}>{window}</Text>
+            <View style={st.windowPill}><Text style={{ color: SUBTLE, fontSize: 13, fontFamily: P400 }}>Arrival Window</Text></View>
 
-        <ActionRow icon="navigate" label="Get directions (opens Maps)" onPress={getDirections} />
-        <ActionRow icon="call" label="Call About This Favor" onPress={callMember} />
-        <ActionRow icon="mail" label={msgBusy ? 'Opening chat…' : 'Message Favor Member'} red disabled={msgBusy} onPress={openMessage} />
+            <ActionRow icon="navigate" label="Get directions (opens Maps)" onPress={getDirections} />
+            <ActionRow icon="call" label="Call About This Favor" onPress={callMember} />
+            <ActionRow icon="mail" label={msgBusy ? 'Opening chat…' : 'Message Favor Member'} red disabled={msgBusy} onPress={openMessage} />
 
-        <TouchableOpacity
-          style={st.whiteBtn}
-          accessibilityRole="button"
-          accessibilityLabel="I have arrived"
-          onPress={() => setArriveOpen(true)}
-        >
-          <Text style={st.whiteBtnTxt}>I AM HERE</Text>
-        </TouchableOpacity>
-        <TouchableOpacity
-          style={st.darkBtn}
-          accessibilityRole="button"
-          accessibilityLabel="Cancel this favor"
-          onPress={() => setCancelOpen(true)}
-        >
-          <Text style={st.darkBtnTxt}>CANCEL THIS FAVOR</Text>
-        </TouchableOpacity>
-      </View>
+            <TouchableOpacity
+              style={st.whiteBtn}
+              accessibilityRole="button"
+              accessibilityLabel="I have arrived"
+              onPress={() => setArriveOpen(true)}
+            >
+              <Text style={st.whiteBtnTxt}>I AM HERE</Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={st.darkBtn}
+              accessibilityRole="button"
+              accessibilityLabel="Cancel this favor"
+              onPress={() => setCancelOpen(true)}
+            >
+              <Text style={st.darkBtnTxt}>CANCEL THIS FAVOR</Text>
+            </TouchableOpacity>
+          </>
+        )}
+      </Animated.View>
 
       {/* Arrive confirm (v.2 Arrive Modal) — fires before marking arrived.
           Awaited: advanceFavor reverts + returns false on API failure, and
@@ -1816,6 +1948,16 @@ const st = StyleSheet.create({
   sheet: { position: 'absolute', left: 0, right: 0, bottom: 0, maxHeight: '86%', backgroundColor: SHEET, borderTopLeftRadius: 20, borderTopRightRadius: 20, paddingHorizontal: 24, paddingTop: 12, paddingBottom: 36, borderTopWidth: StyleSheet.hairlineWidth, borderColor: BORDER, shadowColor: '#000', shadowOffset: { width: 0, height: -3 }, shadowOpacity: 0.4, shadowRadius: 12, elevation: 16 },
   miniCard: { position: 'absolute', left: 16, right: 16, backgroundColor: SHEET, borderRadius: 16, padding: 16, borderWidth: StyleSheet.hairlineWidth, borderColor: BORDER, shadowColor: '#000', shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.4, shadowRadius: 12, elevation: 16 },
   handle: { alignSelf: 'center', width: 44, height: 5, borderRadius: 3, backgroundColor: 'rgba(255,255,255,0.25)' },
+  // Full-width grab strip around the handle: the vertical padding fattens the
+  // drag/tap target while the matching negative margin keeps the sheet layout
+  // pixel-identical to the bare <Handle />.
+  grab: { alignSelf: 'stretch', paddingVertical: 10, marginVertical: -10 },
+  // Same strip split for the booked sheet, where a toggle TouchableOpacity sits
+  // inside the pan view: margin on the wrapper, padding on the touchable.
+  grabWrap: { alignSelf: 'stretch', marginVertical: -10 },
+  grabBtn: { alignSelf: 'stretch', paddingVertical: 10 },
+  // Minimized booked-sheet row (Avatar 40 · name + tier · arrival window · chevron).
+  miniRow: { flexDirection: 'row', alignItems: 'center', marginTop: 10 },
   divider: { height: StyleSheet.hairlineWidth, backgroundColor: DIVIDER },
   windowPill: { alignSelf: 'center', backgroundColor: SHEET_ALT, borderRadius: 999, paddingHorizontal: 16, paddingVertical: 6, marginTop: 8 },
   waitBanner: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 10, backgroundColor: SHEET_ALT, borderRadius: 10, paddingVertical: 14, marginTop: 22, borderWidth: StyleSheet.hairlineWidth, borderColor: BORDER },

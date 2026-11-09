@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import {
   View, ScrollView, StyleSheet, TouchableOpacity, Pressable, Modal, Image,
-  useWindowDimensions, ActivityIndicator,
+  useWindowDimensions, ActivityIndicator, Animated, LayoutAnimation, Platform, UIManager,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
@@ -9,6 +9,7 @@ import { useFonts, Poppins_400Regular, Poppins_400Regular_Italic } from '@expo-g
 import { Txt, Button, Avatar } from '../components';
 import { MapScene, MAP_SCENE_SUPPORTED } from '../components/MapScene';
 import { GEOCODE_FALLBACK } from '../lib/geocode';
+import { useSheetDrag } from '../lib/useSheetDrag';
 import { useStore } from '../store';
 import { getPalReviewsApi, getPalsApi } from '../api/endpoints';
 import { Review } from '../types';
@@ -35,6 +36,13 @@ const P_REG = 'Poppins_400Regular';
 const P_MED = 'Poppins_500Medium';
 const P_SEMI = 'Poppins_600SemiBold';
 const P_ITALIC = 'Poppins_400Regular_Italic';
+
+// The results sheet animates its snap (top) change with LayoutAnimation, which
+// old-architecture Android gates behind this flag (a no-op everywhere else —
+// Fabric enables it by default and react-native-web stubs it).
+if (Platform.OS === 'android' && UIManager.setLayoutAnimationEnabledExperimental) {
+  UIManager.setLayoutAnimationEnabledExperimental(true);
+}
 
 // Pre-composited backdrop (map screenshot + pins + radial oval + user pin,
 // gaussian blur 6.8px + 50% black — the exact recipe of the v.2 frames),
@@ -182,6 +190,28 @@ export const ProviderResults = ({ navigation }: any) => {
   // of a permanently blank row when the login-time fetch failed.
   const [list, setList] = useState<DirPal[]>(pals);
   const [dirState, setDirState] = useState<'loading' | 'ready' | 'error'>(pals.length ? 'ready' : 'loading');
+  // Two snap positions: the content-sized half state and a taller one (top
+  // 120). Drag the handle up/down to switch — the hook springs the sheet
+  // itself home on release; the snap is the `top` change, animated as a
+  // layout change (an Animated height can't start from the auto height).
+  const [tall, setTall] = useState(false);
+  // configureNext is a one-shot GLOBAL config: arm it only when the state will
+  // actually change, or a no-op drag (up while already tall) leaves the pending
+  // animation to latch onto the next unrelated layout pass (the 15s silent
+  // directory refresh, a modal opening…).
+  const snapTo = (next: boolean) => {
+    setTall((cur) => {
+      if (cur === next) return cur;
+      LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
+      return next;
+    });
+  };
+  const { y: sheetY, panHandlers: sheetPan } = useSheetDrag({
+    onRelease: (direction) => {
+      if (direction == null) return;
+      snapTo(direction === 'up');
+    },
+  });
 
   const refresh = useCallback(async () => {
     // A previously-loaded list keeps showing while the refresh runs silently.
@@ -231,10 +261,32 @@ export const ProviderResults = ({ navigation }: any) => {
 
       <MapBackButton onPress={() => navigation.goBack()} top={insets.top + 12} />
 
-      {/* Bottom sheet */}
-      <View style={[styles.sheet, { paddingBottom: Math.max(insets.bottom, 34) + 23 }]}>
-        <View style={styles.handle} />
-        <Txt style={styles.resultsTitle}>
+      {/* Bottom sheet — follows a handle drag, then springs home while the
+          snap (half <-> tall) lands via the animated `top` change. */}
+      <Animated.View
+        style={[
+          styles.sheet,
+          tall && styles.sheetTall,
+          { paddingBottom: Math.max(insets.bottom, 34) + 23, transform: [{ translateY: sheetY }] },
+        ]}
+      >
+        {/* Grab area = the handle bar and its immediate row (16 above / 12
+            below the bar; the title's marginTop drops to 12 so the composed
+            spacing still matches the original 16/24). Also a labeled TAP
+            toggle — the tall snap must never be gesture-only (screen readers,
+            switch access, keyboards). */}
+        <View {...sheetPan} style={styles.handleGrab}>
+          <TouchableOpacity
+            onPress={() => snapTo(!tall)}
+            accessibilityRole="button"
+            accessibilityLabel={tall ? 'Shrink the pal list' : 'Expand the pal list'}
+            accessibilityState={{ expanded: tall }}
+            style={{ alignSelf: 'stretch', alignItems: 'center', paddingVertical: 4 }}
+          >
+            <View style={[styles.handle, { marginTop: 0 }]} />
+          </TouchableOpacity>
+        </View>
+        <Txt style={{ ...styles.resultsTitle, marginTop: 12 }}>
           {'Click on a Favor Pal near you\nto do your favor!'}
         </Txt>
         <View style={styles.divider} />
@@ -290,7 +342,7 @@ export const ProviderResults = ({ navigation }: any) => {
             ))}
           </ScrollView>
         )}
-      </View>
+      </Animated.View>
 
       <BeAFavorPalModal
         visible={showPalModal}
@@ -633,6 +685,17 @@ const styles = StyleSheet.create({
     backgroundColor: INK,
     alignSelf: 'center',
     marginTop: 16,
+  },
+  // Results sheet only: the drag grab area around the handle bar, and the
+  // taller of the two snap positions (the half state keeps the auto height).
+  handleGrab: {
+    alignSelf: 'stretch',
+    alignItems: 'center',
+    paddingTop: 16,
+    paddingBottom: 12,
+  },
+  sheetTall: {
+    top: 120,
   },
   divider: {
     height: 1,
