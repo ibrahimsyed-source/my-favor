@@ -104,20 +104,30 @@ export function Notifications({ navigation }: any) {
     if (allow) void registerForPushNotificationsAsync();
   };
 
-  // Newest unread pops as the alert-notification modal. Alerted ids are
+  // Newest unread pops as the alert-notification modal — but ONLY for news that
+  // ARRIVES while this session is live. The first loaded pass seeds alertedIds
+  // with the entire existing list (read and unread), so a backlog of old unread
+  // rows never chain-pops one modal after another on open. Alerted ids are
   // remembered for the session (not a mount-lifetime latch) so the persistent
   // Activity tab RE-ARMS whenever a NEW unread arrives; a dismissed-but-still-
   // unread item never re-pops.
   const [alertId, setAlertId] = useState<string | null>(null);
   const alertedIds = useRef<Set<string>>(new Set());
+  const alertSeeded = useRef(false);
   useEffect(() => {
+    if (!loaded) return; // the pre-fetch list can't tell old news from new
+    if (!alertSeeded.current) {
+      alertSeeded.current = true;
+      notifications.forEach((n) => alertedIds.current.add(n.id));
+      return;
+    }
     if (alertId) return; // one alert at a time
     const newest = notifications.filter((n) => !n.read).sort((a, b) => b.date - a.date)[0];
     if (newest && !alertedIds.current.has(newest.id)) {
       alertedIds.current.add(newest.id);
       setAlertId(newest.id);
     }
-  }, [notifications, alertId]);
+  }, [notifications, alertId, loaded]);
   const alertItem = alertId ? notifications.find((n) => n.id === alertId && !n.read) : undefined;
   const dismissAlert = () => setAlertId(null);
 
