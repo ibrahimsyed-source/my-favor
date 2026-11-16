@@ -117,6 +117,18 @@
         {
           "color": "#ED1C24"
         }
+      ],
+      [
+        "@rnmapbox/maps",
+        {
+          "RNMapboxMapsVersion": "11.33.0"
+        }
+      ],
+      [
+        "@rnmapbox/navigation",
+        {
+          "locationWhenInUsePermission": false
+        }
       ]
     ],
     "extra": {

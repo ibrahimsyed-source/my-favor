@@ -52,6 +52,9 @@ export type RootStackParamList = {
   // reads the pal slot).
   PalAwaitingRelease: { favorId?: string; payout?: number } | undefined;
   Navigation: undefined;
+  // In-app Mapbox turn-by-turn to the favor location (native only — callers
+  // gate on TURN_BY_TURN_SUPPORTED and deep-link to a maps app otherwise).
+  TurnByTurn: { favorId: string; lat: number; lng: number; address?: string };
   // favorId is load-bearing on both: Complete's rate-the-member submit posts
   // against it (store's lastFinishedRef is only a fallback).
   PalFavorComplete: { favorId?: string } | undefined;

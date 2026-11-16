@@ -21,6 +21,7 @@ import * as Providers from '../screens/providers';
 import { MemberProfile as MemberProfileScreen } from '../screens/memberprofile';
 import * as Track from '../screens/tracking';
 import * as Pal from '../screens/pal';
+import { TurnByTurnScreen } from '../screens/palnav';
 import * as Payouts from '../screens/payouts';
 import * as Msg from '../screens/messages';
 import * as Prof from '../screens/profile';
@@ -343,6 +344,7 @@ export default function RootNavigator() {
           <Stack.Screen name="PalFavorInProgress" component={Pal.PalFavorInProgress} />
           <Stack.Screen name="PalAwaitingRelease" component={Pal.PalAwaitingRelease} />
           <Stack.Screen name="Navigation" component={Pal.Navigation} />
+          <Stack.Screen name="TurnByTurn" component={TurnByTurnScreen} />
           <Stack.Screen name="PalFavorComplete" component={Pal.PalFavorComplete} />
           <Stack.Screen name="PalFavorSuccess" component={Pal.PalFavorSuccess} />
           <Stack.Screen name="Earnings" component={Payouts.Earnings} />

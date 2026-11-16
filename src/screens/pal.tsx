@@ -17,6 +17,7 @@ import {
 import { decodePolyline } from '../lib/geo';
 import { GEOCODE_FALLBACK } from '../lib/geocode';
 import { openTurnByTurn } from '../lib/navigation-links';
+import { TURN_BY_TURN_SUPPORTED } from '../components/TurnByTurn';
 import { useSheetDrag } from '../lib/useSheetDrag';
 import { computePayout, computeFees, FAVOR_TIERS, Favor, FavorOffer, Transaction } from '../types';
 
@@ -1223,10 +1224,16 @@ export const Navigation = ({ navigation }: any) => {
   const tierName = fav ? tierLabel(fav) : 'Favor';
   const distance = fav ? fmtMiles(favorDistance(fav, origin)) : '';
 
-  // Real turn-by-turn handoff to the device's maps app (banner + action row).
-  // openTurnByTurn returns false only when every deep-link rung threw.
+  // Turn-by-turn (banner + action row): in-app Mapbox navigation when the
+  // native module + token are in this build, else hand off to the device's
+  // maps app (openTurnByTurn returns false only when every deep-link rung
+  // threw).
   const getDirections = async () => {
     if (!fav?.location) return;
+    if (TURN_BY_TURN_SUPPORTED) {
+      navigation.navigate('TurnByTurn', { favorId: fav.id, ...fav.location });
+      return;
+    }
     const ok = await openTurnByTurn(fav.location);
     if (!ok) setMapsError(true);
   };
@@ -1498,11 +1505,16 @@ export const PalFavorInProgress = ({ navigation }: any) => {
     ? 'You have arrived.'
     : (fav?.location?.address ? `Head to ${fav.location.address}` : 'Head to the favor location.');
 
-  // Real turn-by-turn handoff to the device's maps app (banner + mini-card
-  // action row, both only while still en route — directions after arrival are
-  // noise). openTurnByTurn returns false only when every deep-link rung threw.
+  // Turn-by-turn (banner + mini-card action row, both only while still en
+  // route — directions after arrival are noise): in-app Mapbox navigation when
+  // the native module + token are in this build, else hand off to the device's
+  // maps app (openTurnByTurn returns false only when every rung threw).
   const getDirections = async () => {
     if (!fav?.location) return;
+    if (TURN_BY_TURN_SUPPORTED) {
+      navigation.navigate('TurnByTurn', { favorId: fav.id, ...fav.location });
+      return;
+    }
     const ok = await openTurnByTurn(fav.location);
     if (!ok) setMapsError(true);
   };
