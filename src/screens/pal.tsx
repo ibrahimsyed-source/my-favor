@@ -367,7 +367,13 @@ function FavorCard({ favor, onPress, origin }: { favor: Favor; onPress: () => vo
       // Never claim on start — taps must fall through to the card's onPress.
       onStartShouldSetPanResponder: () => false,
       // Claim only a decisively horizontal move; anything steeper belongs to
-      // the vertical FlatList scroll.
+      // the vertical FlatList scroll. Claimed in the CAPTURE phase: the card's
+      // TouchableOpacity owns the touch from press-down, and on the new
+      // architecture a parent's bubble-phase claim never wins it back — the
+      // swipe only works when the parent is asked first (same fix as
+      // useSheetDrag). Bubble-phase kept as the RN-web fallback.
+      onMoveShouldSetPanResponderCapture: (_e, g) =>
+        !busyRef.current && Math.abs(g.dx) > 12 && Math.abs(g.dx) > 1.5 * Math.abs(g.dy),
       onMoveShouldSetPanResponder: (_e, g) =>
         !busyRef.current && Math.abs(g.dx) > 12 && Math.abs(g.dx) > 1.5 * Math.abs(g.dy),
       // Once we own a horizontal swipe, don't hand it back to the list.

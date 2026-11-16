@@ -50,6 +50,20 @@ export function useSheetDrag(opts: {
       // and even then only while the host says the drag is enabled (handlers
       // are still returned when it isn't, so hosts can spread unconditionally).
       onStartShouldSetPanResponder: () => false,
+      // CAPTURE-phase claim is what makes the drag real on native: the grab
+      // strip's child TouchableOpacity becomes the responder the moment the
+      // finger lands, and on the new architecture a parent's bubble-phase
+      // onMoveShouldSetPanResponder never wins it back — so the sheet only
+      // toggled on tap and never followed the finger. Capture runs parent-
+      // first on every move, so a real vertical drag is claimed before the
+      // touchable sees it (its press is cancelled cleanly); a sub-slop tap
+      // still falls through. The grab strip never contains scrollables (hook
+      // contract above), so capturing here can't fight a list.
+      onMoveShouldSetPanResponderCapture: (_evt, g) =>
+        optsRef.current.enabled !== false &&
+        Math.abs(g.dy) > TAP_SLOP &&
+        Math.abs(g.dy) > Math.abs(g.dx),
+      // Bubble-phase fallback for event systems that skip capture (RN-web).
       onMoveShouldSetPanResponder: (_evt, g) =>
         optsRef.current.enabled !== false &&
         Math.abs(g.dy) > TAP_SLOP &&
