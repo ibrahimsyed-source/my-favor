@@ -5,14 +5,14 @@ import {
   Role, UserStatus, FavorTier, GeoPoint, FavorStatus, computePayout,
 } from '../types';
 import { setSession, clearSession, getStoredRefresh, getStoredUser, setStoredUser, ApiError, setOnSessionExpired, setOnAccountSuspended } from '../api/client';
-import { startLocationBroadcast } from '../lib/location';
+import { startLiveLocation, stopLiveLocation } from '../lib/live-location';
 import { registerForPushNotificationsAsync } from '../lib/notifications';
 import {
   signupApi, verifyOtpApi, loginApi, logoutApi, deleteAccountApi, changePasswordApi,
   getConfigApi, getMeApi, updateProfileApi, setRoleApi, verifyPalApi, setStatusApi, getPalsApi, getPalApi,
   acceptPalAgreementApi, updatePushTokenApi,
   createFavorApi, getFavorsApi, getActiveFavorApi, getFavorApi, getIncomingApi,
-  acceptFavorApi, declineFavorApi, abandonFavorApi, assignPalApi, advanceFavorApi, updateFavorLocationApi, finishFavorApi, releaseFavorApi, cancelFavorApi, rateFavorApi, rateMemberApi,
+  acceptFavorApi, declineFavorApi, abandonFavorApi, assignPalApi, advanceFavorApi, finishFavorApi, releaseFavorApi, cancelFavorApi, rateFavorApi, rateMemberApi,
   acceptOfferApi,
   getCardsApi, addCardApi, removeCardApi, getTransactionsApi, getEarningsApi, cashoutApi,
   getPaymentsConfigApi, createSetupCheckoutApi, syncCardsApi, connectOnboardApi, connectStatusApi,
@@ -528,9 +528,11 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
   }, [user, memberFavor, palFavor, mergePal]);
 
   // ---- live updates: when THIS user is the assigned pal of an in-flight favor,
-  // stream their device GPS to the server so the member can watch them approach.
+  // stream their device GPS to the server so the member can watch them approach —
+  // including while My Favor is BACKGROUNDED (phone locked, or the pal navigating
+  // in Apple Maps), via the background-capable task in lib/live-location.native.
   // Derived from stable fields (not the activeFavor object) so the 4s poll above,
-  // which swaps in a fresh favor object each tick, doesn't restart the GPS watch. ----
+  // which swaps in a fresh favor object each tick, doesn't restart the GPS stream. ----
   // Role-independent on purpose: being the ASSIGNED PAL of the favor is what
   // obligates streaming — flipping the UI toggle back to member mid-favor must
   // not blind the member's live map.
@@ -539,26 +541,19 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       ? palFavor.id
       : null;
   useEffect(() => {
-    if (!palBroadcastFavorId) return;
-    let stop: (() => void) | undefined;
+    if (!palBroadcastFavorId) {
+      // Not (or no longer) the broadcasting pal — ensure any stream is stopped.
+      void stopLiveLocation();
+      return;
+    }
     let cancelled = false;
     setLocationDenied(false);
-    void startLocationBroadcast(
-      (lat, lng) => {
-        // Fire-and-forget; a rejected update (favor ended, permission lost) just
-        // means the next tick won't post — the member's poll handles staleness.
-        void updateFavorLocationApi(palBroadcastFavorId, lat, lng).catch(() => undefined);
-      },
-      // Permission denied: surface it so the pal screens can explain why the
-      // member can't see them approaching (instead of a silent dead map).
-      () => { if (!cancelled) setLocationDenied(true); },
-    ).then((s) => {
-      if (cancelled) s();
-      else stop = s;
-    });
+    // Permission denied: surface it so the pal screens can explain why the member
+    // can't see them approaching (instead of a silent dead map).
+    void startLiveLocation(palBroadcastFavorId, () => { if (!cancelled) setLocationDenied(true); });
     return () => {
       cancelled = true;
-      stop?.();
+      void stopLiveLocation();
     };
   }, [palBroadcastFavorId]);
 
