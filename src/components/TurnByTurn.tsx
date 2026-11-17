@@ -12,6 +12,9 @@ export interface TurnByTurnProps {
   origin: { lat: number; lng: number };
   /** The favor location — the route's destination. */
   destination: { lat: number; lng: number; address?: string };
+  /** When set, the destination renders as the member's initials bubble (the
+      v.2 avatar-ring marker) on the navigation map. */
+  destinationName?: string;
   /** The pal reached the favor location (final destination only). */
   onArrive?: () => void;
   /** The pal tapped the navigation UI's own end-trip button. */

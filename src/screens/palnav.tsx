@@ -98,6 +98,7 @@ export const TurnByTurnScreen = ({ navigation, route }: any) => {
       <TurnByTurn
         origin={origin}
         destination={{ lat, lng, address }}
+        destinationName={s.activePalFavor?.id === favorId ? s.activePalFavor?.memberName : undefined}
         // Arrival doesn't advance the favor — the pal confirms "I AM HERE"
         // themselves on the screen below (GPS arrival can be wrong).
         onArrive={leave}

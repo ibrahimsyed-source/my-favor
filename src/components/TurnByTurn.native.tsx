@@ -1,6 +1,8 @@
 import React from 'react';
-import Mapbox from '@rnmapbox/maps';
+import { StyleSheet, View } from 'react-native';
+import Mapbox, { MarkerView } from '@rnmapbox/maps';
 import { Navigation, RNNavigationView } from '@rnmapbox/navigation';
+import { Avatar } from './index';
 import type { TurnByTurnProps } from './TurnByTurn';
 
 // TurnByTurn — NATIVE implementation: full-screen in-app turn-by-turn on the
@@ -20,7 +22,9 @@ if (MAPBOX_TOKEN) {
 
 export const TURN_BY_TURN_SUPPORTED = !!MAPBOX_TOKEN;
 
-export const TurnByTurn: React.FC<TurnByTurnProps> = ({ origin, destination, onArrive, onCancel, onError }) => (
+export const TurnByTurn: React.FC<TurnByTurnProps> = ({
+  origin, destination, destinationName, onArrive, onCancel, onError,
+}) => (
   <RNNavigationView
     style={{ flex: 1 }}
     waypoints={[
@@ -34,7 +38,33 @@ export const TurnByTurn: React.FC<TurnByTurnProps> = ({ origin, destination, onA
     }}
     onCancel={onCancel}
     onError={({ code, message }) => onError?.(message || code)}
-  />
+  >
+    {destinationName ? (
+      // The member's initials bubble over the destination — same v.2
+      // avatar-ring marker MapScene draws on the pal's booked/en-route maps.
+      // allowOverlap so the SDK's own destination pin can't collapse it away.
+      <MarkerView
+        coordinate={[destination.lng, destination.lat]}
+        anchor={{ x: 0.5, y: 0.5 }}
+        allowOverlap
+      >
+        <View style={st.avatarRing}>
+          <Avatar uri={undefined} size={33} name={destinationName} />
+        </View>
+      </MarkerView>
+    ) : undefined}
+  </RNNavigationView>
 );
+
+const st = StyleSheet.create({
+  avatarRing: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    backgroundColor: '#D40000',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+});
 
 export default TurnByTurn;

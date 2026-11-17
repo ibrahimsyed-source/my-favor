@@ -72,7 +72,13 @@ const isFallbackOrigin = (o: Origin) =>
   (o.lat === PAL_ORIGIN_FALLBACK.lat && o.lng === PAL_ORIGIN_FALLBACK.lng) ||
   (o.lat === GEOCODE_FALLBACK.lat && o.lng === GEOCODE_FALLBACK.lng);
 
-function MapBackdrop({ route, dest }: { route?: boolean; dest?: { lat: number; lng: number } | null }) {
+function MapBackdrop({ route, dest, memberName }: {
+  route?: boolean;
+  dest?: { lat: number; lng: number } | null;
+  /** When set, the favor location renders as the member's initials bubble
+      (v.2 avatar-ring marker) instead of the anonymous red teardrop. */
+  memberName?: string;
+}) {
   const { origin, hasFix } = usePalOriginFix();
 
   // Real driving route pal → destination (Google Routes via the server geo
@@ -108,7 +114,13 @@ function MapBackdrop({ route, dest }: { route?: boolean; dest?: { lat: number; l
 
   if (MAP_SCENE_SUPPORTED) {
     const markers: MapSceneMarker[] = [];
-    if (dest) markers.push({ lat: dest.lat, lng: dest.lng, kind: 'pin' });
+    if (dest) {
+      markers.push(
+        memberName
+          ? { lat: dest.lat, lng: dest.lng, kind: 'avatar', avatarName: memberName }
+          : { lat: dest.lat, lng: dest.lng, kind: 'pin' },
+      );
+    }
     // The car is the pal's REAL position — never draw it at the Miami fallback.
     if (route && hasFix) markers.push({ lat: origin.lat, lng: origin.lng, kind: 'car' });
     return (
@@ -895,7 +907,7 @@ export const PalFavorDetail = ({ navigation, route }: any) => {
 
   return (
     <View style={{ flex: 1, backgroundColor: PAGE_BG }}>
-      <MapBackdrop dest={shownFavor?.location} />
+      <MapBackdrop dest={shownFavor?.location} memberName={shownFavor?.memberName} />
       <MapTopBar navigation={navigation} onBack={() => navigation.goBack()} />
       <Animated.View style={[st.sheet, { transform: [{ translateY: dismissDrag.y }] }]}>
         {/* Grab strip (handle + its row only — never the whole sheet, so the
@@ -1284,7 +1296,7 @@ export const Navigation = ({ navigation }: any) => {
 
   return (
     <View style={{ flex: 1, backgroundColor: PAGE_BG }}>
-      <MapBackdrop route dest={fav?.location} />
+      <MapBackdrop route dest={fav?.location} memberName={fav?.memberName} />
       <MapTopBar navigation={navigation} banner={banner} onBannerPress={fav?.location ? getDirections : undefined} />
       <LocationDeniedBanner visible={s.locationDenied} />
       <Animated.View style={[st.sheet, { transform: [{ translateY: bookedDrag.y }] }]}>
@@ -1535,7 +1547,7 @@ export const PalFavorInProgress = ({ navigation }: any) => {
 
   return (
     <View style={{ flex: 1, backgroundColor: PAGE_BG }}>
-      <MapBackdrop route dest={fav?.location} />
+      <MapBackdrop route dest={fav?.location} memberName={fav?.memberName} />
       <MapTopBar navigation={navigation} banner={banner} onBannerPress={!arrived && fav?.location ? getDirections : undefined} />
       <LocationDeniedBanner visible={s.locationDenied} />
       <View style={[st.miniCard, { bottom: insets.bottom + 16 }]}>
