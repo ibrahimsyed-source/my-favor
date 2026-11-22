@@ -3,7 +3,7 @@ import { z } from 'zod';
 import { Prisma } from '@prisma/client';
 import { prisma } from '../db';
 import { validate } from '../lib/validate';
-import { asyncHandler, badRequest, notFound, forbidden, conflict } from '../lib/errors';
+import { asyncHandler, badRequest, notFound, forbidden, conflict, runClaimTx } from '../lib/errors';
 import { authenticate } from '../middleware/authenticate';
 import { publicFavor, publicFavorOpen, publicOffer } from '../lib/serialize';
 import { computeFees, computePayout, computeCancellation, FAVOR_TIERS } from '../lib/money';
@@ -15,6 +15,19 @@ export const favorRouter = Router();
 favorRouter.use(authenticate);
 
 const ACTIVE_STATUSES = ['requested', 'matched', 'enroute', 'arrived', 'in_progress'];
+
+// Stable signed-64-bit key for a per-member Postgres advisory lock (FNV-1a over
+// the member id). Concurrent POST /favors for the SAME member serialize on this
+// one lock so the one-active-request check and the insert are effectively atomic;
+// different members hash to different keys and never contend.
+function memberLockKey(id: string): bigint {
+  let h = 1469598103934665603n; // FNV-1a 64-bit offset basis
+  for (let i = 0; i < id.length; i++) {
+    h ^= BigInt(id.charCodeAt(i));
+    h = BigInt.asUintN(64, h * 1099511628211n);
+  }
+  return BigInt.asIntN(64, h); // fits Postgres bigint for pg_advisory_xact_lock(bigint)
+}
 
 // A pal's LIVE job window (assigned work still physically in flight). A favor
 // parked in 'pending_release' — finished, waiting on the member to release the
@@ -246,18 +259,9 @@ favorRouter.post(
       }
     }
 
-    // One active request per member: the client UI has exactly one member-favor
-    // slot, so a second concurrent request could never be tracked or cancelled.
-    // (Also bounds the notification fan-out per member.)
-    const activeCount = await prisma.favor.count({
-      where: { memberId: req.user!.id, status: { in: ACTIVE_STATUSES } },
-    });
-    if (activeCount > 0) {
-      throw conflict('Finish or cancel your current favor before requesting another.');
-    }
-
     // Server decides the base price: fixed tiers are authoritative; custom/
-    // negotiate accept a client price but clamp it to a sane range.
+    // negotiate accept a client price but clamp it to a sane range. (Pure — no DB
+    // — so it runs before the serialized active-request gate below.)
     let base: number;
     if (input.tier in FAVOR_TIERS) {
       base = FAVOR_TIERS[input.tier];
@@ -267,27 +271,47 @@ favorRouter.post(
     }
     const { serviceFee, transactionFee, total } = computeFees(base);
 
-    const favor = await prisma.favor.create({
-      data: {
-        memberId: req.user!.id,
-        tier: input.tier,
-        price: base,
-        // The listed price survives negotiation (which overwrites `price` at
-        // match time) so abandon can restore what the member actually posted.
-        listPrice: base,
-        description: input.description,
-        images: JSON.stringify(input.images),
-        locationLat: input.location.lat,
-        locationLng: input.location.lng,
-        locationAddress: input.location.address,
-        status: 'requested',
-        scheduledFor: input.scheduledFor ? new Date(input.scheduledFor) : null,
-        hours: input.hours ?? null,
-        serviceFee,
-        transactionFee,
-        total,
-        events: { create: { status: 'requested', actorId: req.user!.id } },
-      },
+    // One active request per member: the client UI has exactly one member-favor
+    // slot, so a second concurrent request could never be tracked or cancelled.
+    // (Also bounds the notification fan-out per member.) The count→create pair is
+    // a TOCTOU: concurrent creates (double-tap, retry storm) each saw count 0 and
+    // all inserted. Serialize per member with a Postgres advisory XACT lock so
+    // the check and the insert are effectively atomic for a given member — the
+    // lock is keyed on a stable bigint hash of the member id and auto-releases at
+    // COMMIT/ROLLBACK. Different members take different keys, so this doesn't
+    // serialize unrelated traffic.
+    const favor = await prisma.$transaction(async (tx) => {
+      // $executeRaw (not $queryRaw): pg_advisory_xact_lock returns void, which
+      // $queryRaw can't deserialize. The lock releases at COMMIT/ROLLBACK.
+      await tx.$executeRaw`SELECT pg_advisory_xact_lock(${memberLockKey(req.user!.id)})`;
+      const activeCount = await tx.favor.count({
+        where: { memberId: req.user!.id, status: { in: ACTIVE_STATUSES } },
+      });
+      if (activeCount > 0) {
+        throw conflict('Finish or cancel your current favor before requesting another.');
+      }
+      return tx.favor.create({
+        data: {
+          memberId: req.user!.id,
+          tier: input.tier,
+          price: base,
+          // The listed price survives negotiation (which overwrites `price` at
+          // match time) so abandon can restore what the member actually posted.
+          listPrice: base,
+          description: input.description,
+          images: JSON.stringify(input.images),
+          locationLat: input.location.lat,
+          locationLng: input.location.lng,
+          locationAddress: input.location.address,
+          status: 'requested',
+          scheduledFor: input.scheduledFor ? new Date(input.scheduledFor) : null,
+          hours: input.hours ?? null,
+          serviceFee,
+          transactionFee,
+          total,
+          events: { create: { status: 'requested', actorId: req.user!.id } },
+        },
+      });
     });
     // Tell the pals a favor just opened (durable row + push) — without this,
     // discovery is poll-only and an asynchronous tester never learns about it.
@@ -690,7 +714,13 @@ favorRouter.post(
     // and the pal payout always derive from the negotiated number. Everything
     // below is one transaction: the conditional offer acceptance IS the gate.
     const { serviceFee, transactionFee, total } = computeFees(agreedPrice);
-    await prisma.$transaction(async (tx) => {
+    // This transaction locks the offer row AND (declining the losers) the other
+    // offer rows on the same favor. Two concurrent accepts on ONE favor — a member
+    // double-tapping two pal cards, or a pal and member accepting at the same
+    // instant — grab those rows in opposite order and Postgres deadlocks one side
+    // (40P01). runClaimTx turns that DB-level loss into the same 409 the loser
+    // would get from the conditional gates, instead of a 500.
+    await runClaimTx(() => prisma.$transaction(async (tx) => {
       const accepted = await tx.favorOffer.updateMany({
         where: { id: offer.id, status: 'pending', lastBy: expectedLastBy, price: agreedPrice },
         data: { status: 'accepted' },
@@ -717,7 +747,7 @@ favorRouter.post(
         data: { status: 'declined' },
       });
       await tx.favorEvent.create({ data: { favorId: offer.favorId, status: 'matched', actorId: me } });
-    });
+    }), 'This favor is no longer available — review the latest offer');
 
     const agreed = `$${agreedPrice.toFixed(2)}`;
     if (isMember) {
@@ -866,10 +896,14 @@ favorRouter.post(
 
     // Atomic claim — mirrors accept() so a concurrent accept/assign can't be
     // clobbered (the stale check above is only a fast-fail; this is the gate).
-    const claimed = await prisma.favor.updateMany({
-      where: { id: req.params.id, memberId: me, status: 'requested', palId: null },
-      data: { status: 'matched', palId },
-    });
+    // runClaimTx maps a DB deadlock against a concurrent accept to the same 409.
+    const claimed = await runClaimTx(
+      () => prisma.favor.updateMany({
+        where: { id: req.params.id, memberId: me, status: 'requested', palId: null },
+        data: { status: 'matched', palId },
+      }),
+      'Favor already matched',
+    );
     if (claimed.count === 0) throw conflict('Favor already matched');
 
     await prisma.favorEvent.create({ data: { favorId: req.params.id, status: 'matched', actorId: me } });
@@ -964,16 +998,20 @@ favorRouter.post(
     }
 
     // Atomic state gate: only one concurrent /finish parks the favor.
-    const updated = await prisma.$transaction(async (tx) => {
+    const updated = await runClaimTx(() => prisma.$transaction(async (tx) => {
       const done = await tx.favor.updateMany({
         where: { id: favor.id, palId: me, status: { in: ['arrived', 'in_progress'] } },
-        data: { status: 'pending_release' },
+        // Clear the live GPS as the favor leaves the moving window — the member's
+        // tracking is over at pending_release, so the pal's last fix shouldn't
+        // linger on the row (the serializer already stops exposing it; this keeps
+        // the data layer honest too).
+        data: { status: 'pending_release', palLat: null, palLng: null, palLocationAt: null },
       });
       if (done.count === 0) throw conflict('Favor is not in a completable state');
       const f = await tx.favor.findUniqueOrThrow({ where: { id: favor.id }, include: memberInclude });
       await tx.favorEvent.create({ data: { favorId: favor.id, status: 'pending_release', actorId: me } });
       return f;
-    });
+    }), 'Favor is not in a completable state');
 
     // Ask the member to release — this notification is the member's call to
     // action; the actual payout happens in /release.
@@ -1006,7 +1044,7 @@ favorRouter.post(
 
     // Atomic state gate: only one concurrent /release completes the favor, so
     // the settle below can never double-charge or double-credit.
-    const updated = await prisma.$transaction(async (tx) => {
+    const updated = await runClaimTx(() => prisma.$transaction(async (tx) => {
       const done = await tx.favor.updateMany({
         where: { id: favor.id, memberId: me, status: 'pending_release' },
         data: { status: 'completed' },
@@ -1018,7 +1056,7 @@ favorRouter.post(
         await tx.user.update({ where: { id: favor.palId }, data: { totalFavors: { increment: 1 } } });
       }
       return f;
-    });
+    }), 'This favor is not awaiting release');
 
     // Charge the member (total) and credit the pal (payout) — together, so the
     // pal's earning is only cashable when the member's money is collected. The
@@ -1100,10 +1138,11 @@ favorRouter.post(
     const cancellation = computeCancellation({ status: favor.status, price: favor.price, total: favor.total });
 
     // Atomic gate so a cancel can't race a finish (only one terminal write wins).
-    const updated = await prisma.$transaction(async (tx) => {
+    const updated = await runClaimTx(() => prisma.$transaction(async (tx) => {
       const done = await tx.favor.updateMany({
         where: { id: favor.id, memberId: me, status: { in: ACTIVE_STATUSES } },
-        data: { status: 'cancelled' },
+        // Clear any live GPS fix on the way to the terminal state (see finish).
+        data: { status: 'cancelled', palLat: null, palLng: null, palLocationAt: null },
       });
       if (done.count === 0) {
         // The gate can lose a race to a concurrent /finish: re-read so a favor
@@ -1125,7 +1164,7 @@ favorRouter.post(
         data: { status: 'declined' },
       });
       return f;
-    });
+    }), 'Favor cannot be cancelled');
 
     // Charge the member the cancellation fee and compensate the committed pal —
     // together, so the pal's compensation is only cashable once actually collected.

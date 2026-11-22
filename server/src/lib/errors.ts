@@ -1,5 +1,6 @@
 import type { Request, Response, NextFunction } from 'express';
 import { ZodError } from 'zod';
+import { Prisma } from '@prisma/client';
 import { config } from '../config';
 
 // Typed application error. `expose: true` means the message is safe to show the
@@ -28,6 +29,41 @@ export const tooMany = (msg = 'Too many requests') => new AppError(429, 'too_man
 // Distinct code so the client can route to the Account Suspended screen.
 export const accountSuspended = (msg = 'This account has been suspended') =>
   new AppError(403, 'account_suspended', msg);
+
+// A transaction that lost a concurrency race at the DATABASE level — a Postgres
+// deadlock (40P01) or serialization failure (40001), or Prisma's own write-
+// conflict/timeout codes (P2034). These are the DB telling us two transactions
+// collided; the loser rolled back cleanly, so the right answer to the client is
+// the same 409 they'd get from losing the race in application code — NOT a 500.
+// Without this, a genuine double-tap (e.g. a member accepting two pal offers on
+// one favor at the same instant) surfaces as "Something went wrong".
+export function isTransientTxConflict(err: unknown): boolean {
+  if (err instanceof Prisma.PrismaClientKnownRequestError) {
+    // P2034: write conflict / deadlock (Prisma's mapped code). P2028: tx timeout.
+    return err.code === 'P2034' || err.code === 'P2028';
+  }
+  // A raw Postgres deadlock/serialization error surfaces as an "unknown" Prisma
+  // error whose message carries the SQLSTATE — match it there.
+  const msg = (err as { message?: string } | undefined)?.message ?? '';
+  return /\b40P01\b|deadlock detected|\b40001\b|could not serialize access/i.test(msg);
+}
+
+// Run a transactional claim and translate a DB-level race loss into a clean 409.
+// `conflictMessage` is what the loser sees (should read like any other
+// lost-the-race message on that route). Application-level AppErrors thrown
+// inside the callback (the normal "this favor is no longer available" gates)
+// propagate unchanged — only true DB write-conflicts are rewritten.
+export async function runClaimTx<T>(
+  tx: () => Promise<T>,
+  conflictMessage: string,
+): Promise<T> {
+  try {
+    return await tx();
+  } catch (err) {
+    if (isTransientTxConflict(err)) throw conflict(conflictMessage);
+    throw err;
+  }
+}
 
 // Wrap async route handlers so thrown/rejected errors reach the error middleware.
 export function asyncHandler(
