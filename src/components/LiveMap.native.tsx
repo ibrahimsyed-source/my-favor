@@ -31,8 +31,30 @@ const NEAR_DEG = 0.0015; // ~165 m
 const WHITE = '#FFFFFF';
 const NAVY = '#252A38'; // MapScene's car-bubble navy
 const PIN_RED = '#ED1C24'; // v.2 brand red (destination pin)
-const ROUTE_RED = '#D40000'; // brand route red
+// Uber-style cased route: a bright blue line over a darker casing, round joins.
+const ROUTE_BLUE = '#1A73E8';
+const ROUTE_BLUE_CASING = '#0B3D91';
 const P600 = 'Poppins_600SemiBold';
+
+// Trim the traveled portion so the line starts at the car, not back at the last
+// fetch origin (the route only refetches every 150m/60s, so without this the
+// car visibly drives off the head of its own line). Finds the route vertex
+// nearest the pal and slices from there, prepending the live pal coord.
+function trimRouteToPal(
+  coords: { latitude: number; longitude: number }[] | null,
+  pal: { lat: number; lng: number } | null | undefined,
+): { latitude: number; longitude: number }[] | null {
+  if (!coords || coords.length < 2 || !pal) return coords;
+  let best = 0;
+  let bestD = Infinity;
+  for (let i = 0; i < coords.length; i++) {
+    const dLat = coords[i].latitude - pal.lat;
+    const dLng = coords[i].longitude - pal.lng;
+    const d = dLat * dLat + dLng * dLng;
+    if (d < bestD) { bestD = d; best = i; }
+  }
+  return [{ latitude: pal.lat, longitude: pal.lng }, ...coords.slice(best)];
+}
 
 // --- directions (driving route pal -> destination) -------------------------
 // A fix older than this is frozen, not live — same rule as the tracking
@@ -333,11 +355,19 @@ export const LiveMap: React.FC<LiveMapProps> = ({
           }
         }}
       >
-        {/* Driving route pal -> destination — drawn before the markers (and at
-            zIndex 0) so the car/pin bubbles stay on top. No route = no line. */}
-        {routeCoords && routeCoords.length > 1 ? (
-          <Polyline coordinates={routeCoords} strokeWidth={4} strokeColor={ROUTE_RED} zIndex={0} />
-        ) : null}
+        {/* Driving route pal -> destination — an Uber-style cased line: a darker
+            casing under a bright blue line with round caps/joins so turns read
+            smoothly. Drawn before the markers (low zIndex) so the car/pin
+            bubbles stay on top. Trimmed to start at the car. No route = no line. */}
+        {(() => {
+          const drawn = trimRouteToPal(routeCoords, pal);
+          return drawn && drawn.length > 1 ? (
+            <>
+              <Polyline coordinates={drawn} strokeWidth={9} strokeColor={ROUTE_BLUE_CASING} lineCap="round" lineJoin="round" zIndex={0} />
+              <Polyline coordinates={drawn} strokeWidth={5} strokeColor={ROUTE_BLUE} lineCap="round" lineJoin="round" zIndex={1} />
+            </>
+          ) : null;
+        })()}
         {/* Primary pin — the favor / pickup location (red). With the member's
             initials it becomes the v.2 initials pin; without, the default pin. */}
         {initials ? (

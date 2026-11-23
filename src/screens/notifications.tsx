@@ -6,6 +6,7 @@ import { TopBar } from '../components';
 import { EmptyState, ErrorState, LoadingState } from '../components/states';
 import { getNotificationsApi } from '../api/endpoints';
 import { registerForPushNotificationsAsync } from '../lib/notifications';
+import { routeForNotificationTap } from '../lib/notif-routing';
 import { tokens, palette } from '../theme';
 import { useStore } from '../store';
 import { AppNotification } from '../types';
@@ -45,6 +46,7 @@ const ACTION_LABEL: Record<AppNotification['type'], string> = {
   no_pal: 'CLOSE',
   release_request: 'VIEW', // member: review the finished favor + release the payment
   released: 'VIEW', // pal: the payment landed — view it in Earning History
+  review: 'VIEW', // you received a review — view it on your reviews list
 };
 
 function timeAgo(ms: number, now: number) {
@@ -61,15 +63,11 @@ function timeAgo(ms: number, now: number) {
 // the real permission request so the dialog's choice is honest, not decorative.
 const PERM_PROMPT_KEY = 'myfavor.pushPermPromptShown';
 
-// Statuses where a pal is assigned and the favor is physically underway — the
-// states a 'match'/'arrived' notification can be about.
-const POST_MATCH = ['matched', 'enroute', 'arrived', 'in_progress'];
-
 // Notifications — v.2 inbox. Every item renders as the frames' white alert
 // card; the newest unread one also pops as the full-screen alert over the
 // dimmed list, exactly like the Match/Cancellation Alert Notification frames.
 export function Notifications({ navigation }: any) {
-  const { notifications, markNotificationRead, markAllNotificationsRead, refreshNotifications, activeMemberFavor, activePalFavor } = useStore();
+  const { notifications, markNotificationRead, markAllNotificationsRead, refreshNotifications, activeMemberFavor, activePalFavor, user, refreshActive } = useStore();
   // Anchor relative timestamps to the real clock so a day-old item reads "1d",
   // not "5m" relative to the newest notification.
   const now = Date.now();
@@ -131,66 +129,27 @@ export function Notifications({ navigation }: any) {
   const alertItem = alertId ? notifications.find((n) => n.id === alertId && !n.read) : undefined;
   const dismissAlert = () => setAlertId(null);
 
-  // Mark read, then deep-link to the related favor when one is implied by type.
-  const handlePress = (item: AppNotification) => {
+  // Mark read, then deep-link via the SAME router the push-tap listener uses
+  // (lib/notif-routing). Rows now carry favorId/threadId, so this routes to the
+  // exact favor's screen instead of guessing from slots — fixing the old
+  // two-sided-ambiguity limits ('match'/'offer' landing on the wrong side).
+  const handlePress = async (item: AppNotification) => {
     markNotificationRead(item.id);
-    switch (item.type) {
-      case 'match':
-      case 'arrived': {
-        // Prefer the slot the type IMPLIES. Server-side, 'arrived' only ever
-        // goes to the favor's member, and 'match' is member-side too except the
-        // "your offer was accepted" push to a pal — so a member favor in a
-        // post-match status wins; the pal slot routes only when IT is the one
-        // in a matching live status. Known limit: notification rows carry no
-        // favorId, so with BOTH slots post-match a pal-side 'match' still lands
-        // on the member's tracking — unresolvable without a server change.
-        const memberLive = !!activeMemberFavor && POST_MATCH.includes(activeMemberFavor.status);
-        if (memberLive) navigation.navigate('FavorTracking');
-        else if (activePalFavor && POST_MATCH.includes(activePalFavor.status)) {
-          navigation.navigate(
-            activePalFavor.status === 'arrived' || activePalFavor.status === 'in_progress'
-              ? 'PalFavorInProgress'
-              : 'Navigation',
-          );
-        } else if (activeMemberFavor) navigation.navigate('FavorTracking');
-        else navigation.navigate('History');
-        break;
-      }
-      case 'cancellation':
-      case 'no_pal':
-        navigation.navigate('History');
-        break;
-      case 'release_request':
-        // Member-only news ("Release the payment"): the tracking sheet owns the
-        // RELEASE PAYMENT flow while the favor still awaits release; once it was
-        // already released (or replaced by a newer request), History has the row.
-        if (activeMemberFavor?.status === 'pending_release') navigation.navigate('FavorTracking');
-        else navigation.navigate('History');
-        break;
-      case 'released':
-        // Pal-only news ("Payment released"): the payout row lives on the
-        // Earning History screen — registered as 'Earnings' (navigation/index).
-        navigation.navigate('Earnings');
-        break;
-      case 'offer':
-        // Offer news is two-sided and rows carry no favorId, so disambiguate by
-        // the strongest local signal: my own open request that actually HOLDS
-        // offers → review them on Searching (member-side 'offer' news always
-        // leaves an offer row on my request). Otherwise the news is pal-side
-        // (my offer was countered/declined) → the board, where the favor detail
-        // shows my offer state; it's registered for every user, so this never
-        // dead-ends on the role toggle. Known limit: an open request with
-        // offers masks pal-side news when both negotiations are live.
-        if (
-          activeMemberFavor?.status === 'requested' &&
-          (activeMemberFavor.offers ?? []).length > 0
-        ) {
-          navigation.navigate('Searching');
-        } else navigation.navigate('BrowseFavors');
-        break;
-      default:
-        break; // 'general' — no destination, mark-read only
+    const data: Record<string, unknown> = { type: item.type };
+    if (item.favorId) data.favorId = item.favorId;
+    if (item.threadId) data.threadId = item.threadId;
+    let slots = { activeMemberFavor, activePalFavor, user };
+    // If the row names a favor that isn't in a current slot (an older
+    // notification), pull fresh active favors so the router can still place it.
+    const have = !!item.favorId && (activePalFavor?.id === item.favorId || activeMemberFavor?.id === item.favorId);
+    if (item.favorId && !have) {
+      try {
+        const { member, pal } = await refreshActive();
+        slots = { activeMemberFavor: member, activePalFavor: pal, user };
+      } catch { /* keep whatever slots we have */ }
     }
+    const dest = routeForNotificationTap(data, slots);
+    if (dest) navigation.navigate(dest.name as never, dest.params as never);
   };
 
   // Pull fresh notifications on open + whenever the screen regains focus.

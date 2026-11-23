@@ -145,9 +145,20 @@ async function getParticipantFavor(favorId: string, userId: string) {
 // Persist the durable in-app Notification row AND fire a best-effort device push
 // (Expo). The DB row is the source of truth (polled by the app); the push is a
 // courtesy ping and never blocks — a push failure can't break the favor flow.
-async function notify(userId: string, type: string, title: string, body: string) {
-  await prisma.notification.create({ data: { userId, type, title, body } });
-  void sendPushNotification(userId, title, body, { type });
+//
+// Every favor-lifecycle push MUST carry the favorId so the tap can deep-link to
+// the exact favor's screen. Without it the client could only guess from its
+// (often stale, on cold start) active-favor slots and fell back to the
+// Transactions/History screen for essentially every lifecycle notification.
+async function notify(
+  userId: string,
+  type: string,
+  title: string,
+  body: string,
+  data?: Record<string, string>,
+) {
+  await prisma.notification.create({ data: { userId, type, title, body, favorId: data?.favorId ?? null } });
+  void sendPushNotification(userId, title, body, { type, ...(data ?? {}) });
 }
 
 // Settle money for a favor: the member is debited and the pal credited together,
@@ -539,6 +550,7 @@ favorRouter.post(
         'offer',
         'A Favor Pal wants your favor',
         `${meUser.firstName ?? 'A Favor Pal'} wants to do your favor at the listed price. Review and approve them.`,
+        { favorId: favor.id },
       );
     }
     res.json({ offer: publicOffer(offer), pending: true });
@@ -600,6 +612,7 @@ favorRouter.post(
         'offer',
         'New price offer',
         `${meUser.firstName ?? 'A Favor Pal'} offered $${price.toFixed(2)} for your favor.`,
+        { favorId: favor.id },
       );
     }
     res.status(201).json({ offer: publicOffer(offer) });
@@ -666,6 +679,7 @@ favorRouter.post(
       'offer',
       'Price countered',
       `New counter offer on the favor: $${price.toFixed(2)}.`,
+      { favorId: offer.favorId },
     );
     res.json({ offer: publicOffer(updated) });
   }),
@@ -751,13 +765,14 @@ favorRouter.post(
 
     const agreed = `$${agreedPrice.toFixed(2)}`;
     if (isMember) {
-      await notify(offer.palId, 'match', 'Offer accepted', `Your ${agreed} offer was accepted — you're booked!`);
+      await notify(offer.palId, 'match', 'Offer accepted', `Your ${agreed} offer was accepted — you're booked!`, { favorId: offer.favorId });
     } else {
       await notify(
         offer.favor.memberId,
         'match',
         'Favor accepted',
         `${offer.pal?.firstName ?? 'Your Favor Pal'} accepted at ${agreed} and is on the way.`,
+        { favorId: offer.favorId },
       );
     }
     const updated = await prisma.favor.findUniqueOrThrow({ where: { id: offer.favorId }, include: participantInclude });
@@ -790,6 +805,7 @@ favorRouter.post(
           'offer',
           'Offer declined',
           'The price offer on the favor was declined.',
+          { favorId: offer.favorId },
         );
       }
     }
@@ -859,7 +875,7 @@ favorRouter.post(
       data: { status: 'declined' },
     });
     await prisma.favorEvent.create({ data: { favorId: req.params.id, status: 'requested', actorId: me } });
-    await notify(favor.memberId, 'cancellation', 'Your Pal stepped back', 'Your Favor Pal had to release your favor — it is open again for another Pal.');
+    await notify(favor.memberId, 'cancellation', 'Your Pal stepped back', 'Your Favor Pal had to release your favor — it is open again for another Pal.', { favorId: favor.id });
     res.json({ ok: true });
   }),
 );
@@ -907,12 +923,20 @@ favorRouter.post(
     if (claimed.count === 0) throw conflict('Favor already matched');
 
     await prisma.favorEvent.create({ data: { favorId: req.params.id, status: 'matched', actorId: me } });
-    // Direct booking closes any open negotiations on this favor.
+    // Direct booking closes negotiations — but the BOOKED pal's own pending offer
+    // must be marked 'accepted', not declined. Declining it made the booked pal's
+    // 5s offer poll see their row go 'declined' on a no-longer-'requested' favor
+    // and flash "This favor was just taken" to the very pal who was booked. Accept
+    // theirs; decline only the others.
     await prisma.favorOffer.updateMany({
-      where: { favorId: req.params.id, status: 'pending' },
+      where: { favorId: req.params.id, palId, status: 'pending' },
+      data: { status: 'accepted' },
+    });
+    await prisma.favorOffer.updateMany({
+      where: { favorId: req.params.id, status: 'pending', palId: { not: palId } },
       data: { status: 'declined' },
     });
-    await notify(palId, 'match', 'You were booked', 'A member booked you for a favor.');
+    await notify(palId, 'match', 'You were booked', 'A member booked you for a favor.', { favorId: req.params.id });
     // participantInclude so the matched favor lands with memberName/phones —
     // same shape every other match/advance response carries.
     const updated = await prisma.favor.findUniqueOrThrow({ where: { id: req.params.id }, include: participantInclude });
@@ -946,7 +970,7 @@ favorRouter.post(
     if (moved.count === 0) throw conflict('Favor status changed — please retry');
     await prisma.favorEvent.create({ data: { favorId: favor.id, status, actorId: me } });
     if (status === 'arrived') {
-      await notify(favor.memberId, 'arrived', 'Your Pal has arrived', 'Your Favor Pal is at the location.');
+      await notify(favor.memberId, 'arrived', 'Your Pal has arrived', 'Your Favor Pal is at the location.', { favorId: favor.id });
     }
     const updated = await prisma.favor.findUniqueOrThrow({ where: { id: favor.id }, include: memberInclude });
     res.json({ favor: publicFavor(updated) });
@@ -1021,6 +1045,7 @@ favorRouter.post(
       'release_request',
       'Release the payment',
       `${meUser?.firstName ?? 'Your Favor Pal'} marked your favor as done. Review and release their payment.`,
+      { favorId: favor.id },
     );
     res.json({ favor: publicFavor(updated), awaitingRelease: true });
   }),
@@ -1081,6 +1106,7 @@ favorRouter.post(
         'released',
         'Payment released',
         `${favor.member?.firstName ?? 'The member'} released your $${payout.toFixed(2)} payment.`,
+        { favorId: favor.id },
       );
     }
     res.json({ favor: publicFavor(updated), payout, ledgerStatus });
@@ -1195,7 +1221,7 @@ favorRouter.post(
     }
 
     if (favor.palId) {
-      await notify(favor.palId, 'cancellation', 'Favor cancelled', 'A favor you accepted was cancelled.');
+      await notify(favor.palId, 'cancellation', 'Favor cancelled', 'A favor you accepted was cancelled.', { favorId: favor.id });
     }
     res.json({ favor: publicFavor(updated), cancellation });
   }),

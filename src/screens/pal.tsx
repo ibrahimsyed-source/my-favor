@@ -768,23 +768,36 @@ export const PalFavorDetail = ({ navigation, route }: any) => {
           // cleanup-flag race the first cut of this effect had).
           bookedRef.current = true;
           clearInterval(id);
-          // refreshActive returns null on ANY error (a timeout looks identical
-          // to a cancel race) and `pal ?? member` can be a dual-role user's own
-          // member favor — so require OUR favor by id and retry once before
-          // telling a booked pal the favor was taken.
-          let fav = await s.refreshActive();
-          if (fav?.id !== favorId) {
+          // refreshActive returns {member,pal} (both null on ANY error — a
+          // timeout looks identical to a cancel race) — so require OUR favor in
+          // the PAL slot by id and retry once before telling a booked pal the
+          // favor was taken.
+          let pal = (await s.refreshActive()).pal;
+          if (pal?.id !== favorId) {
             await new Promise((r) => setTimeout(r, 1500));
-            fav = await s.refreshActive();
+            pal = (await s.refreshActive()).pal;
           }
-          if (fav?.id === favorId) {
+          if (pal?.id === favorId) {
             // Reset (not push) so Android back can't land on this stale sheet.
             navigation.reset({ index: 1, routes: [{ name: 'Tabs' }, { name: 'Navigation' }] });
           } else setTaken(true); // accepted but already ended (cancel race)
           return;
         }
         if (mine) setOffer(mine);
-        if (favorStatus !== 'requested') setTaken(true); // someone else won it
+        if (favorStatus !== 'requested') {
+          // The favor left the board. Before declaring it taken, confirm we
+          // aren't the pal it was matched to — the member may have booked us via
+          // /assign (which accepts our offer), or a poll raced the match. If the
+          // favor is ours, go to Navigation instead of flashing "taken".
+          const pal = (await s.refreshActive()).pal;
+          if (pal?.id === favorId) {
+            bookedRef.current = true;
+            clearInterval(id);
+            navigation.reset({ index: 1, routes: [{ name: 'Tabs' }, { name: 'Navigation' }] });
+          } else {
+            setTaken(true); // someone else won it
+          }
+        }
       } catch (e: any) {
         // 404 = our offer row no longer exists (withdrawn from another device)
         // — clear it so the sheet can't wait for an approval that can't come.
@@ -857,9 +870,31 @@ export const PalFavorDetail = ({ navigation, route }: any) => {
     }
   };
 
+  // We're BOOKED on this favor if it's already in our pal slot, or our restored
+  // offer came back 'accepted' (member approved while the sheet was closed). A
+  // booked favor is never "gone" — guard the flash against it.
+  const booked = s.activePalFavor?.id === favorId || offer?.status === 'accepted';
+
+  // A fresh mount after the member approved us (restore effect loads an
+  // 'accepted' offer, or the pal slot already holds this favor) must jump to
+  // Navigation rather than sit on the detail sheet. One-shot via bookedRef.
+  useEffect(() => {
+    if (!favorId || !booked || bookedRef.current) return;
+    bookedRef.current = true;
+    (async () => {
+      const pal = (await s.refreshActive()).pal;
+      if (pal?.id === favorId || s.activePalFavor?.id === favorId) {
+        navigation.reset({ index: 1, routes: [{ name: 'Tabs' }, { name: 'Navigation' }] });
+      }
+    })();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [favorId, booked]);
+
   // Gone = taken by someone else (polled), or vanished from the feed with no
-  // live negotiation of ours still deciding its fate.
-  const gone = taken || (!!route?.params?.favorId && !favor && !offerPending);
+  // live negotiation of ours still deciding its fate — but NEVER when we're the
+  // booked pal (a matched favor leaves the open feed, which previously flashed
+  // "taken" on the first frame of any re-entry by the pal who was approved).
+  const gone = !booked && (taken || (!!route?.params?.favorId && !favor && !offerPending));
   // Display source: acceptFavor()/acceptOffer() move the favor out of
   // incomingFavors into the pal slot — fall back to it so the sheet keeps the
   // REAL title/name/fees during the transition instead of placeholders.

@@ -309,9 +309,14 @@ model Message {
 model Notification {
   id        String   @id @default(uuid())
   userId    String
-  type      String   // "match" | "cancellation" | "no_pal" | "arrived" | "general"
+  type      String   // "match" | "cancellation" | "no_pal" | "arrived" | "release_request" | "released" | "offer" | "review" | "general"
   title     String
   body      String
+  // The favor (or, for messages, thread) this notification is about, so both a
+  // push tap AND an in-app notification-list tap can deep-link to the right
+  // screen instead of falling back to Transactions/History.
+  favorId   String?
+  threadId  String?
   read      Boolean  @default(false)
   createdAt DateTime @default(now())
 

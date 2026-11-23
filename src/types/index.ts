@@ -195,9 +195,13 @@ export interface Thread {
 
 export interface AppNotification {
   id: string;
-  type: 'match' | 'cancellation' | 'no_pal' | 'arrived' | 'offer' | 'release_request' | 'released' | 'general';
+  type: 'match' | 'cancellation' | 'no_pal' | 'arrived' | 'offer' | 'release_request' | 'released' | 'review' | 'general';
   title: string;
   body: string;
+  // The favor/thread this notification is about, so an in-app list tap can
+  // deep-link the same way a push tap does.
+  favorId?: string;
+  threadId?: string;
   date: number;
   read: boolean;
 }

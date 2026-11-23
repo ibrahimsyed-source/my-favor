@@ -9,7 +9,7 @@ import { RootStackParamList, TabParamList } from './types';
 import { useStore } from '../store';
 import { useTheme } from '../theme';
 import { addNotificationResponseListener } from '../lib/notifications';
-import type { Favor, User } from '../types';
+import { routeForNotificationTap, type NotificationSlots as NotifSlots } from '../lib/notif-routing';
 
 import * as Onb from '../screens/onboarding';
 import * as PalAgree from '../screens/palagreement';
@@ -176,68 +176,14 @@ const GATE_NAV = { canGoBack: () => false, goBack: () => {}, navigate: () => {},
 // handlePress (notifications.tsx): prefer the pal slot (the physical job in
 // flight), then the member's own request, else History.
 // ---------------------------------------------------------------------------
-type NotificationSlots = {
-  activeMemberFavor: Favor | null;
-  activePalFavor: Favor | null;
-  user: User | null;
-};
-
-export function routeForNotificationTap(
-  data: Record<string, unknown>,
-  { activeMemberFavor, activePalFavor, user }: NotificationSlots,
-): { name: keyof RootStackParamList; params?: object } | null {
-  switch (data.type) {
-    case 'message':
-      return typeof data.threadId === 'string'
-        ? { name: 'MessageThread', params: { threadId: data.threadId } }
-        : { name: 'Messages' };
-    case 'new_favor':
-      return typeof data.favorId === 'string'
-        ? { name: 'PalFavorDetail', params: { favorId: data.favorId } }
-        : { name: 'BrowseFavors' };
-    case 'match':
-    case 'arrived':
-      // Only a LIVE pal job claims these taps — a parked pending_release favor
-      // must not swallow a notification about the user's own member favor.
-      if (
-        activePalFavor &&
-        ['matched', 'enroute', 'arrived', 'in_progress'].includes(activePalFavor.status)
-      ) {
-        return {
-          name:
-            activePalFavor.status === 'arrived' || activePalFavor.status === 'in_progress'
-              ? 'PalFavorInProgress'
-              : 'Navigation',
-        };
-      }
-      if (activeMemberFavor) return { name: 'FavorTracking' };
-      if (activePalFavor?.status === 'pending_release') return { name: 'PalAwaitingRelease' };
-      return { name: 'History' };
-    case 'release_request':
-      // The pal finished — route the member to the release sheet.
-      if (activeMemberFavor?.status === 'pending_release') return { name: 'FavorTracking' };
-      return { name: 'History' };
-    case 'released':
-      // Money landed — show the pal their earnings.
-      return { name: 'Earnings' };
-    case 'cancellation':
-    case 'no_pal':
-      return { name: 'History' };
-    case 'offer':
-      // Member with an open request → review offers on Searching. A pal's
-      // counter/decline news → back to the board; otherwise History.
-      if (activeMemberFavor?.status === 'requested') return { name: 'Searching' };
-      if (user?.role === 'pal') return { name: 'BrowseFavors' };
-      return { name: 'History' };
-    default:
-      return null; // 'general' / unknown — opening the app is enough
-  }
-}
+// Tap routing lives in lib/notif-routing.ts so the in-app Activity list shares
+// the exact same logic (and to avoid a circular import with that screen).
+type NotificationSlots = NotifSlots;
 
 export default function RootNavigator() {
   const {
     isAuthenticated, restoring, maintenance, updateRequired, suspended, recheckConfig, logout,
-    activeMemberFavor, activePalFavor, user,
+    activeMemberFavor, activePalFavor, user, refreshActive,
   } = useStore();
   const { theme } = useTheme();
   const nav = useContext(NavigationContainerRefContext);
@@ -249,12 +195,27 @@ export default function RootNavigator() {
   slotsRef.current = { activeMemberFavor, activePalFavor, user };
   useEffect(() => {
     if (!isAuthenticated || !nav) return;
-    return addNotificationResponseListener((data) => {
+    return addNotificationResponseListener(async (data) => {
       if (!nav.isReady()) return;
-      const dest = routeForNotificationTap(data, slotsRef.current);
+      let slots = slotsRef.current;
+      // If the tap names a favor we don't have loaded yet (cold start from a
+      // killed app, or an idle pal whose slot only refreshes on the 20s tick),
+      // pull fresh active favors FIRST so routing lands on the right screen
+      // instead of falling through to History. refreshActive returns both slots
+      // directly, so we don't wait on a re-render to see them.
+      const fid = typeof data.favorId === 'string' ? data.favorId : undefined;
+      const have = !!fid && (slots.activePalFavor?.id === fid || slots.activeMemberFavor?.id === fid);
+      if (fid && !have) {
+        try {
+          const { member, pal } = await refreshActive();
+          slots = { activeMemberFavor: member, activePalFavor: pal, user: slotsRef.current.user };
+        } catch { /* keep whatever slots we already have */ }
+        if (!nav.isReady()) return;
+      }
+      const dest = routeForNotificationTap(data, slots);
       if (dest) (nav as any).navigate(dest.name, dest.params);
     });
-  }, [isAuthenticated, nav]);
+  }, [isAuthenticated, nav, refreshActive]);
 
   // SessionExpired / AccountSuspended end in reset({routes:[{name:'Login'}]}),
   // but 'Login' is only registered in the UNauth group — route that intent

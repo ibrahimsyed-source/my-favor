@@ -184,7 +184,7 @@ interface StoreValue {
   acceptOffer: (favorId: string, offerId: string, price: number) => Promise<{ ok: boolean; reason?: string }>;
   // Re-pull the active favor from the server (e.g. a pal learning their offer
   // was accepted while they had nothing active to poll on).
-  refreshActive: () => Promise<Favor | null>;
+  refreshActive: () => Promise<{ member: Favor | null; pal: Favor | null }>;
   // On API failure the favor is restored into incomingFavors and false returned.
   declineFavor: (favorId: string) => Promise<boolean>;
   abandonFavor: () => Promise<boolean>;
@@ -989,7 +989,7 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     }
   }, [memberFavor, palFavor, user]);
 
-  const refreshActive = useCallback(async (): Promise<Favor | null> => {
+  const refreshActive = useCallback(async (): Promise<{ member: Favor | null; pal: Favor | null }> => {
     try {
       const startedAt = Date.now();
       const epoch = sessionEpochRef.current;
@@ -999,19 +999,21 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       // session) must not clobber fresh state — e.g. a favor confirmed while
       // this GET was in flight.
       if (startedAt <= lastFavorWriteRef.current || epoch !== sessionEpochRef.current) {
-        return palFavorRef.current ?? memberFavorRef.current;
+        return { member: memberFavorRef.current, pal: palFavorRef.current };
       }
       const { member, pal } = splitActive(res, user?.id ?? '');
       // Preserve a completed-but-unrated member favor: it's parked locally to
       // drive the rating prompt and the server's active set never includes it.
       const curM = memberFavorRef.current;
-      setMemberFavor(!member && curM?.status === 'completed' ? curM : member);
+      const nextM = !member && curM?.status === 'completed' ? curM : member;
+      setMemberFavor(nextM);
       setPalFavor(pal);
-      // Callers use this to learn about a remotely-started job (e.g. an offer
-      // the member accepted) — the pal-side favor is the interesting one.
-      return pal ?? member;
+      // Return BOTH fresh slots so callers (notification-tap routing) can match
+      // the tapped favorId to the right role without depending on a re-render to
+      // refresh the slot refs.
+      return { member: nextM, pal };
     } catch {
-      return null;
+      return { member: null, pal: null };
     }
   }, [user]);
 

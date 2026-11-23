@@ -200,6 +200,10 @@ export function publicNotification(n: Notification) {
     type: n.type,
     title: n.title,
     body: n.body,
+    // The favor/thread this notification is about, so an in-app list tap can
+    // deep-link the same way a push tap does.
+    favorId: n.favorId ?? undefined,
+    threadId: n.threadId ?? undefined,
     date: n.createdAt.getTime(),
     read: n.read,
   };

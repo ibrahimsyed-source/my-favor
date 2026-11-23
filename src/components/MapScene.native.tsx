@@ -17,6 +17,9 @@ export const MAP_SCENE_SUPPORTED = true;
 const RED = '#D40000';
 const WHITE = '#FFFFFF';
 const NAVY = '#252A38';
+// Uber-style cased route line (matches LiveMap.native).
+const ROUTE_BLUE = '#1A73E8';
+const ROUTE_BLUE_CASING = '#0B3D91';
 const P500 = 'Poppins_500Medium';
 
 // ~11 m — treat smaller centre changes as echoes, not real moves.
@@ -162,16 +165,29 @@ export const MapScene: React.FC<MapSceneProps> = ({
             strokeWidth={1}
           />
         ) : null}
-        {/* Route line — visual only (drawn before the markers and kept at
-            zIndex 0 so pins/bubbles stay on top). It never changes the fit:
-            callers' `fit` behavior is exactly as without a polyline. */}
+        {/* Route line — an Uber-style cased blue line (darker casing under a
+            bright blue line, round caps/joins), matching the member tracking
+            map. Visual only (low zIndex so pins/bubbles stay on top); never
+            changes the fit. */}
         {polyline && polyline.length > 1 ? (
-          <Polyline
-            coordinates={polyline.map((p) => ({ latitude: p.lat, longitude: p.lng }))}
-            strokeWidth={4}
-            strokeColor={RED}
-            zIndex={0}
-          />
+          <>
+            <Polyline
+              coordinates={polyline.map((p) => ({ latitude: p.lat, longitude: p.lng }))}
+              strokeWidth={9}
+              strokeColor={ROUTE_BLUE_CASING}
+              lineCap="round"
+              lineJoin="round"
+              zIndex={0}
+            />
+            <Polyline
+              coordinates={polyline.map((p) => ({ latitude: p.lat, longitude: p.lng }))}
+              strokeWidth={5}
+              strokeColor={ROUTE_BLUE}
+              lineCap="round"
+              lineJoin="round"
+              zIndex={1}
+            />
+          </>
         ) : null}
         {(markers ?? []).map((m, i) => (
           <SceneMarker key={`${m.kind ?? 'pin'}-${i}`} m={m} index={i} />

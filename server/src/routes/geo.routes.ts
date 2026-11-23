@@ -241,6 +241,14 @@ async function fetchRoute(olat: number, olng: number, dlat: number, dlng: number
       origin: { location: { latLng: { latitude: olat, longitude: olng } } },
       destination: { location: { latLng: { latitude: dlat, longitude: dlng } } },
       travelMode: 'DRIVE',
+      // Routes API defaults to OVERVIEW: a handful of widely-spaced vertices that
+      // the map connects with long straight chords, so the line cuts corners and
+      // looks hand-drawn. HIGH_QUALITY returns the dense point set that actually
+      // follows the road. The field mask already bounds the response, and the
+      // 30s directions cache means this costs no extra quota per redraw.
+      polylineQuality: 'HIGH_QUALITY',
+      // Honest, traffic-aware ETAs (the duration also drives the member's ETA).
+      routingPreference: 'TRAFFIC_AWARE',
     }),
   });
 
