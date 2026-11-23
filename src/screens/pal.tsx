@@ -18,6 +18,7 @@ import { decodePolyline } from '../lib/geo';
 import { GEOCODE_FALLBACK } from '../lib/geocode';
 import { openTurnByTurn } from '../lib/navigation-links';
 import { TURN_BY_TURN_SUPPORTED } from '../components/TurnByTurn';
+import { PalChatSheet } from '../components/PalChatSheet';
 import { useSheetDrag } from '../lib/useSheetDrag';
 import { computePayout, computeFees, FAVOR_TIERS, Favor, FavorOffer, Transaction } from '../types';
 
@@ -1359,19 +1360,23 @@ export const Navigation = ({ navigation }: any) => {
 
   const [msgBusy, setMsgBusy] = useState(false);
   const [msgError, setMsgError] = useState(false);
-  // Fast path: a thread with this member is usually already in the store —
-  // open it instantly instead of blocking on a create-thread round trip.
+  // In-map chat overlay (feature 8): chat with the member without leaving the
+  // map. Resolve the thread (fast path: it's usually already in the store), then
+  // open the bottom-sheet instead of navigating to the MessageThread screen.
+  const [chatOpen, setChatOpen] = useState(false);
+  const [chatThreadId, setChatThreadId] = useState<string | null>(null);
   const memberThread = s.threads.find((t) => t.withUser.id === fav?.memberId);
   const openMessage = async () => {
     if (!fav?.memberId || msgBusy) return;
     if (memberThread) {
-      navigation.navigate('MessageThread', { threadId: memberThread.id });
+      setChatThreadId(memberThread.id);
+      setChatOpen(true);
       return;
     }
     setMsgBusy(true);
     const id = await s.openThreadWith(fav.memberId);
     setMsgBusy(false);
-    if (id) navigation.navigate('MessageThread', { threadId: id });
+    if (id) { setChatThreadId(id); setChatOpen(true); }
     else setMsgError(true); // openThreadWith swallows the error — never fail silently
   };
 
@@ -1560,6 +1565,13 @@ export const Navigation = ({ navigation }: any) => {
         primaryLabel="OK"
         onPrimary={() => setMsgError(false)}
       />
+      {/* In-map chat overlay (feature 8). */}
+      <PalChatSheet
+        visible={chatOpen}
+        threadId={chatThreadId}
+        withName={memberName}
+        onClose={() => setChatOpen(false)}
+      />
     </View>
   );
 };
@@ -1595,6 +1607,10 @@ export const PalFavorInProgress = ({ navigation }: any) => {
   const [finishBusy, setFinishBusy] = useState(false);
   const [finishError, setFinishError] = useState('');
   const [mapsError, setMapsError] = useState(false);
+  const [msgBusy, setMsgBusy] = useState(false);
+  const [msgError, setMsgError] = useState(false);
+  const [chatOpen, setChatOpen] = useState(false);
+  const [chatThreadId, setChatThreadId] = useState<string | null>(null);
   const fav = s.activePalFavor;
   // Finished-but-unreleased work belongs to the awaiting-release screen — a
   // cold reopen (or a poll tick landing 'pending_release' mid-view) hands over
@@ -1634,6 +1650,19 @@ export const PalFavorInProgress = ({ navigation }: any) => {
     if (!ok) setMapsError(true);
   };
 
+  // In-map chat overlay (feature 8) — same resolve-then-open pattern as the
+  // Navigation screen, so the pal can message mid-favor without leaving the map.
+  const memberThread = s.threads.find((t) => t.withUser.id === fav?.memberId);
+  const openMessage = async () => {
+    if (!fav?.memberId || msgBusy) return;
+    if (memberThread) { setChatThreadId(memberThread.id); setChatOpen(true); return; }
+    setMsgBusy(true);
+    const id = await s.openThreadWith(fav.memberId);
+    setMsgBusy(false);
+    if (id) { setChatThreadId(id); setChatOpen(true); }
+    else setMsgError(true);
+  };
+
   if (!fontsLoaded) return <View style={{ flex: 1, backgroundColor: PAGE_BG }} />;
   // Blank frame while the awaiting-release replace above lands — the
   // in-progress UI below would be a lie for finished work.
@@ -1670,6 +1699,7 @@ export const PalFavorInProgress = ({ navigation }: any) => {
         {!arrived ? (
           <ActionRow icon="navigate" label="Get directions (opens Maps)" onPress={getDirections} />
         ) : null}
+        <ActionRow icon="chatbubble-ellipses" label={msgBusy ? 'Opening chat…' : 'Message Favor Member'} red disabled={msgBusy} onPress={openMessage} />
         <View style={{ marginTop: 8 }}>
           <CostRow label={tierName} value={`$${base.toFixed(2)}`} bold />
           <CostRow label="Platform commission (20%)" value={`-$${commission.toFixed(2)}`} />
@@ -1725,6 +1755,20 @@ export const PalFavorInProgress = ({ navigation }: any) => {
         message="We couldn't hand off to a maps app on this device. Head to the address shown at the top of the screen."
         primaryLabel="OK"
         onPrimary={() => setMapsError(false)}
+      />
+      <NavyModal
+        visible={msgError}
+        title="Chat unavailable"
+        message={`We couldn't open a chat with ${memberName}. Check your connection and try again.`}
+        primaryLabel="OK"
+        onPrimary={() => setMsgError(false)}
+      />
+      {/* In-map chat overlay (feature 8). */}
+      <PalChatSheet
+        visible={chatOpen}
+        threadId={chatThreadId}
+        withName={memberName}
+        onClose={() => setChatOpen(false)}
       />
     </View>
   );
