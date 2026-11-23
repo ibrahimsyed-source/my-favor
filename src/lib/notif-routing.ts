@@ -38,7 +38,14 @@ export function routeForNotificationTap(
         : { name: 'Messages' };
     case 'new_favor':
       return favorId ? { name: 'PalFavorDetail', params: { favorId } } : { name: 'BrowseFavors' };
-    // 'review' is routed to the My Reviews screen — added with that feature.
+    case 'review':
+      // A review you received → your own reviews list.
+      return { name: 'MyReviews' };
+    case 'almost_here':
+      // Member-only "pal is close" — same destination as 'arrived': the member's
+      // tracking screen for that favor.
+      if (memberIsThis || activeMemberFavor) return { name: 'FavorTracking' };
+      return { name: 'History' };
     case 'match':
     case 'arrived':
       if (palIsThis && LIVE_PAL_STATUSES.includes(activePalFavor!.status)) {

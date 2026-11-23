@@ -6,10 +6,10 @@ import { validate } from '../lib/validate';
 import { asyncHandler, badRequest, notFound, forbidden, conflict, runClaimTx } from '../lib/errors';
 import { authenticate } from '../middleware/authenticate';
 import { publicFavor, publicFavorOpen, publicOffer } from '../lib/serialize';
-import { computeFees, computePayout, computeCancellation, FAVOR_TIERS } from '../lib/money';
+import { computeFees, computePayout, computeCancellation, FAVOR_TIERS, MIN_PRICE, MAX_PRICE } from '../lib/money';
 import { stripeEnabled, chargeFavor, chargeToPal, refundFavorCharge } from '../lib/stripe';
 import { sendPushNotification } from '../lib/push';
-import { haversineMiles } from '../lib/geo';
+import { haversineMiles, NEAR_MILES } from '../lib/geo';
 
 export const favorRouter = Router();
 favorRouter.use(authenticate);
@@ -240,7 +240,9 @@ async function settle(opts: {
 // POST /api/favors — member creates a favor. Price + fees are server-computed.
 const createSchema = z.object({
   tier: z.enum(['tiny', 'small', 'big', 'huge', 'custom', 'negotiate']),
-  price: z.number().positive().max(100000).optional(),
+  // A member-set price (custom/negotiate) must clear the business minimum; fixed
+  // tiers ignore any client price (the server substitutes FAVOR_TIERS below).
+  price: z.number().min(MIN_PRICE).max(MAX_PRICE).optional(),
   description: z.string().trim().min(1).max(2000),
   images: z.array(z.string().url().max(2000)).max(10).default([]),
   location: z.object({
@@ -563,7 +565,7 @@ favorRouter.post(
 // side's price matches the favor at that price (same race-safe claim gate as
 // /accept). One offer row per (favor, pal) — counters update it in place.
 // ---------------------------------------------------------------------------
-const offerBody = z.object({ price: z.number().positive().max(100000) });
+const offerBody = z.object({ price: z.number().min(MIN_PRICE).max(MAX_PRICE) });
 const offerParams = z.object({ id: z.string().uuid(), offerId: z.string().uuid() });
 
 // POST /api/favors/:id/offers — a pal opens (or re-prices) their negotiation.
@@ -977,6 +979,41 @@ favorRouter.post(
   }),
 );
 
+// Fire a one-time "your Favor Pal is almost here" push to the member the first
+// time the pal comes within NEAR_MILES of the destination. Runs OFF the hot path
+// (the location handler responds first, then voids this) so it never slows the
+// ~5s GPS stream. The atomic claim on nearNotifiedAt makes it exactly-once even
+// though many fixes can arrive inside the threshold. Only pre-arrival statuses
+// count ('matched'/'enroute') — the pal keeps streaming after arriving.
+async function maybeNotifyNear(favorId: string, palId: string, lat: number, lng: number) {
+  try {
+    const f = await prisma.favor.findUnique({
+      where: { id: favorId },
+      select: { memberId: true, palId: true, locationLat: true, locationLng: true, status: true, nearNotifiedAt: true },
+    });
+    if (!f || f.palId !== palId || f.nearNotifiedAt !== null) return;
+    if (!['matched', 'enroute'].includes(f.status)) return;
+    if (haversineMiles(lat, lng, f.locationLat, f.locationLng) > NEAR_MILES) return;
+    // Atomic one-shot claim: only the first fix inside the radius wins.
+    const claimed = await prisma.favor.updateMany({
+      where: { id: favorId, nearNotifiedAt: null },
+      data: { nearNotifiedAt: new Date() },
+    });
+    if (claimed.count !== 1) return;
+    const pal = await prisma.user.findUnique({ where: { id: palId }, select: { firstName: true } });
+    await notify(
+      f.memberId,
+      'almost_here',
+      'Your Favor Pal is almost here',
+      `${pal?.firstName ?? 'Your Favor Pal'} is just a few minutes away.`,
+      { favorId },
+    );
+  } catch (err) {
+    // eslint-disable-next-line no-console
+    console.warn('maybeNotifyNear failed:', err);
+  }
+}
+
 // POST /api/favors/:id/location — the assigned pal streams their live GPS so the
 // member can watch them approach. Called frequently (every few seconds) while the
 // favor is in flight, so it stays cheap: a single conditional update, no event row
@@ -1002,6 +1039,8 @@ favorRouter.post(
       throw conflict('Not sharing location for this favor');
     }
     res.json({ ok: true });
+    // Off the hot path: one-time proximity "almost here" push to the member.
+    void maybeNotifyNear(req.params.id, me, lat, lng);
   }),
 );
 
@@ -1141,6 +1180,14 @@ favorRouter.post(
         data: { memberRating: Math.round((agg._avg.palRating ?? rating) * 10) / 10 },
       });
     });
+    // Tell the member a review landed so they can see it on My Reviews.
+    await notify(
+      favor.memberId,
+      'review',
+      'You received a review',
+      'A Favor Pal left you a review. See it on your reviews.',
+      { favorId: favor.id },
+    );
     res.json({ ok: true });
   }),
 );
@@ -1265,6 +1312,16 @@ favorRouter.post(
       }
       return f;
     });
+    // Tell the pal a review landed so they can see it on My Reviews.
+    if (favor.palId) {
+      await notify(
+        favor.palId,
+        'review',
+        'You received a review',
+        'A Favor Member left you a review. See it on your reviews.',
+        { favorId: favor.id },
+      );
+    }
 
     // Charge the member for the tip and credit the pal — together, so a tip is
     // never an unfunded cashable earning.

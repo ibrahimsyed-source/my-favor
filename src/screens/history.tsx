@@ -235,6 +235,9 @@ export const History = ({ navigation }: any) => {
   const [status, setStatus] = useState<'idle' | 'loading' | 'error'>(
     s.history.length ? 'idle' : 'loading',
   );
+  // Client-side status filter over the fetched rows (no server change — history
+  // is already the user's own ≤100 favors).
+  const [statusFilter, setStatusFilter] = useState<'all' | 'active' | 'completed' | 'cancelled'>('all');
   useEffect(() => { setItems(s.history); }, [s.history]);
 
   const refresh = useCallback(async () => {
@@ -277,9 +280,16 @@ export const History = ({ navigation }: any) => {
     return unsub;
   }, [navigation, refresh]);
 
-  // Newest first, grouped under "March 2021"-style month headers.
+  // Newest first, grouped under "March 2021"-style month headers — after the
+  // status filter.
   const rows = useMemo<ListItem[]>(() => {
-    const sorted = [...items].sort((a, b) => when(b) - when(a));
+    const ACTIVE = ['requested', 'matched', 'enroute', 'arrived', 'in_progress', 'pending_release'];
+    const matchesFilter = (f: Favor) =>
+      statusFilter === 'all' ? true
+        : statusFilter === 'active' ? ACTIVE.includes(f.status)
+          : statusFilter === 'completed' ? f.status === 'completed'
+            : (f.status === 'cancelled' || f.status === 'no_pal');
+    const sorted = [...items].filter(matchesFilter).sort((a, b) => when(b) - when(a));
     const out: ListItem[] = [];
     let lastMonth = '';
     for (const f of sorted) {
@@ -321,6 +331,34 @@ export const History = ({ navigation }: any) => {
       {/* v.2: the populated list is titled "Transactions" (#125:8089); the
           no-record state is titled "Payment History" (#125:7884). */}
       <TopBar title={empty ? 'Payment History' : 'Transactions'} onBack={() => navigation.goBack()} />
+      {!empty ? (
+        <View style={styles.filterRow}>
+          {([
+            { key: 'all', label: 'All' },
+            { key: 'active', label: 'Active' },
+            { key: 'completed', label: 'Completed' },
+            { key: 'cancelled', label: 'Cancelled' },
+          ] as const).map((t) => {
+            const active = statusFilter === t.key;
+            return (
+              <TouchableOpacity
+                key={t.key}
+                onPress={() => setStatusFilter(t.key)}
+                activeOpacity={0.8}
+                accessibilityRole="button"
+                accessibilityState={{ selected: active }}
+                style={[
+                  styles.filterTab,
+                  { borderColor: theme.divider },
+                  active && { backgroundColor: theme.primary, borderColor: theme.primary },
+                ]}
+              >
+                <Text style={[styles.filterTabTxt, { color: active ? '#FFFFFF' : theme.textSecondary }]}>{t.label}</Text>
+              </TouchableOpacity>
+            );
+          })}
+        </View>
+      ) : null}
       <FlatList
         data={rows}
         keyExtractor={(it) => it.key}
@@ -340,6 +378,12 @@ export const History = ({ navigation }: any) => {
               title="Couldn't load history"
               message="We couldn't load your payment history. Check your connection and try again."
               onRetry={retry}
+            />
+          ) : statusFilter !== 'all' ? (
+            <EmptyState
+              icon="filter-outline"
+              title="No matching favors"
+              message={`No ${statusFilter} favors to show. Tap “All” to see everything.`}
             />
           ) : (
             <EmptyState
@@ -868,6 +912,10 @@ export const FavorHistoryDetail = ({ navigation, route }: any) => {
 };
 
 const styles = StyleSheet.create({
+  // ---- status filter tabs ----
+  filterRow: { flexDirection: 'row', gap: 8, paddingHorizontal: tokens.spacing.xl, paddingTop: 4, paddingBottom: 10 },
+  filterTab: { paddingHorizontal: 14, paddingVertical: 7, borderRadius: 999, borderWidth: StyleSheet.hairlineWidth },
+  filterTabTxt: { fontSize: 13, fontFamily: 'Poppins_500Medium' },
   // ---- list ----
   monthHead: {
     paddingTop: tokens.spacing.xl,

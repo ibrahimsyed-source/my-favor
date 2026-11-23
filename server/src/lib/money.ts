@@ -38,3 +38,9 @@ export const FAVOR_TIERS: Record<string, number> = {
   big: 100,
   huge: 150,
 };
+
+// Business minimum for a member-set (custom / negotiate) price and for any pal
+// offer/counter. Below this the flat fee + commission make a favor economically
+// nonsensical. Mirrored client-side in src/types/index.ts — keep in sync.
+export const MIN_PRICE = 5;
+export const MAX_PRICE = 100000;

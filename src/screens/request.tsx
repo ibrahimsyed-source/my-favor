@@ -8,7 +8,7 @@ import { Ionicons } from '@expo/vector-icons';
 import Svg, { Defs, RadialGradient, Stop, Circle } from 'react-native-svg';
 import { useFonts, Poppins_400Regular, Poppins_400Regular_Italic } from '@expo-google-fonts/poppins';
 import { useStore } from '../store';
-import { FAVOR_TIERS } from '../types';
+import { FAVOR_TIERS, MIN_PRICE, MAX_PRICE } from '../types';
 import { geocodeAddress, GEOCODE_FALLBACK } from '../lib/geocode';
 import { getCurrentLocation } from '../lib/location';
 import { suggestAddressesApi, resolvePlaceApi, reverseGeocodeApi, AddressSuggestion } from '../api/endpoints';
@@ -386,8 +386,6 @@ export function FavorDescription({ navigation }: any) {
 //    member names a price directly (no hours × rate maths); Favor Pals accept
 //    it or send a counter offer.
 // ---------------------------------------------------------------------------
-const PRICE_MAX = 100000;
-
 export function Negotiate({ navigation }: any) {
   const s = useStore();
   const fontsLoaded = usePoppinsRegular();
@@ -402,7 +400,10 @@ export function Negotiate({ navigation }: any) {
   // when the visible text IS the number being charged.
   const priceShapeOk = /^\d{1,6}([.,]\d{1,2})?$/.test(priceText.trim());
   const price = Math.round(parseFloat(priceText.trim().replace(',', '.')) * 100) / 100;
-  const priceValid = priceShapeOk && !Number.isNaN(price) && price > 0 && price <= PRICE_MAX;
+  const priceValid = priceShapeOk && !Number.isNaN(price) && price >= MIN_PRICE && price <= MAX_PRICE;
+  // Inline feedback: only once the shape is a clean number but it's below the
+  // business minimum — a half-typed entry just leaves NEXT disabled silently.
+  const priceBelowMin = priceShapeOk && !Number.isNaN(price) && price > 0 && price < MIN_PRICE;
 
   const canNext = priceValid && desc.trim().length > 0;
   const onNext = () => {
@@ -436,6 +437,11 @@ export function Negotiate({ navigation }: any) {
             accessibilityLabel="Your favor price"
           />
         </View>
+        {priceBelowMin ? (
+          <Text style={styles.priceMinError} accessibilityLiveRegion="polite">
+            Minimum favor price is ${MIN_PRICE}.
+          </Text>
+        ) : null}
 
         <View style={{ marginTop: 35 }}>
           <DescriptionBlock value={desc} onChangeText={setDesc} />
@@ -934,6 +940,12 @@ const styles = StyleSheet.create({
     fontFamily: 'Poppins_400Regular',
     fontSize: 18,
     color: INK,
+  },
+  priceMinError: {
+    marginTop: 8,
+    fontFamily: 'Poppins_400Regular',
+    fontSize: 13,
+    color: '#D40000',
   },
   // "Add photos" section (FavorDescription)
   photoRow: {

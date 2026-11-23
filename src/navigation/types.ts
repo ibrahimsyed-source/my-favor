@@ -73,6 +73,7 @@ export type RootStackParamList = {
   EditProfile: undefined;
   Settings: undefined;
   SetStatus: undefined;
+  MyReviews: undefined; // reviews the signed-in user has received (role-aware)
   Payment: undefined;
   AddCard: { cardId?: string } | undefined; // cardId → edit an existing card
   History: undefined; // favor history — opened from the side menu

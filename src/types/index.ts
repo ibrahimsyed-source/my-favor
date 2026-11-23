@@ -56,6 +56,13 @@ export const FAVOR_TIERS: Record<
   huge: { label: 'Huge Favor', price: 150 },
 };
 
+// Business minimum for a member-set (custom / negotiate) price and for any pal
+// offer/counter. Below this the flat $0.30 fee + 20% commission make a favor
+// economically nonsensical. Mirrored server-side in server/src/lib/money.ts —
+// keep the two in sync.
+export const MIN_PRICE = 5;
+export const MAX_PRICE = 100000;
+
 export type FavorStatus =
   | 'draft'
   | 'requested' // posted, searching for a pal
@@ -195,7 +202,7 @@ export interface Thread {
 
 export interface AppNotification {
   id: string;
-  type: 'match' | 'cancellation' | 'no_pal' | 'arrived' | 'offer' | 'release_request' | 'released' | 'review' | 'general';
+  type: 'match' | 'cancellation' | 'no_pal' | 'arrived' | 'almost_here' | 'offer' | 'release_request' | 'released' | 'review' | 'general';
   title: string;
   body: string;
   // The favor/thread this notification is about, so an in-app list tap can

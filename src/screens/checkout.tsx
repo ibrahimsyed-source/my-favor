@@ -8,7 +8,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { useFonts, Poppins_400Regular } from '@expo-google-fonts/poppins';
 import { useStore } from '../store';
 import { Avatar } from '../components';
-import { FAVOR_TIERS, computeFees, computeCancellation, FavorTier, FavorOffer, Review } from '../types';
+import { FAVOR_TIERS, computeFees, computeCancellation, FavorTier, FavorOffer, Review, MIN_PRICE, MAX_PRICE } from '../types';
 import { counterOfferApi, declineOfferApi, getPalApi, getPalReviewsApi } from '../api/endpoints';
 import { LiveMap } from '../components/LiveMap';
 import { MapScene, MAP_SCENE_SUPPORTED } from '../components/MapScene';
@@ -706,8 +706,11 @@ export const Searching = ({ navigation }: any) => {
     setOfferBusy(null);
   };
 
-  const counterValue = Math.round(parseFloat(counterText) * 100) / 100;
-  const counterValid = !Number.isNaN(counterValue) && counterValue > 0 && counterValue <= 100000;
+  // Same strict parse as the Negotiate screen: reject "12.5.5"/"1,000" misreads,
+  // normalize comma decimals, and enforce the shared business minimum.
+  const counterShapeOk = /^\d{1,6}([.,]\d{1,2})?$/.test(counterText.trim());
+  const counterValue = Math.round(parseFloat(counterText.trim().replace(',', '.')) * 100) / 100;
+  const counterValid = counterShapeOk && !Number.isNaN(counterValue) && counterValue >= MIN_PRICE && counterValue <= MAX_PRICE;
   const sendCounter = async () => {
     const target = counterFor;
     if (!target || !counterValid || offerBusy) return;

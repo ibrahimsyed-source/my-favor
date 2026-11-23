@@ -486,6 +486,34 @@ const TIERS: { key: string; label: string }[] = [
   { key: 'small', label: 'Small' },
   { key: 'big', label: 'Big' },
   { key: 'huge', label: 'Huge' },
+  // 'custom' matches both member-priced tiers (custom + negotiate) so those
+  // favors aren't invisible the moment any tier chip is selected.
+  { key: 'custom', label: 'Custom' },
+];
+
+// Price brackets over the favor's current price (client-side, on the fetched
+// window). 'any' is the no-op default.
+const PRICE_BRACKETS: { key: string; label: string; test: (p: number) => boolean }[] = [
+  { key: 'any', label: 'Any $', test: () => true },
+  { key: 'lt25', label: '< $25', test: (p) => p < 25 },
+  { key: 'mid', label: '$25–75', test: (p) => p >= 25 && p <= 75 },
+  { key: 'gt75', label: '> $75', test: (p) => p > 75 },
+];
+
+// Straight-line distance cutoffs from the pal's origin (uses the board's own
+// favorDistance helper). 'any' = unbounded.
+const RADII: { key: string; label: string; miles: number }[] = [
+  { key: 'any', label: 'Any dist', miles: Infinity },
+  { key: '5', label: '≤ 5 mi', miles: 5 },
+  { key: '10', label: '≤ 10 mi', miles: 10 },
+  { key: '25', label: '≤ 25 mi', miles: 25 },
+];
+
+// ASAP (no scheduled time) vs Scheduled (has one).
+const TIMINGS: { key: string; label: string }[] = [
+  { key: 'any', label: 'Any time' },
+  { key: 'asap', label: 'ASAP' },
+  { key: 'scheduled', label: 'Scheduled' },
 ];
 
 function Chip({ label, active, onPress }: { label: string; active: boolean; onPress: () => void }) {
@@ -524,6 +552,9 @@ export function OpenFavorsList({
   const [errored, setErrored] = useState(false);
   const [sort, setSort] = useState<SortKey>(defaultSort);
   const [tier, setTier] = useState('all');
+  const [priceBracket, setPriceBracket] = useState('any');
+  const [radius, setRadius] = useState('any');
+  const [timing, setTiming] = useState('any');
   const favors = s.incomingFavors;
 
   // The store's refreshIncoming() swallows network errors, so a probe of the
@@ -549,25 +580,55 @@ export function OpenFavorsList({
     setRefreshing(false);
   }, [load]);
 
-  // #2 — filter by tier + sort by recency/payout/distance. (Server returns newest-first.)
+  // #2 — filter (tier/price/distance/timing) + sort (recency/payout/distance),
+  // all client-side over the fetched window. (Server returns newest-first,
+  // capped at 50 after its own radius pre-filter.)
   const shown = useMemo(() => {
-    let list = tier === 'all' ? favors : favors.filter((f) => f.tier === tier);
+    let list = favors;
+    if (tier === 'custom') list = list.filter((f) => f.tier === 'custom' || f.tier === 'negotiate');
+    else if (tier !== 'all') list = list.filter((f) => f.tier === tier);
+    const pb = PRICE_BRACKETS.find((b) => b.key === priceBracket);
+    if (pb && pb.key !== 'any') list = list.filter((f) => pb.test(f.price));
+    const rad = RADII.find((r) => r.key === radius);
+    if (rad && rad.miles !== Infinity) list = list.filter((f) => favorDistance(f, origin) <= rad.miles);
+    if (timing === 'asap') list = list.filter((f) => !f.scheduledFor);
+    else if (timing === 'scheduled') list = list.filter((f) => !!f.scheduledFor);
     if (sort === 'high') list = [...list].sort((a, b) => b.price - a.price);
     else if (sort === 'low') list = [...list].sort((a, b) => a.price - b.price);
     else if (sort === 'close') list = [...list].sort((a, b) => favorDistance(a, origin) - favorDistance(b, origin));
     return list;
-  }, [favors, tier, sort, origin]);
+  }, [favors, tier, priceBracket, radius, timing, sort, origin]);
+
+  const filtersActive = tier !== 'all' || priceBracket !== 'any' || radius !== 'any' || timing !== 'any';
+  const clearFilters = () => { setTier('all'); setPriceBracket('any'); setRadius('any'); setTiming('any'); };
 
   return (
     <View style={{ flex: 1 }}>
       {header?.({ shown: shown.length, total: favors.length, refreshing, onRefresh })}
 
-      {/* Sort + tier filter chips */}
+      {/* Row 1: sort + tier. Row 2: price / distance / timing filters. Both
+          horizontally scrollable; a Clear chip appears once anything is set. */}
       <View style={bw.chipRows}>
         <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={bw.chipRow}>
           {SORTS.map((o) => <Chip key={o.key} label={o.label} active={sort === o.key} onPress={() => setSort(o.key)} />)}
           <View style={bw.chipSep} />
           {TIERS.map((o) => <Chip key={o.key} label={o.label} active={tier === o.key} onPress={() => setTier(o.key)} />)}
+        </ScrollView>
+        <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={[bw.chipRow, { marginTop: 8 }]}>
+          {PRICE_BRACKETS.map((o) => <Chip key={o.key} label={o.label} active={priceBracket === o.key} onPress={() => setPriceBracket(o.key)} />)}
+          <View style={bw.chipSep} />
+          {RADII.map((o) => <Chip key={o.key} label={o.label} active={radius === o.key} onPress={() => setRadius(o.key)} />)}
+          <View style={bw.chipSep} />
+          {TIMINGS.map((o) => <Chip key={o.key} label={o.label} active={timing === o.key} onPress={() => setTiming(o.key)} />)}
+          {filtersActive ? (
+            <>
+              <View style={bw.chipSep} />
+              <TouchableOpacity onPress={clearFilters} activeOpacity={0.8} accessibilityRole="button" accessibilityLabel="Clear filters" style={[bw.chip, bw.chipClear]}>
+                <Ionicons name="close" size={13} color={RED} />
+                <Text style={[bw.chipText, { color: RED, marginLeft: 3 }]}>Clear</Text>
+              </TouchableOpacity>
+            </>
+          ) : null}
         </ScrollView>
       </View>
 
@@ -651,8 +712,9 @@ const bw = StyleSheet.create({
   chipRows: { paddingBottom: 4 },
   chipRow: { paddingHorizontal: 16, paddingVertical: 6, gap: 8, alignItems: 'center' },
   chipSep: { width: 1, height: 22, backgroundColor: DIVIDER, marginHorizontal: 4 },
-  chip: { backgroundColor: SHEET_ALT, borderRadius: 999, paddingHorizontal: 14, paddingVertical: 7 },
+  chip: { backgroundColor: SHEET_ALT, borderRadius: 999, paddingHorizontal: 14, paddingVertical: 7, flexDirection: 'row', alignItems: 'center' },
   chipActive: { backgroundColor: RED },
+  chipClear: { backgroundColor: 'transparent', borderWidth: StyleSheet.hairlineWidth, borderColor: RED },
   chipText: { color: SUBTLE, fontSize: 13, fontFamily: P500 },
   chipTextActive: { color: TEXT },
   // Swipe-to-decline row: the wrapper carries the gap (so the margin doesn't

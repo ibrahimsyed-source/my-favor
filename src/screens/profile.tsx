@@ -348,10 +348,16 @@ function ProfileBody({ navigation, onBack, showSetStatus, showBlocked, showPrefs
             <Txt style={dark ? { ...st.statValue, color: D.text } : st.statValue}>{String(totalFavors)}</Txt>
             <Txt style={dark ? { ...st.statLabel, color: D.sub } : st.statLabel}>Total Favors</Txt>
           </View>
-          <View style={{ flex: 1, alignItems: 'center' }}>
-            {/* Role-aware: pals show their pal rating (member->pal reviews);
-                members show their member rating (pal->member reviews). An
-                unrated user shows 'New' — the app-wide convention, not '0.0'. */}
+          {/* Role-aware: pals show their pal rating (member->pal reviews);
+              members show their member rating (pal->member reviews). An
+              unrated user shows 'New' — the app-wide convention, not '0.0'.
+              Tapping opens My Reviews (the reviews behind this number). */}
+          <TouchableOpacity
+            style={{ flex: 1, alignItems: 'center' }}
+            onPress={() => navigation.navigate('MyReviews')}
+            accessibilityRole="button"
+            accessibilityLabel="Rating — view my reviews"
+          >
             <Txt style={dark ? { ...st.statValue, color: D.text } : st.statValue}>
               {ratingValue > 0 ? ratingValue.toFixed(1) : 'New'}
             </Txt>
@@ -359,7 +365,7 @@ function ProfileBody({ navigation, onBack, showSetStatus, showBlocked, showPrefs
               <Ionicons name="star" size={12} color={L.star} />
               <Txt style={dark ? { ...st.statLabel, marginTop: 0, color: D.sub } : { ...st.statLabel, marginTop: 0 }}>Rating</Txt>
             </View>
-          </View>
+          </TouchableOpacity>
           <View style={{ flex: 1, alignItems: 'flex-end' }}>
             <Txt style={dark ? { ...st.statValue, color: D.text } : st.statValue}>{String(user.yearsActive)}</Txt>
             <Txt style={dark ? { ...st.statLabel, color: D.sub } : st.statLabel}>Years</Txt>

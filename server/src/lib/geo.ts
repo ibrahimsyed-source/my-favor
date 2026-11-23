@@ -24,3 +24,7 @@ export function haversineMiles(lat1: number, lng1: number, lat2: number, lng2: n
 // (User.palRadiusMiles @default(25)); these gate the PATCH /me update.
 export const PAL_RADIUS_MIN = 1;
 export const PAL_RADIUS_MAX = 100;
+
+// Straight-line distance (miles) under which the member gets the one-time
+// "your Favor Pal is almost here" push. ~0.5mi ≈ a few minutes out by car.
+export const NEAR_MILES = 0.5;

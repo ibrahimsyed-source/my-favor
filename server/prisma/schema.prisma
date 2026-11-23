@@ -133,6 +133,11 @@ model Favor {
   palLat        Float?
   palLng        Float?
   palLocationAt DateTime?
+  // One-shot watermark (same idiom as settledAt): set the moment the pal first
+  // comes within NEAR_MILES of the destination, so the member's "almost here"
+  // push fires exactly once per favor even though location posts arrive ~every
+  // 5s. Null = not yet sent.
+  nearNotifiedAt DateTime?
 
   status      String   @default("requested")
   scheduledFor DateTime?

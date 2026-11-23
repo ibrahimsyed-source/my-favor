@@ -28,6 +28,7 @@ import * as Prof from '../screens/profile';
 import * as Pay from '../screens/payment';
 import * as Hist from '../screens/history';
 import * as Notif from '../screens/notifications';
+import { MyReviews as MyReviewsScreen } from '../screens/myreviews';
 import * as LegalScr from '../screens/legal';
 import * as Sys from '../screens/system';
 import * as Scenario from '../screens/scenarios';
@@ -322,6 +323,7 @@ export default function RootNavigator() {
           <Stack.Screen name="MessageThread" component={Msg.MessageThread} />
           <Stack.Screen name="EditProfile" component={Prof.EditProfile} />
           <Stack.Screen name="Settings" component={Prof.Settings} />
+          <Stack.Screen name="MyReviews" component={MyReviewsScreen} />
           <Stack.Screen
             name="SetStatus"
             component={Prof.SetStatus}

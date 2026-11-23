@@ -40,6 +40,7 @@ const POPPINS_MEDIUM = 'Poppins_500Medium';
 const ACTION_LABEL: Record<AppNotification['type'], string> = {
   match: 'OKAY',
   arrived: 'OK',
+  almost_here: 'OK',
   offer: 'VIEW',
   general: 'OKAY',
   cancellation: 'CLOSE',
